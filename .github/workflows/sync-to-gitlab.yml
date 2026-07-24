@@ -1,0 +1,108 @@
+name: Sync to GitLab monorepo
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gitlab-monorepo-sync-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Sync iRead-ai
+    runs-on: ubuntu-latest
+    env:
+      GITLAB_REPOSITORY: git@lab.ssafy.com:s15-webmobile2-sub1/S15P11B105.git
+      SUBTREE_PREFIX: iRead-ai
+      TARGET_BRANCH: ${{ github.ref_name }}
+
+    steps:
+      - name: Checkout source repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Configure GitLab SSH authentication
+        shell: bash
+        env:
+          GITLAB_SSH_PRIVATE_KEY: ${{ secrets.GITLAB_SSH_PRIVATE_KEY }}
+          GITLAB_KNOWN_HOSTS: ${{ secrets.GITLAB_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          test -n "$GITLAB_SSH_PRIVATE_KEY"
+          test -n "$GITLAB_KNOWN_HOSTS"
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$GITLAB_SSH_PRIVATE_KEY" > ~/.ssh/id_gitlab_sync
+          chmod 600 ~/.ssh/id_gitlab_sync
+          printf '%s\n' "$GITLAB_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          cat > ~/.ssh/config <<'EOF'
+          Host lab.ssafy.com
+            IdentityFile ~/.ssh/id_gitlab_sync
+            IdentitiesOnly yes
+            StrictHostKeyChecking yes
+          EOF
+          chmod 600 ~/.ssh/config ~/.ssh/known_hosts
+
+      - name: Merge source history into GitLab folder
+        shell: bash
+        run: |
+          set -euo pipefail
+          sync_root="$(mktemp -d)"
+          trap 'rm -rf "$sync_root"' EXIT
+
+          for attempt in 1 2 3 4 5; do
+            attempt_dir="$sync_root/monorepo-$attempt"
+            git clone --quiet \
+              --branch "$TARGET_BRANCH" \
+              --single-branch \
+              "$GITLAB_REPOSITORY" \
+              "$attempt_dir"
+
+            git -C "$attempt_dir" config user.name "github-actions[bot]"
+            git -C "$attempt_dir" config user.email \
+              "41898282+github-actions[bot]@users.noreply.github.com"
+            git -C "$attempt_dir" remote add source "$GITHUB_WORKSPACE"
+            git -C "$attempt_dir" fetch --quiet source "$GITHUB_SHA"
+
+            if git -C "$attempt_dir" merge-base --is-ancestor \
+              "$GITHUB_SHA" HEAD; then
+              echo "$GITHUB_SHA is already synchronized."
+              exit 0
+            fi
+
+            git -C "$attempt_dir" merge \
+              --allow-unrelated-histories \
+              --strategy=ours \
+              --no-commit \
+              "$GITHUB_SHA"
+            git -C "$attempt_dir" rm -r --ignore-unmatch "$SUBTREE_PREFIX"
+            git -C "$attempt_dir" read-tree \
+              --prefix="$SUBTREE_PREFIX/" \
+              -u \
+              "$GITHUB_SHA"
+            git -C "$attempt_dir" commit \
+              -m "chore(sync): $SUBTREE_PREFIX 동기화" \
+              -m "source-repository: $GITHUB_REPOSITORY" \
+              -m "source-ref: $GITHUB_REF_NAME" \
+              -m "source-commit: $GITHUB_SHA"
+
+            if git -C "$attempt_dir" push --quiet origin \
+              "HEAD:refs/heads/$TARGET_BRANCH"; then
+              echo "Synchronized $GITHUB_REPOSITORY@$GITHUB_SHA."
+              exit 0
+            fi
+
+            echo "Push raced with another repository; retrying ($attempt/5)."
+            sleep $((attempt * 2))
+          done
+
+          echo "Failed to synchronize after 5 attempts." >&2
+          exit 1
