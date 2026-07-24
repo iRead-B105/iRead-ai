@@ -3,25 +3,31 @@ name: Sync to GitLab monorepo
 on:
   push:
     branches:
-      - main
-      - develop
+      - "**"
+  create:
+  delete:
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: gitlab-monorepo-sync-${{ github.ref_name }}
+  group: gitlab-sync-${{ github.event_name == 'push' && github.ref_name || github.event.ref || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
   sync:
-    name: Sync iRead-ai
+    name: Sync branch content
+    if: >-
+      (github.event_name == 'push' && github.event.deleted == false) ||
+      (github.event_name == 'create' && github.event.ref_type == 'branch') ||
+      github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     env:
-      GITLAB_REPOSITORY: git@lab.ssafy.com:s15-webmobile2-sub1/S15P11B105.git
-      SUBTREE_PREFIX: iRead-ai
-      TARGET_BRANCH: ${{ github.ref_name }}
+      GITLAB_REPOSITORY: https://lab.ssafy.com/s15-webmobile2-sub1/S15P11B105.git
+      SUBTREE_PREFIX: ${{ github.event.repository.name }}
+      SOURCE_BRANCH: ${{ github.event_name == 'create' && github.event.ref || github.ref_name }}
+      SOURCE_SHA: ${{ github.sha }}
 
     steps:
       - name: Checkout source repository
@@ -29,74 +35,105 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+          ref: ${{ env.SOURCE_SHA }}
 
-      - name: Configure GitLab SSH authentication
+      - name: Merge source branch into matching GitLab branch
         shell: bash
         env:
-          GITLAB_SSH_PRIVATE_KEY: ${{ secrets.GITLAB_SSH_PRIVATE_KEY }}
-          GITLAB_KNOWN_HOSTS: ${{ secrets.GITLAB_KNOWN_HOSTS }}
+          GITLAB_PUSH_TOKEN: ${{ secrets.GITLAB_PUSH_TOKEN }}
         run: |
           set -euo pipefail
-          test -n "$GITLAB_SSH_PRIVATE_KEY"
-          test -n "$GITLAB_KNOWN_HOSTS"
-          install -m 700 -d ~/.ssh
-          printf '%s\n' "$GITLAB_SSH_PRIVATE_KEY" > ~/.ssh/id_gitlab_sync
-          chmod 600 ~/.ssh/id_gitlab_sync
-          printf '%s\n' "$GITLAB_KNOWN_HOSTS" > ~/.ssh/known_hosts
-          cat > ~/.ssh/config <<'EOF'
-          Host lab.ssafy.com
-            IdentityFile ~/.ssh/id_gitlab_sync
-            IdentitiesOnly yes
-            StrictHostKeyChecking yes
-          EOF
-          chmod 600 ~/.ssh/config ~/.ssh/known_hosts
+          test -n "$GITLAB_PUSH_TOKEN"
 
-      - name: Merge source history into GitLab folder
-        shell: bash
-        run: |
-          set -euo pipefail
+          auth_header="$(
+            printf 'oauth2:%s' "$GITLAB_PUSH_TOKEN" |
+              base64 |
+              tr -d '\n'
+          )"
+          echo "::add-mask::$auth_header"
+          export GIT_CONFIG_COUNT=1
+          export GIT_CONFIG_KEY_0=http.https://lab.ssafy.com/.extraheader
+          export GIT_CONFIG_VALUE_0="Authorization: Basic $auth_header"
+
           sync_root="$(mktemp -d)"
           trap 'rm -rf "$sync_root"' EXIT
 
           for attempt in 1 2 3 4 5; do
             attempt_dir="$sync_root/monorepo-$attempt"
-            git clone --quiet \
-              --branch "$TARGET_BRANCH" \
-              --single-branch \
+            target_exists=false
+
+            if git ls-remote --exit-code --heads \
               "$GITLAB_REPOSITORY" \
-              "$attempt_dir"
+              "refs/heads/$SOURCE_BRANCH" >/dev/null 2>&1; then
+              target_exists=true
+              git clone --quiet \
+                --branch "$SOURCE_BRANCH" \
+                --single-branch \
+                "$GITLAB_REPOSITORY" \
+                "$attempt_dir"
+            else
+              base_branch=develop
+              if [ "$SOURCE_BRANCH" = "main" ]; then
+                base_branch=main
+              elif [ "$SOURCE_BRANCH" = "develop" ]; then
+                if ! git ls-remote --exit-code --heads \
+                  "$GITLAB_REPOSITORY" \
+                  refs/heads/develop >/dev/null 2>&1; then
+                  base_branch=main
+                fi
+              fi
+
+              git clone --quiet \
+                --branch "$base_branch" \
+                --single-branch \
+                "$GITLAB_REPOSITORY" \
+                "$attempt_dir"
+              git -C "$attempt_dir" switch --quiet -c "$SOURCE_BRANCH"
+            fi
 
             git -C "$attempt_dir" config user.name "github-actions[bot]"
             git -C "$attempt_dir" config user.email \
               "41898282+github-actions[bot]@users.noreply.github.com"
             git -C "$attempt_dir" remote add source "$GITHUB_WORKSPACE"
-            git -C "$attempt_dir" fetch --quiet source "$GITHUB_SHA"
+            git -C "$attempt_dir" fetch --quiet source "$SOURCE_SHA"
 
             if git -C "$attempt_dir" merge-base --is-ancestor \
-              "$GITHUB_SHA" HEAD; then
-              echo "$GITHUB_SHA is already synchronized."
-              exit 0
+              "$SOURCE_SHA" HEAD; then
+              if [ "$target_exists" = "true" ]; then
+                echo "$SOURCE_SHA is already synchronized."
+                exit 0
+              fi
+
+              if git -C "$attempt_dir" push --quiet origin \
+                "HEAD:refs/heads/$SOURCE_BRANCH"; then
+                echo "Created GitLab branch $SOURCE_BRANCH."
+                exit 0
+              fi
+
+              echo "Branch creation raced with another sync; retrying."
+              sleep $((attempt * 2))
+              continue
             fi
 
             git -C "$attempt_dir" merge \
               --allow-unrelated-histories \
               --strategy=ours \
               --no-commit \
-              "$GITHUB_SHA"
+              "$SOURCE_SHA"
             git -C "$attempt_dir" rm -r --ignore-unmatch "$SUBTREE_PREFIX"
             git -C "$attempt_dir" read-tree \
               --prefix="$SUBTREE_PREFIX/" \
               -u \
-              "$GITHUB_SHA"
+              "$SOURCE_SHA"
             git -C "$attempt_dir" commit \
               -m "chore(sync): $SUBTREE_PREFIX 동기화" \
               -m "source-repository: $GITHUB_REPOSITORY" \
-              -m "source-ref: $GITHUB_REF_NAME" \
-              -m "source-commit: $GITHUB_SHA"
+              -m "source-ref: $SOURCE_BRANCH" \
+              -m "source-commit: $SOURCE_SHA"
 
             if git -C "$attempt_dir" push --quiet origin \
-              "HEAD:refs/heads/$TARGET_BRANCH"; then
-              echo "Synchronized $GITHUB_REPOSITORY@$GITHUB_SHA."
+              "HEAD:refs/heads/$SOURCE_BRANCH"; then
+              echo "Synchronized $GITHUB_REPOSITORY@$SOURCE_SHA."
               exit 0
             fi
 
@@ -106,3 +143,45 @@ jobs:
 
           echo "Failed to synchronize after 5 attempts." >&2
           exit 1
+
+  delete:
+    name: Delete matching GitLab branch
+    if: >-
+      github.event_name == 'delete' &&
+      github.event.ref_type == 'branch' &&
+      github.event.ref != 'main' &&
+      github.event.ref != 'develop'
+    runs-on: ubuntu-latest
+    env:
+      GITLAB_REPOSITORY: https://lab.ssafy.com/s15-webmobile2-sub1/S15P11B105.git
+      SOURCE_BRANCH: ${{ github.event.ref }}
+
+    steps:
+      - name: Delete GitLab branch
+        shell: bash
+        env:
+          GITLAB_PUSH_TOKEN: ${{ secrets.GITLAB_PUSH_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$GITLAB_PUSH_TOKEN"
+
+          auth_header="$(
+            printf 'oauth2:%s' "$GITLAB_PUSH_TOKEN" |
+              base64 |
+              tr -d '\n'
+          )"
+          echo "::add-mask::$auth_header"
+          export GIT_CONFIG_COUNT=1
+          export GIT_CONFIG_KEY_0=http.https://lab.ssafy.com/.extraheader
+          export GIT_CONFIG_VALUE_0="Authorization: Basic $auth_header"
+
+          if ! git ls-remote --exit-code --heads \
+            "$GITLAB_REPOSITORY" \
+            "refs/heads/$SOURCE_BRANCH" >/dev/null 2>&1; then
+            echo "GitLab branch $SOURCE_BRANCH is already absent."
+            exit 0
+          fi
+
+          git push --quiet "$GITLAB_REPOSITORY" \
+            ":refs/heads/$SOURCE_BRANCH"
+          echo "Deleted GitLab branch $SOURCE_BRANCH."
