@@ -27,6 +27,7 @@ jobs:
       GITLAB_REPOSITORY: https://lab.ssafy.com/s15-webmobile2-sub1/S15P11B105.git
       SUBTREE_PREFIX: ${{ github.event.repository.name }}
       SOURCE_BRANCH: ${{ github.event_name == 'create' && github.event.ref || github.ref_name }}
+      TARGET_BRANCH: ${{ github.event.repository.name }}/${{ github.event_name == 'create' && github.event.ref || github.ref_name }}
       SOURCE_SHA: ${{ github.sha }}
 
     steps:
@@ -64,23 +65,20 @@ jobs:
 
             if git ls-remote --exit-code --heads \
               "$GITLAB_REPOSITORY" \
-              "refs/heads/$SOURCE_BRANCH" >/dev/null 2>&1; then
+              "refs/heads/$TARGET_BRANCH" >/dev/null 2>&1; then
               target_exists=true
               git clone --quiet \
-                --branch "$SOURCE_BRANCH" \
+                --branch "$TARGET_BRANCH" \
                 --single-branch \
                 "$GITLAB_REPOSITORY" \
                 "$attempt_dir"
             else
-              base_branch=develop
-              if [ "$SOURCE_BRANCH" = "main" ]; then
-                base_branch=main
-              elif [ "$SOURCE_BRANCH" = "develop" ]; then
-                if ! git ls-remote --exit-code --heads \
+              base_branch="$SUBTREE_PREFIX/develop"
+              if [ "$SOURCE_BRANCH" = "main" ] || \
+                ! git ls-remote --exit-code --heads \
                   "$GITLAB_REPOSITORY" \
-                  refs/heads/develop >/dev/null 2>&1; then
-                  base_branch=main
-                fi
+                  "refs/heads/$base_branch" >/dev/null 2>&1; then
+                base_branch=main
               fi
 
               git clone --quiet \
@@ -88,7 +86,7 @@ jobs:
                 --single-branch \
                 "$GITLAB_REPOSITORY" \
                 "$attempt_dir"
-              git -C "$attempt_dir" switch --quiet -c "$SOURCE_BRANCH"
+              git -C "$attempt_dir" switch --quiet -c "$TARGET_BRANCH"
             fi
 
             git -C "$attempt_dir" config user.name "github-actions[bot]"
@@ -105,8 +103,8 @@ jobs:
               fi
 
               if git -C "$attempt_dir" push --quiet origin \
-                "HEAD:refs/heads/$SOURCE_BRANCH"; then
-                echo "Created GitLab branch $SOURCE_BRANCH."
+                "HEAD:refs/heads/$TARGET_BRANCH"; then
+                echo "Created GitLab branch $TARGET_BRANCH."
                 exit 0
               fi
 
@@ -132,7 +130,7 @@ jobs:
               -m "source-commit: $SOURCE_SHA"
 
             if git -C "$attempt_dir" push --quiet origin \
-              "HEAD:refs/heads/$SOURCE_BRANCH"; then
+              "HEAD:refs/heads/$TARGET_BRANCH"; then
               echo "Synchronized $GITHUB_REPOSITORY@$SOURCE_SHA."
               exit 0
             fi
@@ -155,6 +153,7 @@ jobs:
     env:
       GITLAB_REPOSITORY: https://lab.ssafy.com/s15-webmobile2-sub1/S15P11B105.git
       SOURCE_BRANCH: ${{ github.event.ref }}
+      TARGET_BRANCH: ${{ github.event.repository.name }}/${{ github.event.ref }}
 
     steps:
       - name: Delete GitLab branch
@@ -177,11 +176,11 @@ jobs:
 
           if ! git ls-remote --exit-code --heads \
             "$GITLAB_REPOSITORY" \
-            "refs/heads/$SOURCE_BRANCH" >/dev/null 2>&1; then
-            echo "GitLab branch $SOURCE_BRANCH is already absent."
+            "refs/heads/$TARGET_BRANCH" >/dev/null 2>&1; then
+            echo "GitLab branch $TARGET_BRANCH is already absent."
             exit 0
           fi
 
           git push --quiet "$GITLAB_REPOSITORY" \
-            ":refs/heads/$SOURCE_BRANCH"
-          echo "Deleted GitLab branch $SOURCE_BRANCH."
+            ":refs/heads/$TARGET_BRANCH"
+          echo "Deleted GitLab branch $TARGET_BRANCH."
