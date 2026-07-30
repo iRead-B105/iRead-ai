@@ -1,7 +1,7 @@
 [project]
 name = "iread-ai"
-version = "0.1.0"
-description = "iRead AI service"
+version = "0.2.0"
+description = "iRead AI service and backend integration mock"
 requires-python = ">=3.12"
 dependencies = [
     "azure-cognitiveservices-speech>=1.48.1,<2",
