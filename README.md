@@ -53,9 +53,20 @@ Backend의 `AI_API_KEY`와 AI 서버의 `AI_INTERNAL_API_KEY`는 같은 값을
 - 음성은 임시 파일로만 사용하고 요청 종료 시 삭제
 - Azure 자격증명과 원본 응답은 응답·로그에 노출하지 않음
 
-WAV는 8/16kHz, 16-bit mono PCM을 기본 입력으로 사용합니다. WebM·MP3·MP4/M4A
-같은 압축 음성 처리를 위해서는 Azure Speech SDK와 같은 아키텍처의 GStreamer
-런타임 및 플러그인이 필요합니다.
+### 입력 음성 변환
+
+App은 브라우저 `MediaRecorder` 기본값인 WebM/Opus로 녹음하고 iOS Safari에서는
+MP4/M4A를 올립니다. Azure Speech SDK의 `AudioConfig(filename=...)`은 WAV PCM만
+직접 처리하므로, AI 서버는 인식 직전에 **ffmpeg로 mono 16kHz 16-bit PCM WAV**로
+변환합니다. 브라우저가 만든 WAV도 표본율·채널 수를 보장하지 않으므로 확장자와
+무관하게 항상 변환합니다.
+
+- `ffmpeg` 실행 파일이 PATH에 있어야 합니다. Docker 이미지에는 포함되어 있고,
+  로컬 실행 시에는 별도로 설치합니다.
+- `AI_AUDIO_FFMPEG_PATH`로 실행 파일 경로를, `AI_AUDIO_CONVERSION_TIMEOUT_SECONDS`로
+  변환 제한 시간을 바꿀 수 있습니다.
+- 변환 실패·시간 초과·`ffmpeg` 미설치는 자격증명과 음성을 담지 않는 `502`로
+  응답하고, 원본과 변환본 임시 파일을 모두 삭제합니다.
 
 ## 생성 mock 책임 범위
 

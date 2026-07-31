@@ -5,6 +5,7 @@ from pathlib import Path
 import tempfile
 from typing import Any
 
+from .audio import AudioConversionError, convert_to_azure_wav
 from .config import Settings
 from .models import PronunciationAnalysisResponse, PronunciationWordResult
 
@@ -35,7 +36,8 @@ class AzurePronunciationProvider:
             raise PronunciationProviderError("Azure Speech region is not configured")
 
         suffix = _safe_suffix(original_filename)
-        path: Path | None = None
+        uploaded: Path | None = None
+        recognizable: Path | None = None
         try:
             with tempfile.NamedTemporaryFile(
                 prefix="iread-pronunciation-",
@@ -43,12 +45,25 @@ class AzurePronunciationProvider:
                 delete=False,
             ) as temporary:
                 temporary.write(audio)
-                path = Path(temporary.name)
-            payload = self._recognize(reference_text, path)
+                uploaded = Path(temporary.name)
+            recognizable = self._to_recognizable_wav(uploaded)
+            payload = self._recognize(reference_text, recognizable)
             return parse_azure_result(request_id=request_id, payload=payload)
         finally:
-            if path is not None:
-                path.unlink(missing_ok=True)
+            for path in (uploaded, recognizable):
+                if path is not None:
+                    path.unlink(missing_ok=True)
+
+    def _to_recognizable_wav(self, uploaded: Path) -> Path:
+        """WebM/Opus 등 압축 업로드를 Azure가 읽을 수 있는 WAV PCM으로 바꾼다."""
+        try:
+            return convert_to_azure_wav(
+                uploaded,
+                ffmpeg_path=self._settings.audio_ffmpeg_path,
+                timeout_seconds=self._settings.audio_conversion_timeout_seconds,
+            )
+        except AudioConversionError as exception:
+            raise PronunciationProviderError(str(exception)) from exception
 
     def _recognize(self, reference_text: str, audio_path: Path) -> dict[str, Any]:
         try:

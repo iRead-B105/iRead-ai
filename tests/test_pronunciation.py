@@ -1,8 +1,14 @@
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from iread_ai.config import Settings
-from iread_ai.pronunciation import AzurePronunciationProvider, parse_azure_result
+from iread_ai.pronunciation import (
+    AzurePronunciationProvider,
+    PronunciationProviderError,
+    parse_azure_result,
+)
 
 
 def test_parses_sentence_into_word_scores_and_milliseconds() -> None:
@@ -77,16 +83,25 @@ def test_keeps_insertions_for_backend_alignment() -> None:
     assert result.words[0].errorType == "Insertion"
 
 
-def test_removes_temporary_audio_after_analysis() -> None:
+def test_removes_uploaded_and_converted_audio_after_analysis() -> None:
     class StubProvider(AzurePronunciationProvider):
-        staged_path: Path | None = None
+        uploaded_path: Path | None = None
+        converted_path: Path | None = None
+
+        def _to_recognizable_wav(self, uploaded: Path) -> Path:
+            self.uploaded_path = uploaded
+            assert uploaded.exists()
+            converted = uploaded.with_suffix(".converted.wav")
+            converted.write_bytes(b"RIFF....WAVEfmt ")
+            self.converted_path = converted
+            return converted
 
         def _recognize(
             self,
             reference_text: str,
             audio_path: Path,
         ) -> dict[str, Any]:
-            self.staged_path = audio_path
+            assert audio_path == self.converted_path
             assert audio_path.exists()
             return {
                 "NBest": [
@@ -122,8 +137,31 @@ def test_removes_temporary_audio_after_analysis() -> None:
         request_id="request-3",
         reference_text="사과",
         audio=b"temporary audio",
-        original_filename="word.wav",
+        original_filename="word.webm",
     )
 
-    assert provider.staged_path is not None
-    assert not provider.staged_path.exists()
+    assert provider.uploaded_path is not None
+    assert provider.converted_path is not None
+    assert not provider.uploaded_path.exists()
+    assert not provider.converted_path.exists()
+
+
+def test_conversion_failure_becomes_a_safe_upstream_error() -> None:
+    provider = AzurePronunciationProvider(
+        Settings(
+            internal_api_key="internal",
+            azure_speech_key="azure-key",
+            azure_speech_region="koreacentral",
+            azure_speech_language="ko-KR",
+            max_audio_bytes=1024,
+            audio_ffmpeg_path="iread-ffmpeg-does-not-exist",
+        )
+    )
+
+    with pytest.raises(PronunciationProviderError, match="ffmpeg"):
+        provider.analyze(
+            request_id="request-4",
+            reference_text="사과",
+            audio=b"webm payload",
+            original_filename="word.webm",
+        )
