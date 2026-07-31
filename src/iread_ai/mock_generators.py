@@ -7,6 +7,8 @@ from .generation_models import (
     GenerateStoryRequest,
     GenerateStoryResponse,
     GeneratedStoryLine,
+    StoryBranchOption,
+    StoryBranchPrompt,
     GenerateTrainingRequest,
     GenerateTrainingResponse,
     TrainingCandidateRequest,
@@ -369,6 +371,16 @@ def generate_legacy_training(request: GenerateTrainingRequest) -> GenerateTraini
     )
 
 
+def _story_branch_prompt() -> StoryBranchPrompt:
+    return StoryBranchPrompt(
+        options=[
+            StoryBranchOption(optionNo=1, label="반짝이는 별빛 길로 간다"),
+            StoryBranchOption(optionNo=2, label="작은 친구가 가리킨 숲길로 간다"),
+            StoryBranchOption(optionNo=3, label="맑은 시냇물 길을 따라간다"),
+        ]
+    )
+
+
 def generate_story(request: GenerateStoryRequest) -> GenerateStoryResponse:
     title = request.storyTemplate.title
     contents = [
@@ -384,7 +396,11 @@ def generate_story(request: GenerateStoryRequest) -> GenerateStoryResponse:
         nextProgress=50,
         completed=False,
         lines=[
-            GeneratedStoryLine(content=content, requiresBranchInput=index == 4)
+            GeneratedStoryLine(
+                content=content,
+                requiresBranchInput=index == 4,
+                branchPrompt=_story_branch_prompt() if index == 4 else None,
+            )
             for index, content in enumerate(contents)
         ],
     )

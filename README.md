@@ -65,3 +65,22 @@ AI 구현에서는 생성 방식만 교체하고 JSON 필드, 상태 코드,
 
 정답 채점, 재시도·힌트·완료 판정과 단어별 시도 로그 저장은 백엔드가 담당하므로
 생성 mock 엔드포인트에 포함하지 않습니다.
+
+## 이야기 생성 연동 계약
+
+오케스트레이션 저장소의 `contracts/openapi/ai-api.yaml`과
+`docs/product/features/story-branch.md`를 기준 원본으로 사용합니다.
+
+- 분기 대사의 `content`는 아동에게 표시할 질문입니다.
+- `requiresBranchInput=true`이면 `branchPrompt.options`에 서로 다른 선택지 3개를
+  제공하며 번호는 정확히 1, 2, 3입니다.
+- 일반 대사의 `branchPrompt`는 `null`입니다.
+- `continue`의 `branchIntent`는 음성 STT 또는 버튼 선택 결과를 Backend가 확정한
+  문자열이며 AI server는 입력 출처를 구분하지 않습니다.
+- 교수자 예상 단어는 생성 입력이 아닙니다. 생성된 교안 편집은 Backend가
+  `lesson-material` API로 처리합니다.
+- 이미지 생성은 현재 동기 응답으로 `imageUrl`만 반환하며 별도 생성 상태값은
+  사용하지 않습니다.
+
+실제 생성 provider를 연결할 때는 Mock 생성 함수만 교체하고 요청·응답 모델,
+진행률 범위, `requestId`, `schemaVersion`, 서비스 인증과 멱등성 계약을 유지합니다.

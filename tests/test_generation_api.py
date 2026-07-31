@@ -87,6 +87,13 @@ def test_story_generation_returns_five_lines_and_branch_at_line_five() -> None:
     assert [line["requiresBranchInput"] for line in body["lines"]] == [
         False, False, False, False, True
     ]
+    assert all(line["branchPrompt"] is None for line in body["lines"][:4])
+    assert [
+        option["optionNo"] for option in body["lines"][-1]["branchPrompt"]["options"]
+    ] == [1, 2, 3]
+    assert len({
+        option["label"] for option in body["lines"][-1]["branchPrompt"]["options"]
+    }) == 3
 
 
 def test_story_continue_returns_final_five_lines() -> None:
@@ -113,6 +120,7 @@ def test_story_continue_returns_final_five_lines() -> None:
     assert body["nextProgress"] == 100
     assert body["completed"] is True
     assert len(body["lines"]) == 5
+    assert all(line["branchPrompt"] is None for line in body["lines"])
 
 
 def test_image_generation_returns_retrievable_svg() -> None:
