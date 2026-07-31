@@ -4,7 +4,7 @@ import hmac
 from html import escape
 from urllib.parse import urlencode
 
-from fastapi import FastAPI, File, Form, Header, HTTPException, Query, UploadFile
+from fastapi import File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 
 from .config import Settings
@@ -19,6 +19,7 @@ from .generation_models import (
     TrainingCandidateRequest,
     TrainingCandidateResponse,
 )
+from .main import create_app
 from .mock_generators import (
     continue_story,
     generate_legacy_training,
@@ -28,15 +29,10 @@ from .mock_generators import (
 from .models import PronunciationAnalysisResponse
 from .pronunciation import AzurePronunciationProvider, PronunciationProviderError
 
-
 settings = Settings.from_env()
 provider = AzurePronunciationProvider(settings)
-app = FastAPI(
-    title="iRead AI",
-    version="0.2.0",
-    description=(
-        "Azure 발음 평가와 백엔드 연동용 결정적 생성 mock을 함께 제공합니다."
-    ),
+app = create_app(
+    settings=settings,
 )
 
 
@@ -49,11 +45,6 @@ def _validate_idempotency(
             status_code=400,
             detail="Idempotency-Key와 requestId가 일치해야 합니다.",
         )
-
-
-@app.get("/health", tags=["system"])
-def health() -> dict[str, str]:
-    return {"status": "UP", "service": "iread-ai"}
 
 
 @app.post(
@@ -221,6 +212,6 @@ async def analyze_pronunciation(
 
 
 def _require_api_key(value: str | None) -> None:
-    expected = settings.internal_api_key
+    expected = settings.internal_api_key.get_secret_value()
     if not expected or value is None or not hmac.compare_digest(value, expected):
         raise HTTPException(status_code=401, detail="invalid API key")

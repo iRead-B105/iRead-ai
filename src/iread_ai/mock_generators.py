@@ -4,9 +4,9 @@ from typing import Any
 
 from .generation_models import (
     ContinueStoryRequest,
+    GeneratedStoryLine,
     GenerateStoryRequest,
     GenerateStoryResponse,
-    GeneratedStoryLine,
     GenerateTrainingRequest,
     GenerateTrainingResponse,
     TrainingCandidateRequest,

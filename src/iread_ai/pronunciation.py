@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import tempfile
+from pathlib import Path
 from typing import Any
 
 from .config import Settings
 from .models import PronunciationAnalysisResponse, PronunciationWordResult
-
 
 ANALYSIS_VERSION = "AZURE_SPEECH_KO_KR_WORD_V1"
 TICKS_PER_MILLISECOND = 10_000
