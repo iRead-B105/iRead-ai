@@ -25,3 +25,11 @@ class PronunciationAnalysisResponse(BaseModel):
     confidence: float = Field(ge=0, le=1)
     analysisVersion: str = Field(min_length=1)
     words: list[PronunciationWordResult] = Field(min_length=1)
+
+
+class SpeechSynthesisRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    requestId: str = Field(min_length=1)
+    text: str = Field(min_length=1)
+    voice: str | None = None

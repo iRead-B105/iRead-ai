@@ -25,12 +25,14 @@ from .mock_generators import (
     generate_story,
     generate_training_candidates,
 )
-from .models import PronunciationAnalysisResponse
+from .models import PronunciationAnalysisResponse, SpeechSynthesisRequest
 from .pronunciation import AzurePronunciationProvider, PronunciationProviderError
+from .synthesis import AzureSpeechSynthesizer, SpeechSynthesisError
 
 
 settings = Settings.from_env()
 provider = AzurePronunciationProvider(settings)
+synthesizer = AzureSpeechSynthesizer(settings)
 app = FastAPI(
     title="iRead AI",
     version="0.2.0",
@@ -218,6 +220,31 @@ async def analyze_pronunciation(
         )
     except PronunciationProviderError as exception:
         raise HTTPException(status_code=502, detail=str(exception)) from exception
+
+
+@app.post("/api/v1/speech/synthesize", tags=["speech"])
+def synthesize_speech(
+    request: SpeechSynthesisRequest,
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> Response:
+    _require_api_key(x_api_key)
+    _validate_idempotency(request.requestId, idempotency_key)
+    try:
+        audio, duration = synthesizer.synthesize(
+            text=request.text,
+            voice=request.voice,
+        )
+    except SpeechSynthesisError as exception:
+        raise HTTPException(status_code=502, detail=str(exception)) from exception
+    return Response(
+        content=audio,
+        media_type="audio/mpeg",
+        headers={
+            "X-Request-Id": request.requestId,
+            "X-Audio-Duration-Ms": str(duration),
+        },
+    )
 
 
 def _require_api_key(value: str | None) -> None:
