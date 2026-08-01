@@ -97,3 +97,31 @@ class GenerateImageResponse(ContractModel):
     requestId: str
     imageUrl: str
     provider: str
+
+
+class EvaluateTrainingRequest(ContractModel):
+    requestId: str = Field(min_length=1)
+    trainingId: int = Field(ge=1)
+    studentId: int = Field(ge=1)
+    trainingTemplateId: int = Field(ge=1)
+    schemaVersion: int = Field(ge=1)
+    result: dict[str, Any]
+
+
+class EvaluateTrainingResponse(ContractModel):
+    requestId: str
+    schemaVersion: int
+    accuracy: float = Field(ge=0, le=100)
+
+
+class SpeechTranscriptionResponse(ContractModel):
+    requestId: str
+    transcript: str
+    confidence: float = Field(ge=0, le=1)
+    durationMs: int = Field(ge=0)
+
+
+class SpeechSynthesisRequest(ContractModel):
+    requestId: str = Field(min_length=1)
+    text: str = Field(min_length=1)
+    voice: str = ""

@@ -10,20 +10,27 @@ from fastapi.responses import Response
 from .config import Settings
 from .generation_models import (
     ContinueStoryRequest,
+    EvaluateTrainingRequest,
+    EvaluateTrainingResponse,
     GenerateImageRequest,
     GenerateImageResponse,
     GenerateStoryRequest,
     GenerateStoryResponse,
     GenerateTrainingRequest,
     GenerateTrainingResponse,
+    SpeechSynthesisRequest,
+    SpeechTranscriptionResponse,
     TrainingCandidateRequest,
     TrainingCandidateResponse,
 )
 from .mock_generators import (
     continue_story,
+    evaluate_training,
     generate_legacy_training,
     generate_story,
     generate_training_candidates,
+    synthesize_speech_mock,
+    transcribe_speech_mock,
 )
 from .models import PronunciationAnalysisResponse
 from .pronunciation import AzurePronunciationProvider, PronunciationProviderError
@@ -91,6 +98,23 @@ def training_generate(
 ) -> GenerateTrainingResponse:
     _validate_idempotency(request.requestId, idempotency_key)
     return generate_legacy_training(request)
+
+
+@app.post(
+    "/api/v1/trainings/evaluate",
+    response_model=EvaluateTrainingResponse,
+    tags=["generation"],
+    summary="훈련 결과 정확도 평가(결정적 mock)",
+)
+def training_evaluate(
+    request: EvaluateTrainingRequest,
+    idempotency_key: str | None = Header(
+        default=None,
+        alias="Idempotency-Key",
+    ),
+) -> EvaluateTrainingResponse:
+    _validate_idempotency(request.requestId, idempotency_key)
+    return evaluate_training(request)
 
 
 @app.post(
@@ -218,6 +242,57 @@ async def analyze_pronunciation(
         )
     except PronunciationProviderError as exception:
         raise HTTPException(status_code=502, detail=str(exception)) from exception
+
+
+@app.post(
+    "/api/v1/speech/transcribe",
+    response_model=SpeechTranscriptionResponse,
+    tags=["speech"],
+    summary="음성 인식(STT) 결정적 mock",
+)
+async def transcribe_speech(
+    requestId: str = Form(min_length=1),
+    studentId: int = Form(ge=1),
+    expectedText: str | None = Form(default=None),
+    audioFile: UploadFile = File(),
+    idempotency_key: str | None = Header(
+        default=None,
+        alias="Idempotency-Key",
+    ),
+) -> SpeechTranscriptionResponse:
+    _validate_idempotency(requestId, idempotency_key)
+    audio = await audioFile.read(settings.max_audio_bytes + 1)
+    await audioFile.close()
+    if not audio:
+        raise HTTPException(status_code=400, detail="audioFile is empty")
+    if len(audio) > settings.max_audio_bytes:
+        raise HTTPException(status_code=413, detail="audioFile is too large")
+    return transcribe_speech_mock(requestId, expectedText)
+
+
+@app.post(
+    "/api/v1/speech/synthesize",
+    tags=["speech"],
+    response_class=Response,
+    summary="음성 합성(TTS) 결정적 mock",
+)
+def synthesize_speech(
+    request: SpeechSynthesisRequest,
+    idempotency_key: str | None = Header(
+        default=None,
+        alias="Idempotency-Key",
+    ),
+) -> Response:
+    _validate_idempotency(request.requestId, idempotency_key)
+    audio, duration_ms = synthesize_speech_mock(request)
+    return Response(
+        content=audio,
+        media_type="audio/mpeg",
+        headers={
+            "X-Request-Id": request.requestId,
+            "X-Audio-Duration-Ms": str(duration_ms),
+        },
+    )
 
 
 def _require_api_key(value: str | None) -> None:

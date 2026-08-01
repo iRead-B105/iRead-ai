@@ -4,11 +4,15 @@ from typing import Any
 
 from .generation_models import (
     ContinueStoryRequest,
+    EvaluateTrainingRequest,
+    EvaluateTrainingResponse,
     GenerateStoryRequest,
     GenerateStoryResponse,
     GeneratedStoryLine,
     GenerateTrainingRequest,
     GenerateTrainingResponse,
+    SpeechSynthesisRequest,
+    SpeechTranscriptionResponse,
     TrainingCandidateRequest,
     TrainingCandidateResponse,
 )
@@ -406,3 +410,56 @@ def continue_story(request: ContinueStoryRequest) -> GenerateStoryResponse:
         completed=True,
         lines=[GeneratedStoryLine(content=content, requiresBranchInput=False) for content in contents],
     )
+
+
+def evaluate_training(request: EvaluateTrainingRequest) -> EvaluateTrainingResponse:
+    """결정적 평가: result.questions의 정답 비율로 accuracy(0~100)를 계산한다.
+
+    questions 구조를 알 수 없거나 비어 있으면 데모 통과를 가정해 100.0을 반환한다.
+    실제 AI 평가 모델 연동은 별도 후속 작업에서 replaces 이 결정적 mock을 대체한다.
+    """
+    questions = request.result.get("questions") or []
+    if questions:
+        correct = sum(
+            1
+            for item in questions
+            if isinstance(item, dict)
+            and (item.get("isCorrect") or item.get("correctionConfirmed"))
+        )
+        accuracy = round(correct / len(questions) * 100, 2)
+    else:
+        accuracy = 100.0
+    return EvaluateTrainingResponse(
+        requestId=request.requestId,
+        schemaVersion=request.schemaVersion,
+        accuracy=accuracy,
+    )
+
+
+# 결정적 STT/TTS mock. 실제 음성 인식·합성은 Azure Speech 연동(P3-F)에서 대체한다.
+_TRANSCRIBE_FALLBACK = "친구를 따라간다"
+# 재생 불가 자리표시자 오디오(ID3 스텁). 백엔드 MockSpeechProcessor와 동등하며,
+# 실제 재생 가능 오디오는 Azure TTS(P3-F)에서 제공한다.
+_SILENT_AUDIO_PLACEHOLDER = b"ID3\x03\x00\x00\x00\x00\x00\x00"
+
+
+def transcribe_speech_mock(
+    request_id: str, expected_text: str | None
+) -> SpeechTranscriptionResponse:
+    transcript = (
+        expected_text.strip()
+        if expected_text and expected_text.strip()
+        else _TRANSCRIBE_FALLBACK
+    )
+    duration_ms = max(300, len(transcript) * 250)
+    return SpeechTranscriptionResponse(
+        requestId=request_id,
+        transcript=transcript,
+        confidence=1.0,
+        durationMs=duration_ms,
+    )
+
+
+def synthesize_speech_mock(request: SpeechSynthesisRequest) -> tuple[bytes, int]:
+    duration_ms = max(400, len(request.text) * 250)
+    return _SILENT_AUDIO_PLACEHOLDER, duration_ms
