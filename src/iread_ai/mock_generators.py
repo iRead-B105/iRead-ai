@@ -4,13 +4,13 @@ from typing import Any
 
 from .generation_models import (
     ContinueStoryRequest,
+    GeneratedStoryLine,
     GenerateStoryRequest,
     GenerateStoryResponse,
-    GeneratedStoryLine,
-    StoryBranchOption,
-    StoryBranchPrompt,
     GenerateTrainingRequest,
     GenerateTrainingResponse,
+    StoryBranchOption,
+    StoryBranchPrompt,
     TrainingCandidateRequest,
     TrainingCandidateResponse,
 )
