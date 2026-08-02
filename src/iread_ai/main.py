@@ -11,8 +11,10 @@ from iread_ai.adapters.generation.gms_gemini_image import (
 from iread_ai.adapters.idempotency.memory import MemoryIdempotencyStore
 from iread_ai.api.comparison import router as comparison_router
 from iread_ai.api.errors import install_error_handlers
+from iread_ai.api.legacy_story import router as legacy_story_router
 from iread_ai.api.story_chapter import router as story_chapter_router
 from iread_ai.api.story_image import router as story_image_router
+from iread_ai.application.legacy_story_service import LegacyStoryGenerationService
 from iread_ai.application.personalized_chapter_service import (
     PersonalizedStoryChapterService,
 )
@@ -60,6 +62,7 @@ def create_app(
         settings
     )
 
+    legacy_story_chapter_service = story_chapter_service
     chapter_analyzer: KoreanReadingAnalyzer | None = None
     chapter_generator: (
         MockChapterCandidateGenerator | OpenAIChapterCandidateGenerator | None
@@ -75,6 +78,13 @@ def create_app(
             repairer=chapter_repairer,
             candidate_count=settings.chapter_candidate_count,
             visual_scene_planner=visual_scene_planner,
+        )
+        legacy_story_chapter_service = PersonalizedStoryChapterService(
+            generator=chapter_generator,
+            analyzer=chapter_analyzer,
+            repairer=chapter_repairer,
+            candidate_count=settings.chapter_candidate_count,
+            visual_scene_planner=MockVisualScenePlanner(),
         )
 
     chapter_comparison_analyzer: KoreanReadingAnalyzer | None = None
@@ -124,12 +134,17 @@ def create_app(
     app.state.settings = settings
     app.state.idempotency_store = idempotency_store
     app.state.story_chapter_service = story_chapter_service
+    assert legacy_story_chapter_service is not None
+    app.state.legacy_story_service = LegacyStoryGenerationService(
+        chapter_service=legacy_story_chapter_service,
+    )
     app.state.story_chapter_analyzer = chapter_analyzer
     app.state.story_image_service = story_image_service
     app.state.chapter_generation_comparison_service = (
         chapter_generation_comparison_service
     )
     install_error_handlers(app)
+    app.include_router(legacy_story_router)
     app.include_router(story_chapter_router)
     app.include_router(story_image_router)
     app.include_router(comparison_router)

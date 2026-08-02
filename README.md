@@ -9,12 +9,17 @@ iRead의 FastAPI AI 서버와 개발용 Streamlit 테스트 UI입니다. 핵심 
 | 구분 | Method | Path | 용도 |
 |---|---|---|---|
 | 상태 | `GET` | `/health` | 서버·글 공급자 확인 |
+| 이야기 나라 시작 | `POST` | `/api/v1/story/generate` | 기존 Backend 계약으로 실제 모델 기반 글 생성 |
+| 이야기 나라 이어쓰기 | `POST` | `/api/v1/story/continue` | 아이의 분기를 반영한 실제 모델 기반 글 생성 |
 | 이야기 | `POST` | `/api/v3/story/chapters/generate` | 실제 개인화 장 생성 |
 | 그림 | `POST` | `/api/v1/story/images/generate` | 실제 페이지 삽화 생성 |
 | 비교 | `POST` | `/api/dev/story/displayed-chapter-comparison` | 개발용 일반 LLM 비교 |
 
-기존 Backend와의 호환을 위해 훈련·이야기 mock 및 발음 평가 v1 경로도
-유지합니다. 실제 개인화 글·그림에는 위 표의 경로를 사용하세요.
+기존 Backend의 이야기 나라가 사용하는 v1 이야기 경로는 v3 개인화 생성기를
+호출한 뒤 기존 5줄 응답으로 변환합니다. 후보 3개를 Kiwi·G2P로 비교하고,
+필요한 문장만 조건부 LLM 국소 교정한 뒤 점수가 좋아질 때만 채택합니다.
+`STORY_PROVIDER=mock`이면 결정적 mock을, `gms` 또는 `openai`이면 실제 모델을
+사용합니다. 훈련 및 발음 평가 호환 경로도 그대로 유지합니다.
 
 ## 2. Docker로 처음 실행
 
@@ -33,12 +38,14 @@ iRead의 FastAPI AI 서버와 개발용 Streamlit 테스트 UI입니다. 핵심 
    AI_INTERNAL_API_KEY=팀내부통신용긴랜덤문자열
    STORY_PROVIDER=gms
    GMS_KEY=발급받은_GMS_키
+   OPENAI_MODEL=gpt-5.4-mini
    STORY_IMAGE_PROVIDER=disabled
    ```
 
    `GMS_KEY`는 AI 서버만 보관하는 환경변수입니다. Swagger·Postman 요청
    헤더에는 넣지 않습니다. 요청의 `X-API-Key`에는
-   `AI_INTERNAL_API_KEY` 값을 넣습니다.
+   `AI_INTERNAL_API_KEY` 값을 넣습니다. `OPENAI_MODEL`은 GMS의 OpenAI
+   호환 API를 사용할 때도 적용되는 글 모델 설정입니다.
 
 3. API와 UI를 빌드하고 실행합니다.
 
@@ -76,11 +83,42 @@ iRead의 FastAPI AI 서버와 개발용 Streamlit 테스트 UI입니다. 핵심 
    docker compose -f compose.dev.yaml logs -f --tail=100 ui
    ```
 
+   이야기 요청 상태와 개인화 품질만 필터링하려면 다음 명령을 사용합니다.
+
+   ```powershell
+   docker compose -f compose.dev.yaml logs -f --tail=100 api 2>&1 |
+     Select-String '"event":"story_generation_'
+   ```
+
 7. 작업을 마치면 종료합니다.
 
    ```powershell
    docker compose -f compose.dev.yaml down
    ```
+
+### 기존 Backend 이야기 나라에 연결
+
+Backend와 AI 서버가 함께 실행될 때 Backend에 다음 환경변수를 설정합니다.
+
+```dotenv
+AI_MOCK_GENERATE=false
+# 현재 전체 데모 Compose에서 AI 컨테이너를 교체한 경우
+AI_BASE_URL=http://iread-ai-mock:8080
+AI_API_KEY=AI서버의_AI_INTERNAL_API_KEY와_같은_값
+```
+
+Backend를 호스트에서 실행하면 `AI_BASE_URL=http://127.0.0.1:8081`, Docker
+Backend가 호스트의 AI 서버를 호출하면
+`AI_BASE_URL=http://host.docker.internal:8081`을 사용합니다.
+
+AI 서버에는 `STORY_PROVIDER=gms`와 `GMS_KEY`를 설정합니다. 이미지 비용 없이
+글 연결만 확인할 때는 `STORY_IMAGE_PROVIDER=disabled`를 유지합니다. 이 경우
+기존 Backend가 호출하는 `/api/v1/images/generate`는 짧은 mock SVG URL만
+반환하며 Gemini 이미지 생성은 호출하지 않습니다.
+
+현재 Backend v1 요청에는 읽기 프로필 스냅샷이 없으므로 호환 어댑터는
+임시 균형형 프로필을 사용합니다. 실제 아동별 개인화에는 Backend가 v3의
+`generationProfile`을 전달하는 후속 연동이 필요합니다.
 
 비용 없이 계약만 확인하려면 `.env`의 `STORY_PROVIDER=mock`을 유지하세요.
 그림 생성은 기본적으로 꺼져 있습니다. 실제 그림을 테스트할 때만

@@ -115,7 +115,7 @@ class GenerateStoryResponse(ContractModel):
     schemaVersion: int
     nextProgress: int = Field(ge=0, le=100)
     completed: bool
-    lines: list[GeneratedStoryLine]
+    lines: list[GeneratedStoryLine] = Field(min_length=5, max_length=5)
 
 
 class GenerateImageRequest(ContractModel):

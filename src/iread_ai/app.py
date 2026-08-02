@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import hmac
 from html import escape
 from urllib.parse import urlencode
@@ -9,11 +10,8 @@ from fastapi.responses import Response
 
 from .config import Settings
 from .generation_models import (
-    ContinueStoryRequest,
     GenerateImageRequest,
     GenerateImageResponse,
-    GenerateStoryRequest,
-    GenerateStoryResponse,
     GenerateTrainingRequest,
     GenerateTrainingResponse,
     TrainingCandidateRequest,
@@ -21,9 +19,7 @@ from .generation_models import (
 )
 from .main import create_app
 from .mock_generators import (
-    continue_story,
     generate_legacy_training,
-    generate_story,
     generate_training_candidates,
 )
 from .models import PronunciationAnalysisResponse
@@ -85,40 +81,6 @@ def training_generate(
 
 
 @app.post(
-    "/api/v1/story/generate",
-    response_model=GenerateStoryResponse,
-    tags=["generation"],
-    summary="이야기 최초 대사 1~5 생성",
-)
-def story_generate(
-    request: GenerateStoryRequest,
-    idempotency_key: str | None = Header(
-        default=None,
-        alias="Idempotency-Key",
-    ),
-) -> GenerateStoryResponse:
-    _validate_idempotency(request.requestId, idempotency_key)
-    return generate_story(request)
-
-
-@app.post(
-    "/api/v1/story/continue",
-    response_model=GenerateStoryResponse,
-    tags=["generation"],
-    summary="분기 선택을 반영한 이야기 대사 6~10 생성",
-)
-def story_continue(
-    request: ContinueStoryRequest,
-    idempotency_key: str | None = Header(
-        default=None,
-        alias="Idempotency-Key",
-    ),
-) -> GenerateStoryResponse:
-    _validate_idempotency(request.requestId, idempotency_key)
-    return continue_story(request)
-
-
-@app.post(
     "/api/v1/images/generate",
     response_model=GenerateImageResponse,
     tags=["generation"],
@@ -137,7 +99,8 @@ def image_generate(
         if request.prompt.strip().startswith("[STORY_CHARACTER]")
         else "scene"
     )
-    query = urlencode({"label": request.prompt, "kind": kind})
+    prompt_digest = hashlib.sha256(request.prompt.encode("utf-8")).hexdigest()[:16]
+    query = urlencode({"label": f"mock-{prompt_digest}", "kind": kind})
     return GenerateImageResponse(
         requestId=request.requestId,
         imageUrl=f"/api/v1/images/mock/generated.svg?{query}",

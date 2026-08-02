@@ -44,7 +44,89 @@ Idempotency-Key: <1~128자의 요청별 고유값>
 Body의 `requestId`와 같은 값을 쓰는 것을 권장하지만 둘이 반드시 같을
 필요는 없습니다.
 
+위 규칙은 v3 API 기준입니다. 기존 Backend용 `/api/v1/story/generate`와
+`/api/v1/story/continue`에서는 `Idempotency-Key`가 Body의 `requestId`와
+정확히 같아야 하며 두 경로 모두 `X-API-Key`가 필수입니다. 불일치는
+`400 IDEMPOTENCY_KEY_MISMATCH`, 동일 키·다른 Body는
+`409 IDEMPOTENCY_CONFLICT`이고 재생 응답에는
+`Idempotent-Replayed: true`가 붙습니다.
+
 개발 비교 API는 `Content-Type`, `X-API-Key`만 사용합니다.
+
+## 기존 Backend 이야기 나라 연결(v1)
+
+현재 Backend의 이야기 나라는 다음 두 경로를 호출합니다.
+
+```http
+POST /api/v1/story/generate
+POST /api/v1/story/continue
+```
+
+`STORY_PROVIDER=gms` 또는 `openai`이면 이 경로도 결정적 mock이 아니라 v3
+개인화 생성기를 호출합니다. AI 서버는 결과를 기존 Backend 계약에 맞게
+변환합니다. 생성 후보 3개를 Kiwi·G2P로 분석해 선택하며, 확정 위반이 있는
+문장만 조건부 LLM 국소 교정합니다. 교정본은 재분석 점수가 좋아지고 이야기
+불변 조건을 지킬 때만 채택하며, 교정 실패·시간 초과 시 원본 후보를
+반환합니다.
+
+- 첫 생성: 일반 대사 4개와 질문 대사 1개, 질문에는 서로 다른 선택지 3개
+- 이어쓰기: 선택 결과를 반영한 일반 대사 5개
+- `Idempotency-Key`는 Body의 `requestId`와 정확히 같아야 함
+- 기존 v1 Body에는 읽기 프로필이 없으므로 현재는 임시 균형형 프로필 사용
+
+첫 생성 Body 예제:
+
+```json
+{
+  "requestId": "story-opening-001",
+  "storyId": 101,
+  "studentId": 2001,
+  "schemaVersion": 1,
+  "currentProgress": 0,
+  "storyTemplate": {
+    "storyTemplateId": 1,
+    "title": "별빛 숲의 친구",
+    "context": "별빛이 비치는 숲에서 동물 친구와 함께 길을 찾는 따뜻한 모험"
+  }
+}
+```
+
+이어쓰기 Body에는 다음 필드가 추가됩니다.
+
+```json
+{
+  "currentProgress": 50,
+  "currentStoryLineId": 5,
+  "branchIntent": "오른쪽 길로 갈래",
+  "history": [
+    {
+      "storyLineId": 5,
+      "content": "어느 길로 갈까요?",
+      "requiresBranchInput": true
+    }
+  ]
+}
+```
+
+위 블록은 추가 필드만 보여 줍니다. 실제 요청에는 첫 생성과 같은 공통
+필드도 모두 포함합니다.
+
+Backend 런타임에는 다음 값을 설정합니다.
+
+```dotenv
+AI_MOCK_GENERATE=false
+# 현재 전체 데모 Compose에서 AI 컨테이너를 교체한 경우
+AI_BASE_URL=http://iread-ai-mock:8080
+AI_API_KEY=AI서버의_AI_INTERNAL_API_KEY와_같은_값
+```
+
+Backend를 호스트에서 실행하면 `AI_BASE_URL=http://127.0.0.1:8081`, Docker
+Backend가 호스트의 AI 서버를 호출하면
+`AI_BASE_URL=http://host.docker.internal:8081`을 사용합니다.
+
+글만 검증할 때 AI 서버의 `STORY_IMAGE_PROVIDER=disabled`를 유지합니다.
+기존 Backend가 호출하는 `/api/v1/images/generate`는 짧은 mock SVG URL을
+반환하므로 실제 이미지 크레딧을 사용하지 않습니다.
 
 ## 3. 첫 장 생성
 
@@ -456,6 +538,33 @@ Body:
 연결 실패와 502·503·504만 동일한 Body와 멱등키로 최대 1회 재시도합니다.
 키, 원본 아동 식별정보, 원본 STT, 모델 원문은 로그에 남기지 않습니다.
 
+### 이야기 생성 상태·품질 로그
+
+`/api/v1/story/generate`와 `/api/v1/story/continue`는 표준 출력에 한 줄 JSON
+이벤트를 남깁니다. API Key, 학생 식별자, 아이 답변, 생성 본문과 프롬프트
+원문은 포함하지 않습니다.
+
+| 이벤트 | 기록 시점 | 주요 필드 |
+|---|---|---|
+| `story_generation_request` | 성공·실패·멱등 재사용 | `operation`, `outcome`, `httpStatus`, `errorCode`, `elapsedMs` |
+| `story_generation_quality` | 최종 후보가 계약 변환까지 통과 | 장·페이지별 `quality`, `generation`, `timingMs` |
+
+`quality`에는 분석 신뢰 상태, 음절 수, 대사 수, 제외·제한 규칙 초과 수,
+`riskPer10`, 규칙별 발생 횟수가 포함됩니다. `generation`에는 후보 수와 선택
+후보, API 호출 수, 국소 교정 시도·채택 여부가 들어갑니다.
+
+```powershell
+docker compose -f compose.dev.yaml logs -f --tail=100 api 2>&1 |
+  Select-String '"event":"story_generation_'
+```
+
+실행 중인 통합 테스트 컨테이너 이름이 `iread-ai-mock`이면 다음처럼 확인합니다.
+
+```powershell
+docker logs -f --tail 100 iread-ai-mock 2>&1 |
+  Select-String '"event":"story_generation_'
+```
+
 ## 11. 호환 API
 
 아래 경로는 기존 Backend 계약을 깨지 않기 위해 유지합니다.
@@ -468,9 +577,12 @@ Body:
 - `GET /api/v1/images/mock/generated.svg`
 - `POST /api/v1/speech/pronunciation/analyze`
 
-`/api/v1/story/generate`, `/continue`, `/api/v1/images/generate`는 실제
-개인화 LLM·Gemini API가 아니라 호환용 결정적 mock입니다. 호환 API의
-인증·멱등 계약은 Swagger의 각 경로를 따릅니다.
+`/api/v1/story/generate`와 `/continue`는 `STORY_PROVIDER` 설정을 따릅니다.
+`mock`이면 결정적 mock, `gms` 또는 `openai`이면 개인화 장 생성 후 기존
+5줄 계약으로 변환합니다. `/api/v1/images/generate`는 기존 Backend 호환용
+mock SVG URL을 반환하며 Gemini를 호출하지 않습니다. 실제 페이지 그림은
+`/api/v1/story/images/generate`를 사용합니다. 호환 API의 인증·멱등 계약은
+Swagger의 각 경로를 따릅니다.
 
 ## 12. 프롬프트 수정
 
