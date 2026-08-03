@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import json
-import tempfile
 from pathlib import Path
 from typing import Any
 
+from .audio import AudioPreparationError, stage_azure_audio
 from .config import Settings
 from .models import PronunciationAnalysisResponse, PronunciationWordResult
 
@@ -34,16 +34,12 @@ class AzurePronunciationProvider:
         if not self._settings.azure_speech_region:
             raise PronunciationProviderError("Azure Speech region is not configured")
 
-        suffix = _safe_suffix(original_filename)
         path: Path | None = None
         try:
-            with tempfile.NamedTemporaryFile(
-                prefix="iread-pronunciation-",
-                suffix=suffix,
-                delete=False,
-            ) as temporary:
-                temporary.write(audio)
-                path = Path(temporary.name)
+            try:
+                path = stage_azure_audio(audio, original_filename)
+            except AudioPreparationError as exception:
+                raise PronunciationProviderError(str(exception)) from exception
             payload = self._recognize(reference_text, path)
             return parse_azure_result(request_id=request_id, payload=payload)
         finally:
@@ -176,12 +172,3 @@ def _ticks_to_ms(value: object) -> int:
 
 def _optional_float(value: object) -> float | None:
     return None if value is None else float(value)
-
-
-def _safe_suffix(filename: str | None) -> str:
-    if not filename:
-        return ".audio"
-    suffix = Path(filename).suffix.lower()
-    if suffix in {".wav", ".webm", ".mp3", ".mp4", ".m4a"}:
-        return suffix
-    return ".audio"
