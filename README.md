@@ -1,7 +1,7 @@
 # iRead AI
 
-iRead의 FastAPI 기반 AI 서비스입니다. GMS 훈련 텍스트 생성, 안전한 Mock 대체와
-Azure 단어별 발음 평가를 제공합니다.
+iRead의 FastAPI 기반 AI 서비스입니다. GMS 맞춤 훈련 생성, 10일 분기 이야기와
+Azure Speech 기반 발음 평가·STT·TTS를 제공합니다.
 
 ## 제공 엔드포인트
 
@@ -10,12 +10,14 @@ Azure 단어별 발음 평가를 제공합니다.
 | `GET` | `/health` | 서버 상태 확인 |
 | `POST` | `/api/v1/trainings/candidates` | 34개 훈련 타입별 문항 후보 생성 |
 | `POST` | `/api/v1/trainings/generate` | 레거시 훈련 데이터 envelope 생성 |
-| `POST` | `/api/v1/trainings/evaluate` | 훈련 정답률 평가 |
-| `POST` | `/api/v1/story/generate` | 최초 이야기 대사 1~5 생성 |
-| `POST` | `/api/v1/story/continue` | 분기 선택을 반영한 대사 6~10 생성 |
+| `POST` | `/api/v1/trainings/evaluate` | 훈련 결과 정확도 평가 |
+| `POST` | `/api/v1/story/generate` | 1일차 첫 4페이지와 첫 분기 생성 |
+| `POST` | `/api/v1/story/continue` | 음성 선택을 반영해 당일 5페이지·마감 1페이지 또는 다음 날 첫 4페이지 생성 |
 | `POST` | `/api/v1/images/generate` | 훈련 장면·이야기 친구 이미지 URL 생성 |
 | `GET` | `/api/v1/images/mock/generated.svg` | 생성된 mock SVG 조회 |
 | `POST` | `/api/v1/speech/pronunciation/analyze` | Azure 단어별 발음 평가 |
+| `POST` | `/api/v1/speech/transcribe` | 이야기·훈련 음성 STT |
+| `POST` | `/api/v1/speech/synthesize` | 이야기 문장 TTS |
 
 정확한 요청·응답 모델은 실행 후 `http://localhost:8081/docs`의 OpenAPI
 문서에서 확인할 수 있습니다.
@@ -42,20 +44,16 @@ uv run pytest
 Backend의 `AI_API_KEY`와 AI 서버의 `AI_INTERNAL_API_KEY`는 같은 값을
 사용합니다.
 
-## GMS A안 훈련 생성
+## GMS 맞춤 훈련 생성
 
-실제 훈련 텍스트는 GMS의 OpenAI 호환 Responses API와 `gpt-5.4-mini`를 사용합니다.
+훈련 후보는 GMS의 OpenAI 호환 Responses API와 `gpt-5.4-mini`를 사용합니다.
 
 - 자동 테스트와 기본 로컬 실행: `AI_GENERATION_PROVIDER=mock`
 - 실제 GMS 실행: `AI_GENERATION_PROVIDER=gms`와 `GMS_KEY` 설정
-- 모든 내부 요청: `X-API-Key`와 `Idempotency-Key` 필수
-- 같은 멱등성 키·같은 본문: 저장된 응답 재생
-- 같은 멱등성 키·다른 본문: `409 Conflict`
-- 텍스트 공급자 오류 또는 검증 실패: 안전한 결정적 콘텐츠 즉시 반환
-- 실제 키는 응답과 로그에 포함하지 않음
-
-Production에서는 기본 개발 키와 Mock provider를 사용할 수 없습니다.
-
+- 외부 응답은 JSON Schema와 훈련별 안전 규칙을 통과해야 사용
+- 공급자 오류·시간 초과·검증 실패 시 안전한 결정적 후보로 대체
+- 같은 멱등성 키와 본문은 저장 응답을 재생하고, 다른 본문은 `409` 반환
+- Production에서는 기본 개발 키와 Mock 생성 provider 사용 금지
 
 ## 발음 평가
 
@@ -70,7 +68,8 @@ Production에서는 기본 개발 키와 Mock provider를 사용할 수 없습�
 - Azure 자격증명과 원본 응답은 응답·로그에 노출하지 않음
 
 WAV는 8/16kHz, 16-bit mono PCM을 기본 입력으로 사용합니다. WebM·MP3·MP4/M4A
-같은 압축 음성 처리는 별도 음성 통합 브랜치에서 제공합니다.
+같은 압축 음성 처리를 위해서는 Azure Speech SDK와 같은 아키텍처의 GStreamer
+런타임 및 플러그인이 필요합니다.
 
 ## 생성 mock 책임 범위
 

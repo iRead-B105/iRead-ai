@@ -5,18 +5,22 @@ from html import escape
 from typing import Any, Callable
 from urllib.parse import urlencode
 
-from fastapi import FastAPI, File, Form, Header, HTTPException, Query, UploadFile
-from fastapi.responses import Response
+from fastapi import FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
+from fastapi.responses import JSONResponse, Response
 
 from .config import Settings
 from .generation_models import (
     ContinueStoryRequest,
+    EvaluateTrainingRequest,
+    EvaluateTrainingResponse,
     GenerateImageRequest,
     GenerateImageResponse,
     GenerateStoryRequest,
     GenerateStoryResponse,
     GenerateTrainingRequest,
     GenerateTrainingResponse,
+    SpeechSynthesisRequest,
+    SpeechTranscriptionResponse,
     TrainingCandidateRequest,
     TrainingCandidateResponse,
 )
@@ -28,20 +32,35 @@ from .idempotency import (
 )
 from .mock_generators import (
     continue_story,
+    evaluate_training,
     generate_legacy_training,
     generate_story,
 )
-from .models import (
-    PronunciationAnalysisResponse,
-    TrainingEvaluateRequest,
-    TrainingEvaluateResponse,
+from .models import PronunciationAnalysisResponse
+from .pronunciation import (
+    AzurePronunciationProvider,
+    DeterministicPronunciationProvider,
+    PronunciationProviderError,
 )
-from .pronunciation import AzurePronunciationProvider, PronunciationProviderError
+from .speech import (
+    AzureSpeechProvider,
+    DeterministicSpeechProvider,
+    SpeechProviderError,
+)
 from .providers import GMSTextProvider
 
 
 settings = Settings.from_env()
-provider = AzurePronunciationProvider(settings)
+provider = (
+    AzurePronunciationProvider(settings)
+    if settings.pronunciation_provider == "azure"
+    else DeterministicPronunciationProvider()
+)
+speech_provider = (
+    AzureSpeechProvider(settings)
+    if settings.speech_provider == "azure"
+    else DeterministicSpeechProvider()
+)
 idempotency_store = MemoryIdempotencyStore(
     ttl_seconds=settings.idempotency_ttl_seconds
 )
@@ -60,33 +79,36 @@ app = FastAPI(
     title="iRead AI",
     version="0.3.0",
     description=(
-        "GMS 훈련 생성, 안전 대체 콘텐츠와 Azure 발음 평가를 제공합니다."
+        "GMS 훈련 생성, 10일 분기 이야기와 Azure 음성 처리를 제공합니다."
     ),
 )
+
+
+@app.middleware("http")
+async def require_internal_api_key(request: Request, call_next):
+    """Protect every mutable internal AI endpoint with the shared backend key."""
+    if request.method != "GET" and request.url.path.startswith("/api/v1/"):
+        expected = settings.internal_api_key
+        supplied = request.headers.get("X-API-Key")
+        if not expected or supplied is None or not hmac.compare_digest(supplied, expected):
+            return JSONResponse(status_code=401, content={"detail": "invalid API key"})
+    return await call_next(request)
 
 
 def _validate_idempotency(
     request_id: str,
     header_value: str | None,
 ) -> None:
-    if header_value is not None and header_value != request_id:
+    if header_value is None or not header_value.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Idempotency-Key is required",
+        )
+    if header_value != request_id:
         raise HTTPException(
             status_code=400,
             detail="Idempotency-Key와 requestId가 일치해야 합니다.",
         )
-
-
-def _authorize(
-    x_api_key: str | None,
-    idempotency_key: str | None,
-) -> str:
-    _require_api_key(x_api_key)
-    if idempotency_key is None or not idempotency_key.strip():
-        raise HTTPException(status_code=400, detail="Idempotency-Key is required")
-    key = idempotency_key.strip()
-    if len(key) > 256:
-        raise HTTPException(status_code=400, detail="Idempotency-Key is too long")
-    return key
 
 
 def _execute_idempotent(
@@ -115,26 +137,6 @@ def _execute_idempotent(
         ) from exception
 
 
-def _evaluate_training(
-    request: TrainingEvaluateRequest,
-) -> TrainingEvaluateResponse:
-    questions = request.result.get("questions")
-    if not isinstance(questions, list) or not questions:
-        accuracy = 0.0
-    else:
-        correct = sum(
-            1
-            for question in questions
-            if isinstance(question, dict) and question.get("isCorrect") is True
-        )
-        accuracy = round(correct * 100 / len(questions), 2)
-    return TrainingEvaluateResponse(
-        requestId=request.requestId,
-        schemaVersion=request.schemaVersion,
-        accuracy=accuracy,
-    )
-
-
 @app.get("/health", tags=["system"])
 def health() -> dict[str, str]:
     return {"status": "UP", "service": "iread-ai"}
@@ -149,16 +151,15 @@ def health() -> dict[str, str]:
 def training_candidates(
     request: TrainingCandidateRequest,
     response: Response,
-    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
     idempotency_key: str | None = Header(
         default=None,
         alias="Idempotency-Key",
     ),
 ) -> TrainingCandidateResponse:
-    key = _authorize(x_api_key, idempotency_key)
+    _validate_idempotency(request.requestId, idempotency_key)
     result, replayed = _execute_idempotent(
         scope="training-candidates",
-        key=key,
+        key=idempotency_key,
         payload=request.model_dump(mode="json"),
         action=lambda: generate_training(request, text_provider),
     )
@@ -179,16 +180,15 @@ def training_candidates(
 def training_generate(
     request: GenerateTrainingRequest,
     response: Response,
-    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
     idempotency_key: str | None = Header(
         default=None,
         alias="Idempotency-Key",
     ),
 ) -> GenerateTrainingResponse:
-    key = _authorize(x_api_key, idempotency_key)
+    _validate_idempotency(request.requestId, idempotency_key)
     result, replayed = _execute_idempotent(
         scope="training-generate",
-        key=key,
+        key=idempotency_key,
         payload=request.model_dump(mode="json"),
         action=lambda: generate_legacy_training(request),
     )
@@ -199,26 +199,19 @@ def training_generate(
 
 @app.post(
     "/api/v1/trainings/evaluate",
-    response_model=TrainingEvaluateResponse,
+    response_model=EvaluateTrainingResponse,
     tags=["generation"],
-    summary="훈련 결과 정확도 평가",
+    summary="훈련 결과 정확도 평가(결정적 mock)",
 )
 def training_evaluate(
-    request: TrainingEvaluateRequest,
-    response: Response,
-    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
-    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
-) -> TrainingEvaluateResponse:
-    key = _authorize(x_api_key, idempotency_key)
-    result, replayed = _execute_idempotent(
-        scope="training-evaluate",
-        key=key,
-        payload=request.model_dump(mode="json"),
-        action=lambda: _evaluate_training(request),
-    )
-    if replayed:
-        response.headers["Idempotent-Replayed"] = "true"
-    return result
+    request: EvaluateTrainingRequest,
+    idempotency_key: str | None = Header(
+        default=None,
+        alias="Idempotency-Key",
+    ),
+) -> EvaluateTrainingResponse:
+    _validate_idempotency(request.requestId, idempotency_key)
+    return evaluate_training(request)
 
 
 @app.post(
@@ -346,6 +339,68 @@ async def analyze_pronunciation(
         )
     except PronunciationProviderError as exception:
         raise HTTPException(status_code=502, detail=str(exception)) from exception
+
+
+@app.post(
+    "/api/v1/speech/transcribe",
+    response_model=SpeechTranscriptionResponse,
+    tags=["speech"],
+    summary="음성 인식(STT)",
+)
+async def transcribe_speech(
+    requestId: str = Form(min_length=1),
+    studentId: int = Form(ge=1),
+    expectedText: str | None = Form(default=None),
+    audioFile: UploadFile = File(),
+    idempotency_key: str | None = Header(
+        default=None,
+        alias="Idempotency-Key",
+    ),
+) -> SpeechTranscriptionResponse:
+    _validate_idempotency(requestId, idempotency_key)
+    audio = await audioFile.read(settings.max_audio_bytes + 1)
+    await audioFile.close()
+    if not audio:
+        raise HTTPException(status_code=400, detail="audioFile is empty")
+    if len(audio) > settings.max_audio_bytes:
+        raise HTTPException(status_code=413, detail="audioFile is too large")
+    del studentId, expectedText
+    try:
+        return speech_provider.transcribe(
+            request_id=requestId,
+            audio=audio,
+            original_filename=audioFile.filename,
+        )
+    except SpeechProviderError as exception:
+        raise HTTPException(status_code=502, detail=str(exception)) from exception
+
+
+@app.post(
+    "/api/v1/speech/synthesize",
+    tags=["speech"],
+    response_class=Response,
+    summary="음성 합성(TTS)",
+)
+def synthesize_speech(
+    request: SpeechSynthesisRequest,
+    idempotency_key: str | None = Header(
+        default=None,
+        alias="Idempotency-Key",
+    ),
+) -> Response:
+    _validate_idempotency(request.requestId, idempotency_key)
+    try:
+        result = speech_provider.synthesize(request)
+    except SpeechProviderError as exception:
+        raise HTTPException(status_code=502, detail=str(exception)) from exception
+    return Response(
+        content=result.audio,
+        media_type=result.media_type,
+        headers={
+            "X-Request-Id": request.requestId,
+            "X-Audio-Duration-Ms": str(result.duration_ms),
+        },
+    )
 
 
 def _require_api_key(value: str | None) -> None:

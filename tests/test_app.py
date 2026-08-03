@@ -55,6 +55,7 @@ def test_analyze_endpoint_returns_word_array(monkeypatch) -> None:
             azure_speech_region="koreacentral",
             azure_speech_language="ko-KR",
             max_audio_bytes=1024,
+            pronunciation_provider="azure",
         ),
     )
     monkeypatch.setattr(app_module, "provider", FakeProvider())
@@ -90,6 +91,7 @@ def test_rejects_wrong_internal_api_key(monkeypatch) -> None:
             azure_speech_region="koreacentral",
             azure_speech_language="ko-KR",
             max_audio_bytes=1024,
+            pronunciation_provider="azure",
         ),
     )
     client = TestClient(app_module.app)

@@ -13,6 +13,9 @@ class Settings:
     azure_speech_region: str
     azure_speech_language: str
     max_audio_bytes: int
+    pronunciation_provider: str
+    speech_provider: str = "deterministic"
+    azure_speech_voice: str = "ko-KR-SunHiNeural"
     app_env: str = "development"
     generation_provider: str = "mock"
     gms_key: str = ""
@@ -29,25 +32,33 @@ class Settings:
         max_audio_bytes = int(os.getenv("AI_MAX_AUDIO_BYTES", "20971520"))
         if max_audio_bytes <= 0:
             raise ValueError("AI_MAX_AUDIO_BYTES must be greater than zero")
-        provider = os.getenv(
-            "AI_GENERATION_PROVIDER", os.getenv("STORY_PROVIDER", "mock")
-        ).lower()
-        if provider not in {"mock", "gms"}:
+        pronunciation_provider = os.getenv(
+            "AI_PRONUNCIATION_PROVIDER", "deterministic"
+        ).strip().lower()
+        if pronunciation_provider not in {"azure", "deterministic"}:
+            raise ValueError(
+                "AI_PRONUNCIATION_PROVIDER must be azure or deterministic"
+            )
+        speech_provider = os.getenv(
+            "AI_SPEECH_PROVIDER", pronunciation_provider
+        ).strip().lower()
+        if speech_provider not in {"azure", "deterministic"}:
+            raise ValueError("AI_SPEECH_PROVIDER must be azure or deterministic")
+        generation_provider = os.getenv("AI_GENERATION_PROVIDER", "mock").strip().lower()
+        if generation_provider not in {"mock", "gms"}:
             raise ValueError("AI_GENERATION_PROVIDER must be mock or gms")
-        app_env = os.getenv("APP_ENV", "development").lower()
-        internal_api_key = os.getenv(
-            "AI_INTERNAL_API_KEY", "local-development-key"
-        )
-        gms_key = os.getenv("GMS_KEY", "")
+        app_env = os.getenv("APP_ENV", "development").strip().lower()
         if app_env not in {"development", "test", "production"}:
             raise ValueError("APP_ENV must be development, test, or production")
+        internal_api_key = os.getenv("AI_INTERNAL_API_KEY", "")
+        gms_key = os.getenv("GMS_KEY", "")
         if not internal_api_key:
             raise ValueError("AI_INTERNAL_API_KEY must not be empty")
         if app_env == "production" and internal_api_key == "local-development-key":
             raise ValueError("set a unique AI_INTERNAL_API_KEY in production")
-        if app_env == "production" and provider == "mock":
+        if app_env == "production" and generation_provider == "mock":
             raise ValueError("AI_GENERATION_PROVIDER=mock is not allowed in production")
-        if provider == "gms" and not gms_key:
+        if generation_provider == "gms" and not gms_key:
             raise ValueError("GMS_KEY is required when AI_GENERATION_PROVIDER=gms")
         text_timeout = float(os.getenv("AI_GMS_TEXT_TIMEOUT_SECONDS", "28"))
         output_tokens = int(os.getenv("AI_GMS_MAX_OUTPUT_TOKENS", "3200"))
@@ -64,8 +75,13 @@ class Settings:
             azure_speech_region=os.getenv("AZURE_SPEECH_REGION", ""),
             azure_speech_language=os.getenv("AZURE_SPEECH_LANGUAGE", "ko-KR"),
             max_audio_bytes=max_audio_bytes,
+            pronunciation_provider=pronunciation_provider,
+            speech_provider=speech_provider,
+            azure_speech_voice=os.getenv(
+                "AZURE_SPEECH_VOICE", "ko-KR-SunHiNeural"
+            ).strip(),
             app_env=app_env,
-            generation_provider=provider,
+            generation_provider=generation_provider,
             gms_key=gms_key,
             gms_base_url=os.getenv("GMS_BASE_URL", "https://gms.ssafy.io/gmsapi"),
             gms_openai_base_url=os.getenv("GMS_OPENAI_BASE_URL", ""),
