@@ -576,6 +576,10 @@ def build_chapter_generation_context(
             else None
         ),
         conclude=request.conclude,
+        expected_page_count=request.chapter_plan.max_pages,
+        expected_sentences_per_page=(
+            request.generation_profile.content_contract.sentence_count
+        ),
     )
 
 
@@ -607,7 +611,7 @@ def build_chapter_generation_profile(
             for skill in payload.skills
         ),
         content_contract=ContentContract(
-            sentence_count=4,
+            sentence_count=contract.sentence_count,
             preferred_min_syllables=(
                 contract.preferred_written_syllables.min
             ),
@@ -878,6 +882,7 @@ async def _repair_selected_chapter(
                 selected.candidate.child_detour_end_sentence_index
             ),
             question=selected.candidate.question,
+            subtitle=selected.candidate.subtitle,
             choices=selected.candidate.choices,
         )
         proposal_partition = _partition_candidate(
@@ -964,6 +969,7 @@ def _evaluate_chapters(
                 *context.ordered_events,
                 *candidate.sentences,
             ),
+            previous_question=context.last_question,
         )
         question_answer_leak_penalty = _question_answer_leak_penalty(
             candidate.question,
@@ -1104,10 +1110,10 @@ def _assess_page(
         <= contract.accepted_max_syllables
     ):
         failures.append("WRITTEN_SYLLABLE_RANGE")
-    if body.dialogue_sentence_count != contract.direct_dialogue:
+    if body.dialogue_sentence_count > contract.direct_dialogue:
         failures.append("DIRECT_DIALOGUE_COUNT")
     if (
-        contract.direct_dialogue == 1
+        body.dialogue_sentence_count > 0
         and not has_exact_spoken_dialogue(sentences, characters)
     ):
         failures.append("CURLY_DIALOGUE_FORMAT")
@@ -1445,10 +1451,22 @@ def _question_focus_penalty(
 def _question_temporal_penalty(
     question: str | None,
     completed_texts: tuple[str, ...],
+    *,
+    previous_question: str | None = None,
 ) -> int:
     if question is None:
         return 0
     normalized_question = " ".join(question.split())
+    if previous_question is not None:
+        normalized_previous = re.sub(
+            r"[\s.?!。？！]+",
+            "",
+            previous_question,
+        )
+        if re.sub(r"[\s.?!。？！]+", "", normalized_question) == (
+            normalized_previous
+        ):
+            return 3
     completed_text = " ".join(completed_texts)
     completed_families = {
         index
@@ -1577,6 +1595,11 @@ def _response_document(
                     if branch_required
                     else None
                 ),
+                "subtitle": (
+                    _candidate_subtitle(selected.candidate)
+                    if branch_required
+                    else None
+                ),
                 "choices": (
                     list(selected.candidate.choices)
                     if branch_required
@@ -1682,6 +1705,16 @@ def _response_document(
             "lastQuestion": final_question,
         },
     }
+
+
+def _candidate_subtitle(candidate: ChapterCandidate) -> str:
+    if candidate.subtitle is not None and candidate.subtitle.strip():
+        return candidate.subtitle.strip()[:40]
+    source = next(
+        (choice.strip() for choice in candidate.choices if choice.strip()),
+        (candidate.question or "다음 이야기").strip(),
+    )
+    return source[:40]
 
 
 def _page_quality_document(

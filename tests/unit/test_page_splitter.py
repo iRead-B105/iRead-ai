@@ -72,6 +72,13 @@ def test_nine_sentences_never_create_a_five_sentence_page() -> None:
     assert [len(page.sentences) for page in result.pages] == [3, 3, 3]
 
 
+def test_pages_without_dialogue_are_valid_when_one_is_the_maximum() -> None:
+    result = partition_chapter_sentences(_chapter(9, set()))
+
+    assert result.contract_pass
+    assert all(page.direct_dialogue_count == 0 for page in result.pages)
+
+
 def test_forced_first_break_keeps_child_detour_on_first_page() -> None:
     sentences = _chapter(10, {2, 6, 9})
 

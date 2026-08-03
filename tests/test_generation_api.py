@@ -3,6 +3,8 @@ from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
 import iread_ai.app as app_module
+from iread_ai.main import create_app
+from iread_ai.ports.story_image_generator import GeneratedStoryImage
 
 client = TestClient(app_module.app)
 AUTH_HEADERS = {"X-API-Key": "test-internal-key"}
@@ -15,14 +17,26 @@ def request_headers(request_id: str) -> dict[str, str]:
 @pytest.fixture(autouse=True)
 def configured_internal_key(monkeypatch) -> None:
     configured = app_module.settings.model_copy(
-        update={"internal_api_key": SecretStr(AUTH_HEADERS["X-API-Key"])}
+        update={
+            "app_env": "test",
+            "internal_api_key": SecretStr(AUTH_HEADERS["X-API-Key"]),
+            "story_provider": "mock",
+            "story_image_provider": "disabled",
+        }
     )
+    mock_app = create_app(settings=configured)
     monkeypatch.setattr(
         app_module,
         "settings",
         configured,
     )
+    monkeypatch.setattr(app_module, "legacy_image_generator", None)
     monkeypatch.setattr(app_module.app.state, "settings", configured)
+    monkeypatch.setattr(
+        app_module.app.state,
+        "legacy_story_service",
+        mock_app.state.legacy_story_service,
+    )
 
 
 def candidate_request(training_type: str) -> dict:
@@ -229,6 +243,44 @@ def test_image_generation_returns_retrievable_png() -> None:
     assert image.status_code == 200
     assert image.headers["content-type"].startswith("image/png")
     assert image.content.startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_real_image_generation_uses_storybook_policy(monkeypatch) -> None:
+    class RecordingImageGenerator:
+        model = "test-image-model"
+
+        def __init__(self) -> None:
+            self.prompt = ""
+            self.aspect_ratio = ""
+
+        async def generate(self, *, prompt, references, aspect_ratio):
+            assert references == ()
+            self.prompt = prompt
+            self.aspect_ratio = aspect_ratio
+            return GeneratedStoryImage(
+                content=b"\x89PNG\r\n\x1a\nimage",
+                mime_type="image/png",
+            )
+
+    generator = RecordingImageGenerator()
+    monkeypatch.setattr(app_module, "legacy_image_generator", generator)
+    app_module._generated_images.clear()
+
+    response = client.post(
+        "/api/v1/images/generate",
+        headers=request_headers("image-policy-1"),
+        json={
+            "requestId": "image-policy-1",
+            "prompt": "거북이가 숲길의 작은 돌을 힘껏 밀어요.",
+        },
+    )
+
+    assert response.status_code == 200
+    assert generator.aspect_ratio == "21:9"
+    assert "가장 중요한 순간 하나와 초점 행동 하나" in generator.prompt
+    assert "구경꾼이나 장식용 생명체를 추가하지" in generator.prompt
+    assert "[UNTRUSTED STORY SCENE DATA]" in generator.prompt
+    assert "거북이가 숲길의 작은 돌을 힘껏 밀어요." in generator.prompt
 
 
 def test_internal_generation_rejects_missing_api_key() -> None:

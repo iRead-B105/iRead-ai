@@ -58,6 +58,7 @@ def _app(
             story_provider="openai" if is_production else "mock",
             openai_api_key="unused-test-key" if is_production else None,
             generation_provider="gms" if is_production else "mock",
+            story_image_provider="disabled",
             gms_key="unused-gms-test-key" if is_production else None,
         ),
         chapter_generation_comparison_service=service,

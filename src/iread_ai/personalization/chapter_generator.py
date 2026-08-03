@@ -46,6 +46,8 @@ class ChapterGenerationContext:
     characters: tuple[str, ...] = ()
     question_focus: str | None = None
     conclude: bool = False
+    expected_page_count: int = 3
+    expected_sentences_per_page: int = 3
 
     def __post_init__(self) -> None:
         _require_nonblank(self.story_title, "story_title")
@@ -53,6 +55,10 @@ class ChapterGenerationContext:
         _require_nonblank(self.chapter_goal, "chapter_goal")
         if self.chapter_number < 1:
             raise ValueError("chapter_number must be at least one")
+        if not 2 <= self.expected_page_count <= 4:
+            raise ValueError("expected_page_count must be between 2 and 4")
+        if self.expected_sentences_per_page not in {3, 4}:
+            raise ValueError("expected_sentences_per_page must be 3 or 4")
         if not self.ordered_events:
             raise ValueError("ordered_events must contain at least one event")
         for field_name, values in (
@@ -137,6 +143,10 @@ class ChapterGenerationContext:
                 else None
             ),
             "chapter_mode": "ending" if self.conclude else "continuing",
+            "expected_page_count": self.expected_page_count,
+            "expected_sentence_count": (
+                self.expected_page_count * self.expected_sentences_per_page
+            ),
             "child_branch_plan": {
                 "active": child_branch_active,
                 "answer_to_question": (
@@ -152,9 +162,9 @@ class ChapterGenerationContext:
                     else None
                 ),
                 "answer_delivery": (
-                    "sentence_2_direct_dialogue"
+                    "natural_direct_dialogue"
                     if spoken_answer
-                    else "sentence_1_narration"
+                    else "natural_narrative_event"
                 )
                 if child_branch_active
                 else None,
@@ -172,24 +182,18 @@ class ChapterGenerationContext:
                 "sentence_roles": (
                     [
                         (
-                            "1문장: 답을 말할 인물과 즉시 일어날 "
-                            "행동을 직접 준비"
+                            "첫 3문장: 답을 기존 인물의 자연스러운 대사와 "
+                            "행동으로 실행"
                             if spoken_answer
-                            else "1문장: 아이 답이 이야기 속 실제 사건으로 발생"
+                            else "첫 3문장: 아이 답이 이야기 속 실제 사건으로 발생"
                         ),
-                        (
-                            "2문장: 아이 답을 해당 인물의 유일한 직접 "
-                            "대사로 그대로 실행"
-                            if spoken_answer
-                            else "2문장: 기존 등장인물이 그 사건에 구체적으로 반응"
-                        ),
-                        "3문장: 엉뚱하고 짧은 결과가 한 번 더 이어짐",
-                        "4문장: 아이 답의 결과를 본래 장 사건의 원인으로 연결",
+                        "첫 3문장: 기존 등장인물이 구체적으로 반응",
+                        "첫 3문장: 답의 결과를 본래 장 사건의 원인으로 연결",
                     ]
                     if child_branch_active
                     else []
                 ),
-                "end_sentence_index": 4 if child_branch_active else None,
+                "end_sentence_index": 3 if child_branch_active else None,
                 "must_return_to_main_story": child_branch_active,
                 "later_callback_required": child_branch_active,
             },
@@ -202,6 +206,7 @@ class ChapterCandidate:
     sentences: tuple[str, ...]
     child_detour_end_sentence_index: int | None = None
     question: str | None = None
+    subtitle: str | None = None
     choices: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
@@ -216,19 +221,25 @@ class ChapterCandidate:
                 raise ValueError("each sentence must contain Korean text")
         detour_end = self.child_detour_end_sentence_index
         if detour_end is not None:
-            if detour_end != 4:
+            if detour_end not in {3, 4}:
                 raise ValueError(
-                    "child_detour_end_sentence_index must be 4"
+                    "child_detour_end_sentence_index must be 3 or 4"
                 )
             if detour_end > len(self.sentences):
                 raise ValueError(
                     "child_detour_end_sentence_index exceeds sentence count"
                 )
         if self.question is None:
-            if self.choices:
-                raise ValueError("choices require a question")
+            if self.subtitle is not None or self.choices:
+                raise ValueError("subtitle and choices require a question")
         else:
             _require_nonblank(self.question, "question")
+            if self.subtitle is not None:
+                _require_nonblank(self.subtitle, "subtitle")
+                if len(self.subtitle) > 40:
+                    raise ValueError(
+                        "subtitle must contain at most 40 characters"
+                    )
             if len(self.choices) != 3:
                 raise ValueError(
                     "a continuing chapter must contain exactly three choices"
@@ -248,6 +259,7 @@ class ChapterCandidate:
         }
         if self.question is not None:
             document["question"] = self.question
+            document["subtitle"] = self.subtitle
             document["choices"] = list(self.choices)
         return document
 
@@ -419,6 +431,7 @@ class OpenAIChapterCandidateGenerator:
         payload = {
             "model": self._model,
             "store": False,
+            "reasoning": {"effort": "low"},
             "input": [
                 {
                     "role": "system",
@@ -442,6 +455,11 @@ class OpenAIChapterCandidateGenerator:
                             context.child_input.strip()
                         ),
                         branch_required=not context.conclude,
+                        expected_page_count=context.expected_page_count,
+                        expected_sentence_count=(
+                            context.expected_page_count
+                            * context.expected_sentences_per_page
+                        ),
                     ),
                 }
             },
@@ -452,44 +470,54 @@ class OpenAIChapterCandidateGenerator:
             "Content-Type": "application/json",
         }
         started = time.perf_counter()
-        response = await self._post(payload=payload, headers=headers)
-        elapsed_ms = (time.perf_counter() - started) * 1000
-        if response.status_code >= 400:
-            raise ChapterGenerationError(
-                (
-                    "OpenAI Responses API request failed "
-                    f"with status {response.status_code}"
-                ),
-                retryable=(
-                    response.status_code in {408, 409, 429}
-                    or response.status_code >= 500
-                ),
-            )
+        for attempt in range(2):
+            try:
+                response = await self._post(payload=payload, headers=headers)
+            except ChapterGenerationError as exc:
+                if attempt == 0 and exc.retryable:
+                    continue
+                raise
+            if response.status_code >= 400:
+                raise ChapterGenerationError(
+                    (
+                        "OpenAI Responses API request failed "
+                        f"with status {response.status_code}"
+                    ),
+                    retryable=(
+                        response.status_code in {408, 409, 429}
+                        or response.status_code >= 500
+                    ),
+                )
 
-        try:
-            data = response.json()
-            if data.get("status") not in {None, "completed"}:
-                raise ValueError("response did not complete")
-            raw_output = _extract_output_text(data)
-            document = json.loads(raw_output)
-            candidates = _parse_candidates(
-                document,
-                expected_count=candidate_count,
-                child_branch_active=bool(context.child_input.strip()),
-                branch_required=not context.conclude,
-            )
-            usage = data.get("usage", {})
-            if not isinstance(usage, dict):
-                usage = {}
-        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
-            raise ChapterGenerationError(
-                (
-                    "OpenAI returned an invalid story-chapter document "
-                    f"({type(exc).__name__}: {exc})"
-                ),
-                retryable=False,
-                raw_output=locals().get("raw_output"),
-            ) from exc
+            try:
+                data = response.json()
+                if data.get("status") not in {None, "completed"}:
+                    raise ValueError("response did not complete")
+                raw_output = _extract_output_text(data)
+                document = json.loads(raw_output)
+                candidates = _parse_candidates(
+                    document,
+                    expected_count=candidate_count,
+                    child_branch_active=bool(context.child_input.strip()),
+                    branch_required=not context.conclude,
+                )
+                usage = data.get("usage", {})
+                if not isinstance(usage, dict):
+                    usage = {}
+                break
+            except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+                if attempt == 0:
+                    continue
+                raise ChapterGenerationError(
+                    (
+                        "OpenAI returned an invalid story-chapter document "
+                        f"({type(exc).__name__}: {exc})"
+                    ),
+                    retryable=False,
+                    raw_output=locals().get("raw_output"),
+                ) from exc
+
+        elapsed_ms = (time.perf_counter() - started) * 1000
 
         return ChapterGenerationBatch(
             candidates=candidates,
@@ -618,6 +646,8 @@ def _chapter_candidate_schema(
     *,
     child_branch_active: bool,
     branch_required: bool,
+    expected_page_count: int,
+    expected_sentence_count: int,
 ) -> dict[str, Any]:
     candidate_required = [
         "candidate_id",
@@ -634,8 +664,8 @@ def _chapter_candidate_schema(
         },
         "sentences": {
             "type": "array",
-            "minItems": 8,
-            "maxItems": 16,
+            "minItems": expected_sentence_count,
+            "maxItems": expected_sentence_count,
             "items": {
                 "type": "string",
                 "minLength": 1,
@@ -645,18 +675,19 @@ def _chapter_candidate_schema(
         "child_detour_end_sentence_index": (
             {
                 "type": "integer",
-                "enum": [4],
+                "enum": [3],
             }
             if child_branch_active
             else {"type": "null"}
         ),
         "dialogue_sentence_indexes": {
             "type": "array",
-            "minItems": 2,
-            "maxItems": 4,
+            "minItems": (expected_page_count + 1) // 2,
+            "maxItems": expected_page_count,
             "items": {
                 "type": "integer",
-                "enum": [2, 6, 10, 14],
+                "minimum": 1,
+                "maximum": expected_sentence_count,
             },
         },
         "child_input_later_effect": (
@@ -677,12 +708,17 @@ def _chapter_candidate_schema(
         ),
     }
     if branch_required:
-        candidate_required.extend(("question", "choices"))
+        candidate_required.extend(("question", "subtitle", "choices"))
         candidate_properties.update(
             {
                 "question": {
                     "type": "string",
                     "minLength": 1,
+                },
+                "subtitle": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 40,
                 },
                 "choices": {
                     "type": "array",
@@ -764,6 +800,11 @@ def _parse_candidates(
                     if branch_required
                     else None
                 ),
+                subtitle=(
+                    str(raw_candidate["subtitle"]).strip()
+                    if branch_required
+                    else None
+                ),
                 choices=(
                     tuple(
                         str(choice).strip() for choice in raw_choices
@@ -838,14 +879,14 @@ def _mock_candidate(
         companion=companion,
     )
     if child_input:
+        short_input = _truncate_hangul(child_input, max_syllables=8)
         sentences = (
-            f"숲길에서 {child_input} 일이 갑자기 벌어져요.",
-            f"{main_character}는 놀라서 제자리에서 한 바퀴 돌아요.",
-            f"{companion}는 “정말 별난 일이네!” 하고 크게 웃어요.",
-            "작은 소동이 잦아들자 두 친구는 다시 길을 나서요.",
-            *planned_sentences[:4],
+            f"아이의 {short_input} 선택이 곧 이루어져요.",
+            f"{main_character}는 그 선택을 믿고 움직여요.",
+            f"{companion}도 곁에서 힘껏 도와주어요.",
+            *planned_sentences[:9],
         )
-        detour_end = 4
+        detour_end = 3
     else:
         sentences = planned_sentences
         detour_end = None
@@ -855,6 +896,7 @@ def _mock_candidate(
         sentences=sentences,
         child_detour_end_sentence_index=detour_end,
         question=suffix if not context.conclude else None,
+        subtitle="다음 모험의 갈림길" if not context.conclude else None,
         choices=(
             (
                 "함께 한 걸음 더 가요.",
@@ -874,10 +916,10 @@ def _mock_planned_sentences(
     companion: str,
 ) -> tuple[str, ...]:
     reactions = (
-        f"{companion}는 {main_character}의 반응을 곁에서 지켜봐요.",
-        f"{main_character}도 멈추지 않고 다음 행동을 이어 가요.",
-        f"{main_character}와 {companion}는 달라진 상황을 함께 맞아요.",
-        f"{companion}도 마지막까지 곁에서 함께 움직여요.",
+        "두 친구는 서로의 생각을 차분히 나눠요.",
+        "새로운 흔적이 숲길 위로 선명히 보여요.",
+        "작은 선택이 다음 사건을 크게 바꾸어요.",
+        "남은 궁금증이 다음 모험으로 이어져요.",
     )
     sentences: list[str] = []
     for index, raw_event in enumerate(context.ordered_events[:4]):
@@ -887,7 +929,14 @@ def _mock_planned_sentences(
         event = event.split(". 반드시 포함할 개념:", maxsplit=1)[0].strip()
         if event and event[-1] not in ".!?":
             event += "."
-        sentences.extend((event, reactions[index]))
+        short_event = _truncate_hangul(event, max_syllables=12)
+        sentences.extend(
+            (
+                f"{short_event} 일이 시작돼요.",
+                reactions[index],
+                "친구는 “다음 단서를 찾아보자!” 하고 말해요.",
+            )
+        )
 
     fallback = (
         _mock_sentence(context.chapter_goal),
@@ -896,12 +945,12 @@ def _mock_planned_sentences(
         f"{main_character}와 {companion}는 다음 사건을 함께 맞아요.",
     )
     for sentence in fallback:
-        if len(sentences) >= 8:
+        if len(sentences) >= 12:
             break
         sentences.append(sentence)
-    while len(sentences) < 8:
+    while len(sentences) < 12:
         sentences.append(reactions[len(sentences) % len(reactions)])
-    return tuple(sentences[:16])
+    return tuple(sentences[:12])
 
 
 def _mock_sentence(text: str) -> str:
@@ -909,6 +958,18 @@ def _mock_sentence(text: str) -> str:
     if sentence and sentence[-1] not in ".!?":
         sentence += "."
     return sentence
+
+
+def _truncate_hangul(text: str, *, max_syllables: int) -> str:
+    result: list[str] = []
+    syllables = 0
+    for character in text.strip().rstrip(".?!。？！ "):
+        if "가" <= character <= "힣":
+            if syllables == max_syllables:
+                break
+            syllables += 1
+        result.append(character)
+    return "".join(result).strip()
 
 
 __all__ = [

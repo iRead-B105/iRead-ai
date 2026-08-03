@@ -328,6 +328,16 @@ def test_natural_repetition_verb_counts_as_spoken_dialogue() -> None:
     )
 
 
+def test_named_speaker_can_finish_dialogue_with_a_natural_reaction() -> None:
+    sentences = (
+        "거북이는 노란 잎을 펼쳐요.",
+        "친구가 “그 잎, 아직 안 날아갔네!” 하고 웃어요.",
+        "바람이 잎 가장자리를 흔들어요.",
+    )
+
+    assert has_exact_spoken_dialogue(sentences, ("거북이", "친구"))
+
+
 @pytest.mark.parametrize(
     "meta_sentence",
     (

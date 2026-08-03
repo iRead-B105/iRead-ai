@@ -93,10 +93,13 @@ class StoryBranchOption(ContractModel):
 
 
 class StoryBranchPrompt(ContractModel):
+    subtitle: str = Field(min_length=1, max_length=40)
     options: list[StoryBranchOption] = Field(min_length=3, max_length=3)
 
     @model_validator(mode="after")
     def validate_options(self) -> "StoryBranchPrompt":
+        if self.subtitle != self.subtitle.strip():
+            raise ValueError("branch subtitle must not have surrounding whitespace")
         option_numbers = {option.optionNo for option in self.options}
         labels = {option.label.strip() for option in self.options}
         if option_numbers != {1, 2, 3}:

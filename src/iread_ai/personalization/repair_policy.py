@@ -34,6 +34,7 @@ _REPORTING_VERB_PATTERN = re.compile(
     r"중얼(?:거려요|거렸어요)|"
     r"노래(?:해요|했어요)|"
     r"응원(?:해요|했어요)|"
+    r"웃(?:어요|었어요)|"
     r"소리(?:쳐요|쳤어요))"
 )
 _HANGUL_WORD_PATTERN = re.compile(r"[가-힣]+")
@@ -143,15 +144,13 @@ def build_repair_plan(
             }
         )
 
-    exact_dialogue = has_exact_spoken_dialogue(
+    dialogue_sentence_indexes = _dialogue_sentence_indexes(candidate.sentences)
+    if dialogue_sentence_indexes and not has_exact_spoken_dialogue(
         candidate.sentences,
         context.characters,
-    )
-    if not exact_dialogue:
+    ):
         trigger_reasons.append("CONTRACT:CURLY_DIALOGUE_FORMAT")
-        affected = _dialogue_sentence_indexes(candidate.sentences)
-        if not affected:
-            affected = [2]
+        affected = dialogue_sentence_indexes
         if 1 in affected and child_input_signal_preserved(
             candidate.sentences[0],
             context.child_input,
@@ -386,7 +385,10 @@ def evaluate_repair(
         proposal_candidate.sentences,
         context.characters,
     )
-    if not has_exact_spoken_dialogue(
+    proposal_dialogue_indexes = _dialogue_sentence_indexes(
+        proposal_candidate.sentences
+    )
+    if proposal_dialogue_indexes and not has_exact_spoken_dialogue(
         proposal_candidate.sentences,
         context.characters,
     ):
@@ -519,8 +521,12 @@ def evaluate_repair(
     elif proposal.risk_per_10 < source.risk_per_10 - 1e-9:
         improvements.append("NORMALIZED_RISK_REDUCED")
 
+    source_dialogue_indexes = _dialogue_sentence_indexes(
+        source_candidate.sentences
+    )
     if (
-        not has_exact_spoken_dialogue(
+        source_dialogue_indexes
+        and not has_exact_spoken_dialogue(
             source_candidate.sentences,
             context.characters,
         )
@@ -623,7 +629,7 @@ def _contract_repair_hint(code: str) -> str:
             "행동과 인과를 바꾸지 않고 전체 한글 음절을 허용 범위에 맞추세요."
         ),
         "DIRECT_DIALOGUE_COUNT": (
-            "기존 화자와 의미를 유지해 직접 대사 문장을 정확히 하나로 만드세요."
+            "기존 화자와 의미를 유지해 직접 대사를 페이지당 허용된 최대 개수 이하로 줄이세요."
         ),
     }.get(code, "현재 사건의 의미를 유지하면서 해당 계약만 고치세요.")
 

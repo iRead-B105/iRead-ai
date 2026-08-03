@@ -54,7 +54,7 @@ class Settings(BaseSettings):
     openai_base_url: str = "https://api.openai.com/v1"
     openai_max_output_tokens: int = Field(default=2400, ge=256, le=16_384)
     openai_chapter_max_output_tokens: int = Field(
-        default=5000,
+        default=8000,
         ge=1024,
         le=16_384,
     )
@@ -68,7 +68,7 @@ class Settings(BaseSettings):
         gt=0,
         le=20.0,
     )
-    chapter_candidate_count: int = Field(default=3, ge=1, le=8)
+    chapter_candidate_count: int = Field(default=1, ge=1, le=8)
 
     gms_key: SecretStr | None = None
     gms_base_url: str = "https://gms.ssafy.io/gmsapi"
@@ -93,7 +93,7 @@ class Settings(BaseSettings):
     )
     character_reference_dir: Path = Path("assets/character-references")
 
-    model_timeout_seconds: float = Field(default=28.0, gt=0, le=29.0)
+    model_timeout_seconds: float = Field(default=75.0, gt=0, le=120.0)
     idempotency_ttl_seconds: float = Field(
         default=600.0,
         gt=0,
