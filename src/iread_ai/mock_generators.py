@@ -9,6 +9,8 @@ from .generation_models import (
     GenerateStoryRequest,
     GenerateStoryResponse,
     GeneratedStoryLine,
+    StoryBranchOption,
+    StoryBranchPrompt,
     GenerateTrainingRequest,
     GenerateTrainingResponse,
     SpeechSynthesisRequest,
@@ -473,6 +475,16 @@ STORY_SCRIPTS: dict[str, dict[str, list[str]]] = {
 }
 
 
+def _story_branch_prompt() -> StoryBranchPrompt:
+    return StoryBranchPrompt(
+        options=[
+            StoryBranchOption(optionNo=1, label="반짝이는 별빛 길로 간다"),
+            StoryBranchOption(optionNo=2, label="작은 친구가 가리킨 숲길로 간다"),
+            StoryBranchOption(optionNo=3, label="맑은 시냇물 길을 따라간다"),
+        ]
+    )
+
+
 def _story_script(request: GenerateStoryRequest, key: str) -> list[str]:
     """title로 동화 스크립트를 찾는다. 없으면 generic 대사로 폴백."""
     script = STORY_SCRIPTS.get(request.storyTemplate.title)
@@ -505,7 +517,11 @@ def generate_story(request: GenerateStoryRequest) -> GenerateStoryResponse:
         nextProgress=4,
         completed=False,
         lines=[
-            GeneratedStoryLine(content=content, requiresBranchInput=index == 3)
+            GeneratedStoryLine(
+                content=content,
+                requiresBranchInput=index == 3,
+                branchPrompt=_story_branch_prompt() if index == 3 else None,
+            )
             for index, content in enumerate(contents)
         ],
     )
@@ -566,6 +582,11 @@ def continue_story(request: ContinueStoryRequest) -> GenerateStoryResponse:
             GeneratedStoryLine(
                 content=content,
                 requiresBranchInput=branch_on_last_line and index == len(contents) - 1,
+                branchPrompt=(
+                    _story_branch_prompt()
+                    if branch_on_last_line and index == len(contents) - 1
+                    else None
+                ),
             )
             for index, content in enumerate(contents)
         ],

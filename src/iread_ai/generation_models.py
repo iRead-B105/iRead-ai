@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class ContractModel(BaseModel):
@@ -75,9 +75,39 @@ class ContinueStoryRequest(GenerateStoryRequest):
     history: list[StoryHistoryLine] = Field(default_factory=list)
 
 
+class StoryBranchOption(ContractModel):
+    optionNo: int = Field(ge=1, le=3)
+    label: str = Field(min_length=1, max_length=80)
+
+
+class StoryBranchPrompt(ContractModel):
+    options: list[StoryBranchOption] = Field(min_length=3, max_length=3)
+
+    @model_validator(mode="after")
+    def validate_options(self) -> "StoryBranchPrompt":
+        option_numbers = {option.optionNo for option in self.options}
+        labels = {option.label.strip() for option in self.options}
+        if option_numbers != {1, 2, 3}:
+            raise ValueError("branch option numbers must be 1, 2, and 3")
+        if len(labels) != 3 or any(not label for label in labels):
+            raise ValueError("branch option labels must be unique and non-empty")
+        if any(option.label != option.label.strip() for option in self.options):
+            raise ValueError("branch option labels must not have surrounding whitespace")
+        return self
+
+
 class GeneratedStoryLine(ContractModel):
-    content: str
+    content: str = Field(min_length=1)
     requiresBranchInput: bool
+    branchPrompt: StoryBranchPrompt | None = None
+
+    @model_validator(mode="after")
+    def validate_branch_prompt(self) -> "GeneratedStoryLine":
+        if self.requiresBranchInput != (self.branchPrompt is not None):
+            raise ValueError(
+                "branchPrompt is required only when requiresBranchInput is true"
+            )
+        return self
 
 
 class GenerateStoryResponse(ContractModel):
