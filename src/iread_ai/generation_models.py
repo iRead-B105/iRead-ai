@@ -124,4 +124,4 @@ class SpeechTranscriptionResponse(ContractModel):
 class SpeechSynthesisRequest(ContractModel):
     requestId: str = Field(min_length=1)
     text: str = Field(min_length=1)
-    voice: str = ""
+    voice: str | None = None

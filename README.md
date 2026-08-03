@@ -10,8 +10,8 @@ iRead의 FastAPI 기반 AI 서비스입니다. Azure 단어별 발음 평가와 
 | `GET` | `/health` | 서버 상태 확인 |
 | `POST` | `/api/v1/trainings/candidates` | 34개 훈련 타입별 문항 후보 생성 |
 | `POST` | `/api/v1/trainings/generate` | 레거시 훈련 데이터 envelope 생성 |
-| `POST` | `/api/v1/story/generate` | 최초 이야기 대사 1~5 생성 |
-| `POST` | `/api/v1/story/continue` | 분기 선택을 반영한 대사 6~10 생성 |
+| `POST` | `/api/v1/story/generate` | 1일차 첫 4페이지와 첫 분기 생성 |
+| `POST` | `/api/v1/story/continue` | 음성 선택을 반영해 당일 5페이지·마감 1페이지 또는 다음 날 첫 4페이지 생성 |
 | `POST` | `/api/v1/images/generate` | 훈련 장면·이야기 친구 이미지 URL 생성 |
 | `GET` | `/api/v1/images/mock/generated.svg` | 생성된 mock SVG 조회 |
 | `POST` | `/api/v1/speech/pronunciation/analyze` | Azure 단어별 발음 평가 |

@@ -497,27 +497,78 @@ def _story_script(request: GenerateStoryRequest, key: str) -> list[str]:
 
 
 def generate_story(request: GenerateStoryRequest) -> GenerateStoryResponse:
-    contents = _story_script(request, "start")
+    start_script = _story_script(request, "start")
+    contents = [*start_script[:3], start_script[-1]]
     return GenerateStoryResponse(
         requestId=request.requestId,
         schemaVersion=request.schemaVersion,
-        nextProgress=50,
+        nextProgress=4,
         completed=False,
         lines=[
-            GeneratedStoryLine(content=content, requiresBranchInput=index == 4)
+            GeneratedStoryLine(content=content, requiresBranchInput=index == 3)
             for index, content in enumerate(contents)
         ],
     )
 
 
+def _clean_branch_intent(intent: str) -> str:
+    cleaned = intent.strip().strip('"\'“”‘’').rstrip(".?!。？！ ")
+    return cleaned or "친구들이 함께 힘을 모으는 것"
+
+
+def _continuation_segment(request: ContinueStoryRequest) -> tuple[list[str], bool]:
+    page_count = len(request.history)
+    page_in_day = page_count % 10
+    day = page_count // 10 + 1
+    title = request.storyTemplate.title
+    intent = _clean_branch_intent(request.branchIntent)
+
+    if page_in_day == 0:
+        return ([
+            f"{title}의 {day}일차 아침이 밝았어요.",
+            "어제의 선택을 기억한 친구들이 다시 길을 나섰어요.",
+            "길 앞에는 생각하지 못한 새로운 일이 기다리고 있었어요.",
+            "친구들은 어떻게 하면 좋을지 샛별이의 생각을 기다렸어요.",
+        ], True)
+
+    if page_in_day == 4:
+        return ([
+            f"샛별이는 ‘{intent}’라고 정했고, 이야기에서도 그 선택이 그대로 이루어졌어요.",
+            "친구들은 그 선택을 믿고 힘차게 앞으로 나아갔어요.",
+            "선택한 길에서 새로운 친구와 중요한 단서를 만났어요.",
+            "조금 전의 선택은 이야기 속 사건과 결과를 바꾸었어요.",
+            "이제 다음에는 어떤 일이 일어나면 좋을지 말해 볼까요?",
+        ], True)
+
+    if page_in_day == 9:
+        if page_count == 99:
+            return ([
+                f"마지막에도 ‘{intent}’ 선택이 이루어지며 모두가 기쁜 결말을 맞았어요.",
+            ], False)
+        return ([
+            f"‘{intent}’ 선택이 이루어지며 오늘의 모험이 즐겁게 마무리되었어요.",
+        ], False)
+
+    raise ValueError(
+        f"story continuation must start after page 4, 9, or 10 (received {page_count})"
+    )
+
+
 def continue_story(request: ContinueStoryRequest) -> GenerateStoryResponse:
-    contents = _story_script(request, "continue")
+    contents, branch_on_last_line = _continuation_segment(request)
+    next_progress = min(len(request.history) + len(contents), 100)
     return GenerateStoryResponse(
         requestId=request.requestId,
         schemaVersion=request.schemaVersion,
-        nextProgress=100,
-        completed=True,
-        lines=[GeneratedStoryLine(content=content, requiresBranchInput=False) for content in contents],
+        nextProgress=next_progress,
+        completed=next_progress == 100,
+        lines=[
+            GeneratedStoryLine(
+                content=content,
+                requiresBranchInput=branch_on_last_line and index == len(contents) - 1,
+            )
+            for index, content in enumerate(contents)
+        ],
     )
 
 

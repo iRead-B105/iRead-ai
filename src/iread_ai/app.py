@@ -4,8 +4,8 @@ import hmac
 from html import escape
 from urllib.parse import urlencode
 
-from fastapi import FastAPI, File, Form, Header, HTTPException, Query, UploadFile
-from fastapi.responses import Response
+from fastapi import FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
+from fastapi.responses import JSONResponse, Response
 
 from .config import Settings
 from .generation_models import (
@@ -29,15 +29,31 @@ from .mock_generators import (
     generate_legacy_training,
     generate_story,
     generate_training_candidates,
-    synthesize_speech_mock,
-    transcribe_speech_mock,
 )
 from .models import PronunciationAnalysisResponse
-from .pronunciation import AzurePronunciationProvider, PronunciationProviderError
+from .pronunciation import (
+    AzurePronunciationProvider,
+    DeterministicPronunciationProvider,
+    PronunciationProviderError,
+)
+from .speech import (
+    AzureSpeechProvider,
+    DeterministicSpeechProvider,
+    SpeechProviderError,
+)
 
 
 settings = Settings.from_env()
-provider = AzurePronunciationProvider(settings)
+provider = (
+    AzurePronunciationProvider(settings)
+    if settings.pronunciation_provider == "azure"
+    else DeterministicPronunciationProvider()
+)
+speech_provider = (
+    AzureSpeechProvider(settings)
+    if settings.speech_provider == "azure"
+    else DeterministicSpeechProvider()
+)
 app = FastAPI(
     title="iRead AI",
     version="0.2.0",
@@ -45,6 +61,17 @@ app = FastAPI(
         "Azure 발음 평가와 백엔드 연동용 결정적 생성 mock을 함께 제공합니다."
     ),
 )
+
+
+@app.middleware("http")
+async def require_internal_api_key(request: Request, call_next):
+    """Protect every mutable internal AI endpoint with the shared backend key."""
+    if request.method != "GET" and request.url.path.startswith("/api/v1/"):
+        expected = settings.internal_api_key
+        supplied = request.headers.get("X-API-Key")
+        if not expected or supplied is None or not hmac.compare_digest(supplied, expected):
+            return JSONResponse(status_code=401, content={"detail": "invalid API key"})
+    return await call_next(request)
 
 
 def _validate_idempotency(
@@ -248,7 +275,7 @@ async def analyze_pronunciation(
     "/api/v1/speech/transcribe",
     response_model=SpeechTranscriptionResponse,
     tags=["speech"],
-    summary="음성 인식(STT) 결정적 mock",
+    summary="음성 인식(STT)",
 )
 async def transcribe_speech(
     requestId: str = Form(min_length=1),
@@ -267,14 +294,22 @@ async def transcribe_speech(
         raise HTTPException(status_code=400, detail="audioFile is empty")
     if len(audio) > settings.max_audio_bytes:
         raise HTTPException(status_code=413, detail="audioFile is too large")
-    return transcribe_speech_mock(requestId, expectedText)
+    del studentId, expectedText
+    try:
+        return speech_provider.transcribe(
+            request_id=requestId,
+            audio=audio,
+            original_filename=audioFile.filename,
+        )
+    except SpeechProviderError as exception:
+        raise HTTPException(status_code=502, detail=str(exception)) from exception
 
 
 @app.post(
     "/api/v1/speech/synthesize",
     tags=["speech"],
     response_class=Response,
-    summary="음성 합성(TTS) 결정적 mock",
+    summary="음성 합성(TTS)",
 )
 def synthesize_speech(
     request: SpeechSynthesisRequest,
@@ -284,13 +319,16 @@ def synthesize_speech(
     ),
 ) -> Response:
     _validate_idempotency(request.requestId, idempotency_key)
-    audio, duration_ms = synthesize_speech_mock(request)
+    try:
+        result = speech_provider.synthesize(request)
+    except SpeechProviderError as exception:
+        raise HTTPException(status_code=502, detail=str(exception)) from exception
     return Response(
-        content=audio,
-        media_type="audio/mpeg",
+        content=result.audio,
+        media_type=result.media_type,
         headers={
             "X-Request-Id": request.requestId,
-            "X-Audio-Duration-Ms": str(duration_ms),
+            "X-Audio-Duration-Ms": str(result.duration_ms),
         },
     )
 

@@ -5,6 +5,10 @@ WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY src ./src
 
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN pip install --no-cache-dir .
 
 EXPOSE 8080
