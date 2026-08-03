@@ -469,10 +469,10 @@ async def test_v2_dialogue_format_is_part_of_chapter_quality() -> None:
     )
 
 
-async def test_hard_dialogue_failure_uses_one_conditional_repair_call() -> None:
+async def test_malformed_dialogue_uses_one_conditional_repair_call() -> None:
     source = chapter_candidate()
     sentences = list(source.sentences)
-    sentences[5] = "거북이는 멈추지 않고 계속 가겠다고 다짐해요."
+    sentences[5] = '거북이는 "난 멈추지 않고 갈 거야!"라고 말해요.'
     sentences[6] = "토끼는 뒤를 보며 거북이를 기다려요."
     repairer = DialogueRepairer()
     generator = RecordingChapterGenerator(
@@ -513,7 +513,7 @@ async def test_hard_dialogue_failure_uses_one_conditional_repair_call() -> None:
 async def test_visual_scene_llm_receives_final_repaired_pages() -> None:
     source = chapter_candidate()
     sentences = list(source.sentences)
-    sentences[5] = "거북이는 멈추지 않고 계속 가겠다고 다짐해요."
+    sentences[5] = '거북이는 "난 멈추지 않고 갈 거야!"라고 말해요.'
     sentences[6] = "토끼는 뒤를 보며 거북이를 기다려요."
     planner = RecordingVisualScenePlanner()
     service = PersonalizedStoryChapterService(
@@ -581,7 +581,7 @@ async def test_three_sentence_dynamic_page_can_be_repaired() -> None:
             "거북이는 웃으며 앞을 바라봐요.",
             "두 친구는 다시 경주 길로 가요.",
             "토끼는 큰 나무 아래에서 잠깐 쉬어요.",
-            "거북이는 멈추지 않고 언덕을 천천히 올라가요.",
+            '거북이는 "멈추지 않고 언덕을 갈 거야!"라고 말해요.',
             "바람은 거북이의 등을 살며시 밀어 줘요.",
             "거북이는 언덕 꼭대기를 향해 계속 걸어요.",
             "“이제 거의 다 왔어.” 거북이가 말해요.",

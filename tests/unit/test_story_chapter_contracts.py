@@ -219,6 +219,7 @@ def response_payload(
                     if branching
                     else None
                 ),
+                "subtitle": "숲길의 새로운 갈림길" if branching else None,
                 "choices": (
                     ["꽃길로 가요.", "냇물 길로 가요.", "숲길로 가요."]
                     if branching
@@ -436,6 +437,7 @@ def test_response_allows_branching_only_on_final_page() -> None:
     payload = response_payload()
     payload["pages"][0].update(
         {
+            "subtitle": "먼저 만난 갈림길",
             "question": "먼저 고를까요?",
             "choices": ["네.", "아니요.", "아직 모르겠어요."],
             "requiresBranchInput": True,

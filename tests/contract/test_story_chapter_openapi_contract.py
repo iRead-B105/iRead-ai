@@ -128,6 +128,7 @@ def test_story_chapter_v3_response_exposes_dynamic_pages_and_quality() -> None:
         "sentences",
         "visualScene",
         "question",
+        "subtitle",
         "choices",
         "requiresBranchInput",
     } == set(page_schema["required"])

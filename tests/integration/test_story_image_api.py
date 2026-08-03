@@ -35,6 +35,8 @@ def client(
         app_env="test",
         internal_api_key=API_KEY,
         story_provider="mock",
+        story_image_provider="disabled",
+        generation_provider="mock",
         gms_key=None,
         idempotency_ttl_seconds=60,
     )
@@ -152,6 +154,8 @@ def test_unconfigured_endpoint_reports_503() -> None:
         app_env="test",
         internal_api_key=API_KEY,
         story_provider="mock",
+        story_image_provider="disabled",
+        generation_provider="mock",
         gms_key=None,
     )
     with TestClient(create_app(settings=settings)) as client:
