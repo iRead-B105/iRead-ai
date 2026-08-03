@@ -6,18 +6,36 @@ from .generation_models import (
     ContinueStoryRequest,
     EvaluateTrainingRequest,
     EvaluateTrainingResponse,
+    GeneratedStoryLine,
     GenerateStoryRequest,
     GenerateStoryResponse,
-    GeneratedStoryLine,
-    StoryBranchOption,
-    StoryBranchPrompt,
     GenerateTrainingRequest,
     GenerateTrainingResponse,
-    SpeechSynthesisRequest,
-    SpeechTranscriptionResponse,
+    StoryBranchOption,
+    StoryBranchPrompt,
     TrainingCandidateRequest,
     TrainingCandidateResponse,
 )
+
+
+def evaluate_training(request: EvaluateTrainingRequest) -> EvaluateTrainingResponse:
+    """Return deterministic accuracy for the legacy training contract."""
+    questions = request.result.get("questions") or []
+    if questions:
+        correct = sum(
+            1
+            for item in questions
+            if isinstance(item, dict)
+            and (item.get("isCorrect") or item.get("correctionConfirmed"))
+        )
+        accuracy = round(correct / len(questions) * 100, 2)
+    else:
+        accuracy = 100.0
+    return EvaluateTrainingResponse(
+        requestId=request.requestId,
+        schemaVersion=request.schemaVersion,
+        accuracy=accuracy,
+    )
 
 WORDS = ["사과", "나무", "바다", "토끼", "모자"]
 SENTENCES = [
@@ -375,106 +393,6 @@ def generate_legacy_training(request: GenerateTrainingRequest) -> GenerateTraini
     )
 
 
-STORY_SCRIPTS: dict[str, dict[str, list[str]]] = {
-    "토끼와 거북이": {
-        "start": [
-            "어느 숲 속, 빠른 토끼와 느린 거북이가 살고 있었어요.",
-            "어느 날 토끼가 거북이를 놀리며 달리기 시합을 하자고 했어요.",
-            "거북이는 흔쾌히 시합을 시작했고, 토끼는 훌쩍 앞서나갔어요.",
-            "쉬운 시합이라 자만한 토끼는 길가에 주저앉아 잠을 잤어요.",
-            "잠든 토끼를 깨울까요, 아니면 가만히 둘까요?",
-        ],
-        "continue": [
-            "토끼는 잠에서 늦게 깨어 거북이를 뒤쫓았어요.",
-            "하지만 거북이는 이미 결승선 가까이 다가가 있었지요.",
-            "거북이는 한 걸음 한 걸음 멈추지 않고 걸었어요.",
-            "마침내 거북이가 먼저 결승선을 통과했어요.",
-            "토끼는 부끄러워 고개를 들지 못했답니다.",
-        ],
-    },
-    "개미와 배짱이": {
-        "start": [
-            "따뜻한 여름, 부지런한 개미와 노래하는 배짱이가 살고 있었어요.",
-            "개미는 매일 먹이를 모으느라 바빴어요.",
-            "배짱이는 노래만 부르며 놀고 먹었지요.",
-            "가을이 깊어지고 추운 겨울이 다가오고 있었어요.",
-            "배짱이는 개미에게 먹이를 나눠달라고 할까요, 혼자 견뎌야 할까요?",
-        ],
-        "continue": [
-            "배짱이는 찬 바람을 맞으며 개미네 집을 찾아갔어요.",
-            '"개미야, 추운 겨울을 날 먹이를 조금만 나눠줄 수 없을까?"',
-            "개미는 마음을 다잡며 지난여름을 떠올렸어요.",
-            "개미는 배짱이에게 다음부터는 함께 일하는 법을 알려주었어요.",
-            "다음해 여름, 배짱이도 부지런히 먹이를 모았답니다.",
-        ],
-    },
-    "노인과 바다": {
-        "start": [
-            "바닷가 마을에 바다를 사랑하는 늙은 어부가 있었어요.",
-            "어부는 여든네 날 동안 물고기를 한 마리도 잡지 못했어요.",
-            "어느 날, 어부는 아주 먼 바다로 나아갔어요.",
-            "큰 낚싯바늘에 자신보다 큰 물고기가 걸려들었지요.",
-            "거대한 물고기를 그냥 놓아줄까요, 끝까지 잡아볼까요?",
-        ],
-        "continue": [
-            "어부는 작은 배에 매달린 물고기와 며칠을 보냈어요.",
-            "물고기는 마침내 지쳐 어부에게 길을 열어주었어요.",
-            "돌아오는 길, 상어 떼가 피 냄새를 맡고 따라왔어요.",
-            "어부는 노를 단단히 쥐고 끝까지 포기하지 않았어요.",
-            "비록 남은 건 뼈뿐이었지만, 어부의 마음은 단단했답니다.",
-        ],
-    },
-    "신데렐라": {
-        "start": [
-            "옛날에 착하고 예쁜 신데렐라라는 소녀가 살고 있었어요.",
-            "계모와 언니들은 신데렐라에게 잔심부름만 시켰어요.",
-            "어느 날, 왕자님의 무도회 초대장이 왔어요.",
-            "신데렐라는 혼자 남아 슬퍼하고 있었지요.",
-            "슬픈 신데렐라를 도와줄까요, 아니면 그냥 둘까요?",
-        ],
-        "continue": [
-            "그때 반짝, 요정 할머니가 나타나셨어요.",
-            "호박은 마차로, 쥐는 말로, 누더기는 예쁜 옷으로 변했어요.",
-            '"밤 열두 시가 되면 꼭 돌아와라." 할머니가 당부하셨지요.',
-            "무도회에서 왕자님과 춤을 추는 사이 시계가 열두 시를 쳤어요.",
-            "떨어진 유리구두 한 짝이 왕자님을 신데렐라에게 이끌었답니다.",
-        ],
-    },
-    "별주부전": {
-        "start": [
-            "깊은 바다 용궁에 용왕님이 크게 앓아누웠어요.",
-            "약은 토끼의 간뿐이라는 말에 별주부가 육지로 갔어요.",
-            "별주부는 꾀로 토끼를 꼬드겨 용궁으로 데려갔어요.",
-            "토끼는 위험을 눈치채고 마음을 다잡았어요.",
-            "토끼는 속아 간을 내주어야 할까요, 꾀로 빠져나갈까요?",
-        ],
-        "continue": [
-            '토끼는 웃으며 말했어요. "내 간은 육지 바위 틈에 두고 왔단다."',
-            "별주부는 하는 수 없이 토끼를 다시 육지로 데려갔어요.",
-            "육지에 오자 토끼는 별주부를 멋지게 놀려 주었지요.",
-            "별주부는 부끄럽고 미안해 빈 손으로 돌아갔어요.",
-            "그 뒤로 토끼의 꾀와 별주부의 뜻밖 수고가 전해졌답니다.",
-        ],
-    },
-    "아기돼지 삼형제": {
-        "start": [
-            "숲 속에 아기돼지 삼형제가 살고 있었어요.",
-            "첫째는 짚으로, 둘째는 나무로 집을 지었어요.",
-            "셋째는 부지런히 벽돌로 튼튼한 집을 지었지요.",
-            "어느 날 무서운 늑대가 나타나 크게 불었어요.",
-            "짚집과 나무집이 흔들려요. 벽돌집으로 달아날까요, 그 자리를 지킬까요?",
-        ],
-        "continue": [
-            "두 형제는 숨이 턱에 차 벽돌집으로 달려갔어요.",
-            "늑대는 벽돌집도 불어 넘기려고 안간힘을 썼어요.",
-            "하지만 튼튼한 벽돌집은 꿈쩍도 하지 않았어요.",
-            "막내돼지의 꾀로 늑대는 굴뚝으로 털썩 떨어졌지요.",
-            "삼형제는 다시는 부지런함을 잊지 않았답니다.",
-        ],
-    },
-}
-
-
 def _story_branch_prompt() -> StoryBranchPrompt:
     return StoryBranchPrompt(
         options=[
@@ -485,162 +403,44 @@ def _story_branch_prompt() -> StoryBranchPrompt:
     )
 
 
-def _story_script(request: GenerateStoryRequest, key: str) -> list[str]:
-    """title로 동화 스크립트를 찾는다. 없으면 generic 대사로 폴백."""
-    script = STORY_SCRIPTS.get(request.storyTemplate.title)
-    if script:
-        return script[key]
+def generate_story(request: GenerateStoryRequest) -> GenerateStoryResponse:
     title = request.storyTemplate.title
-    if key == "start":
-        return [
-            f"{title}의 문이 천천히 열렸어요.",
-            "주인공은 반짝이는 길을 따라 조심조심 걸었어요.",
-            "길 끝에서 도움이 필요한 작은 친구를 만났어요.",
-            "두 친구는 힘을 합쳐 숨겨진 지도를 찾았어요.",
-            "이제 어느 길로 가면 좋을지 말해 볼까요?",
-        ]
-    return [
-        "주인공은 용기를 내어 새로운 길을 골랐어요.",
+    contents = [
+        f"{title}의 문이 천천히 열렸어요.",
+        "주인공은 반짝이는 길을 따라 조심조심 걸었어요.",
+        "길 끝에서 도움이 필요한 작은 친구를 만났어요.",
+        "두 친구는 힘을 합쳐 숨겨진 지도를 찾았어요.",
+        "이제 어느 길로 가면 좋을지 말해 볼까요?",
+    ]
+    return GenerateStoryResponse(
+        requestId=request.requestId,
+        schemaVersion=request.schemaVersion,
+        nextProgress=50,
+        completed=False,
+        lines=[
+            GeneratedStoryLine(
+                content=content,
+                requiresBranchInput=index == 4,
+                branchPrompt=_story_branch_prompt() if index == 4 else None,
+            )
+            for index, content in enumerate(contents)
+        ],
+    )
+
+
+def continue_story(request: ContinueStoryRequest) -> GenerateStoryResponse:
+    intent = request.branchIntent.strip()
+    contents = [
+        f'주인공은 "{intent}"라고 말하며 새로운 길을 골랐어요.',
         "작은 친구는 기쁘게 고개를 끄덕이며 앞장섰어요.",
         "선택한 길 끝에서 빛나는 열쇠를 발견했어요.",
         "열쇠로 문을 열자 잃어버린 보물이 모습을 드러냈어요.",
         "모두 함께 기뻐하며 멋진 모험을 마치고 돌아왔어요.",
     ]
-
-
-def generate_story(request: GenerateStoryRequest) -> GenerateStoryResponse:
-    start_script = _story_script(request, "start")
-    contents = [*start_script[:3], start_script[-1]]
     return GenerateStoryResponse(
         requestId=request.requestId,
         schemaVersion=request.schemaVersion,
-        nextProgress=4,
-        completed=False,
-        lines=[
-            GeneratedStoryLine(
-                content=content,
-                requiresBranchInput=index == 3,
-                branchPrompt=_story_branch_prompt() if index == 3 else None,
-            )
-            for index, content in enumerate(contents)
-        ],
+        nextProgress=100,
+        completed=True,
+        lines=[GeneratedStoryLine(content=content, requiresBranchInput=False) for content in contents],
     )
-
-
-def _clean_branch_intent(intent: str) -> str:
-    cleaned = intent.strip().strip('"\'“”‘’').rstrip(".?!。？！ ")
-    return cleaned or "친구들이 함께 힘을 모으는 것"
-
-
-def _continuation_segment(request: ContinueStoryRequest) -> tuple[list[str], bool]:
-    page_count = len(request.history)
-    page_in_day = page_count % 10
-    day = page_count // 10 + 1
-    title = request.storyTemplate.title
-    intent = _clean_branch_intent(request.branchIntent)
-
-    if page_in_day == 0:
-        return ([
-            f"{title}의 {day}일차 아침이 밝았어요.",
-            "어제의 선택을 기억한 친구들이 다시 길을 나섰어요.",
-            "길 앞에는 생각하지 못한 새로운 일이 기다리고 있었어요.",
-            "친구들은 어떻게 하면 좋을지 샛별이의 생각을 기다렸어요.",
-        ], True)
-
-    if page_in_day == 4:
-        return ([
-            f"샛별이는 ‘{intent}’라고 정했고, 이야기에서도 그 선택이 그대로 이루어졌어요.",
-            "친구들은 그 선택을 믿고 힘차게 앞으로 나아갔어요.",
-            "선택한 길에서 새로운 친구와 중요한 단서를 만났어요.",
-            "조금 전의 선택은 이야기 속 사건과 결과를 바꾸었어요.",
-            "이제 다음에는 어떤 일이 일어나면 좋을지 말해 볼까요?",
-        ], True)
-
-    if page_in_day == 9:
-        if page_count == 99:
-            return ([
-                f"마지막에도 ‘{intent}’ 선택이 이루어지며 모두가 기쁜 결말을 맞았어요.",
-            ], False)
-        return ([
-            f"‘{intent}’ 선택이 이루어지며 오늘의 모험이 즐겁게 마무리되었어요.",
-        ], False)
-
-    raise ValueError(
-        f"story continuation must start after page 4, 9, or 10 (received {page_count})"
-    )
-
-
-def continue_story(request: ContinueStoryRequest) -> GenerateStoryResponse:
-    contents, branch_on_last_line = _continuation_segment(request)
-    next_progress = min(len(request.history) + len(contents), 100)
-    return GenerateStoryResponse(
-        requestId=request.requestId,
-        schemaVersion=request.schemaVersion,
-        nextProgress=next_progress,
-        completed=next_progress == 100,
-        lines=[
-            GeneratedStoryLine(
-                content=content,
-                requiresBranchInput=branch_on_last_line and index == len(contents) - 1,
-                branchPrompt=(
-                    _story_branch_prompt()
-                    if branch_on_last_line and index == len(contents) - 1
-                    else None
-                ),
-            )
-            for index, content in enumerate(contents)
-        ],
-    )
-
-
-def evaluate_training(request: EvaluateTrainingRequest) -> EvaluateTrainingResponse:
-    """결정적 평가: result.questions의 정답 비율로 accuracy(0~100)를 계산한다.
-
-    questions 구조를 알 수 없거나 비어 있으면 데모 통과를 가정해 100.0을 반환한다.
-    실제 AI 평가 모델 연동은 별도 후속 작업에서 replaces 이 결정적 mock을 대체한다.
-    """
-    questions = request.result.get("questions") or []
-    if questions:
-        correct = sum(
-            1
-            for item in questions
-            if isinstance(item, dict)
-            and (item.get("isCorrect") or item.get("correctionConfirmed"))
-        )
-        accuracy = round(correct / len(questions) * 100, 2)
-    else:
-        accuracy = 100.0
-    return EvaluateTrainingResponse(
-        requestId=request.requestId,
-        schemaVersion=request.schemaVersion,
-        accuracy=accuracy,
-    )
-
-
-# 결정적 STT/TTS mock. 실제 음성 인식·합성은 Azure Speech 연동(P3-F)에서 대체한다.
-_TRANSCRIBE_FALLBACK = "친구를 따라간다"
-# 재생 불가 자리표시자 오디오(ID3 스텁). 백엔드 MockSpeechProcessor와 동등하며,
-# 실제 재생 가능 오디오는 Azure TTS(P3-F)에서 제공한다.
-_SILENT_AUDIO_PLACEHOLDER = b"ID3\x03\x00\x00\x00\x00\x00\x00"
-
-
-def transcribe_speech_mock(
-    request_id: str, expected_text: str | None
-) -> SpeechTranscriptionResponse:
-    transcript = (
-        expected_text.strip()
-        if expected_text and expected_text.strip()
-        else _TRANSCRIBE_FALLBACK
-    )
-    duration_ms = max(300, len(transcript) * 250)
-    return SpeechTranscriptionResponse(
-        requestId=request_id,
-        transcript=transcript,
-        confidence=1.0,
-        durationMs=duration_ms,
-    )
-
-
-def synthesize_speech_mock(request: SpeechSynthesisRequest) -> tuple[bytes, int]:
-    duration_ms = max(400, len(request.text) * 250)
-    return _SILENT_AUDIO_PLACEHOLDER, duration_ms

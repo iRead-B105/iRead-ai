@@ -1,21 +1,19 @@
 from __future__ import annotations
 
+import hashlib
 import hmac
 from html import escape
 from urllib.parse import urlencode
 
-from fastapi import FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
-from fastapi.responses import JSONResponse, Response
+from fastapi import File, Form, Header, HTTPException, Query, UploadFile
+from fastapi.responses import Response
 
 from .config import Settings
 from .generation_models import (
-    ContinueStoryRequest,
     EvaluateTrainingRequest,
     EvaluateTrainingResponse,
     GenerateImageRequest,
     GenerateImageResponse,
-    GenerateStoryRequest,
-    GenerateStoryResponse,
     GenerateTrainingRequest,
     GenerateTrainingResponse,
     SpeechSynthesisRequest,
@@ -23,11 +21,10 @@ from .generation_models import (
     TrainingCandidateRequest,
     TrainingCandidateResponse,
 )
+from .main import create_app
 from .mock_generators import (
-    continue_story,
     evaluate_training,
     generate_legacy_training,
-    generate_story,
     generate_training_candidates,
 )
 from .models import PronunciationAnalysisResponse
@@ -42,7 +39,6 @@ from .speech import (
     SpeechProviderError,
 )
 
-
 settings = Settings.from_env()
 provider = (
     AzurePronunciationProvider(settings)
@@ -54,24 +50,9 @@ speech_provider = (
     if settings.speech_provider == "azure"
     else DeterministicSpeechProvider()
 )
-app = FastAPI(
-    title="iRead AI",
-    version="0.2.0",
-    description=(
-        "Azure 발음 평가와 백엔드 연동용 결정적 생성 mock을 함께 제공합니다."
-    ),
+app = create_app(
+    settings=settings,
 )
-
-
-@app.middleware("http")
-async def require_internal_api_key(request: Request, call_next):
-    """Protect every mutable internal AI endpoint with the shared backend key."""
-    if request.method != "GET" and request.url.path.startswith("/api/v1/"):
-        expected = settings.internal_api_key
-        supplied = request.headers.get("X-API-Key")
-        if not expected or supplied is None or not hmac.compare_digest(supplied, expected):
-            return JSONResponse(status_code=401, content={"detail": "invalid API key"})
-    return await call_next(request)
 
 
 def _validate_idempotency(
@@ -83,11 +64,6 @@ def _validate_idempotency(
             status_code=400,
             detail="Idempotency-Key와 requestId가 일치해야 합니다.",
         )
-
-
-@app.get("/health", tags=["system"])
-def health() -> dict[str, str]:
-    return {"status": "UP", "service": "iread-ai"}
 
 
 @app.post(
@@ -135,47 +111,10 @@ def training_generate(
 )
 def training_evaluate(
     request: EvaluateTrainingRequest,
-    idempotency_key: str | None = Header(
-        default=None,
-        alias="Idempotency-Key",
-    ),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> EvaluateTrainingResponse:
     _validate_idempotency(request.requestId, idempotency_key)
     return evaluate_training(request)
-
-
-@app.post(
-    "/api/v1/story/generate",
-    response_model=GenerateStoryResponse,
-    tags=["generation"],
-    summary="이야기 최초 대사 1~5 생성",
-)
-def story_generate(
-    request: GenerateStoryRequest,
-    idempotency_key: str | None = Header(
-        default=None,
-        alias="Idempotency-Key",
-    ),
-) -> GenerateStoryResponse:
-    _validate_idempotency(request.requestId, idempotency_key)
-    return generate_story(request)
-
-
-@app.post(
-    "/api/v1/story/continue",
-    response_model=GenerateStoryResponse,
-    tags=["generation"],
-    summary="분기 선택을 반영한 이야기 대사 6~10 생성",
-)
-def story_continue(
-    request: ContinueStoryRequest,
-    idempotency_key: str | None = Header(
-        default=None,
-        alias="Idempotency-Key",
-    ),
-) -> GenerateStoryResponse:
-    _validate_idempotency(request.requestId, idempotency_key)
-    return continue_story(request)
 
 
 @app.post(
@@ -197,7 +136,8 @@ def image_generate(
         if request.prompt.strip().startswith("[STORY_CHARACTER]")
         else "scene"
     )
-    query = urlencode({"label": request.prompt, "kind": kind})
+    prompt_digest = hashlib.sha256(request.prompt.encode("utf-8")).hexdigest()[:16]
+    query = urlencode({"label": f"mock-{prompt_digest}", "kind": kind})
     return GenerateImageResponse(
         requestId=request.requestId,
         imageUrl=f"/api/v1/images/mock/generated.svg?{query}",
@@ -282,10 +222,7 @@ async def transcribe_speech(
     studentId: int = Form(ge=1),
     expectedText: str | None = Form(default=None),
     audioFile: UploadFile = File(),
-    idempotency_key: str | None = Header(
-        default=None,
-        alias="Idempotency-Key",
-    ),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> SpeechTranscriptionResponse:
     _validate_idempotency(requestId, idempotency_key)
     audio = await audioFile.read(settings.max_audio_bytes + 1)
@@ -313,10 +250,7 @@ async def transcribe_speech(
 )
 def synthesize_speech(
     request: SpeechSynthesisRequest,
-    idempotency_key: str | None = Header(
-        default=None,
-        alias="Idempotency-Key",
-    ),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> Response:
     _validate_idempotency(request.requestId, idempotency_key)
     try:
@@ -334,6 +268,6 @@ def synthesize_speech(
 
 
 def _require_api_key(value: str | None) -> None:
-    expected = settings.internal_api_key
+    expected = settings.internal_api_key.get_secret_value()
     if not expected or value is None or not hmac.compare_digest(value, expected):
         raise HTTPException(status_code=401, detail="invalid API key")

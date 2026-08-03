@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "executedAt": "2026-07-31",
+  "providerPath": "openai-direct",
+  "model": "gpt-5.4-mini",
+  "caseCount": 100,
+  "successCount": 100,
+  "imageCallCount": 0,
+  "visualSceneGenerationIncluded": true,
+  "personalizedCandidateCount": 3,
+  "baselineCandidateCount": 1,
+  "results": {
+    "fullPolicy": {
+      "count": 19,
+      "meanScoreDelta": 4.94,
+      "medianScoreDelta": 6.55,
+      "minimumScoreDelta": -8.51,
+      "maximumScoreDelta": 16.17,
+      "personalizedWinRatePercent": 73.7,
+      "meanRiskPer10Delta": -0.3614
+    },
+    "commonSurfaceOnly": {
+      "count": 81,
+      "meanScoreDelta": 9.43,
+      "medianScoreDelta": 6.49,
+      "minimumScoreDelta": -14.63,
+      "maximumScoreDelta": 43.1,
+      "personalizedWinRatePercent": 76.5
+    },
+    "overallReference": {
+      "count": 100,
+      "meanScoreDelta": 8.58,
+      "medianScoreDelta": 6.5,
+      "minimumScoreDelta": -14.63,
+      "maximumScoreDelta": 43.1,
+      "wins": 76,
+      "ties": 0,
+      "losses": 24,
+      "personalizedWinRatePercent": 76.0
+    }
+  },
+  "latencySeconds": {
+    "plainMean": 4.91,
+    "personalizedMean": 13.45
+  },
+  "limitations": [
+    "Kiwi and G2P metrics are also used for candidate selection.",
+    "Only 19 cases had FULL_POLICY analysis confidence.",
+    "Plain and personalized outputs had different average lengths.",
+    "The source commit SHA was not recorded for this historical run.",
+    "These numbers are not GMS gateway latency measurements."
+  ]
+}
