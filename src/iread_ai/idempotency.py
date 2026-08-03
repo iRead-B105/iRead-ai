@@ -6,10 +6,11 @@ import hashlib
 import json
 import math
 import time
+from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import dataclass
 from threading import Lock
-from typing import Any, Callable
+from typing import Any
 
 
 class IdempotencyConflict(RuntimeError):

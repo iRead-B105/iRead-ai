@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 from pydantic import ValidationError
 
@@ -13,7 +14,7 @@ from .generation_models import (
     TrainingCandidateResponse,
 )
 from .mock_generators import generate_training_candidates as mock_training_candidates
-from .providers import GMSTextProvider, GenerationProviderError
+from .providers import GenerationProviderError, GMSTextProvider
 
 _UNSAFE_TERMS = (
     "자살",

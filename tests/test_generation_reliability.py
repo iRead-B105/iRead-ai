@@ -3,10 +3,20 @@ import json
 import httpx
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import SecretStr
 
 import iread_ai.app as app_module
 from iread_ai.idempotency import IdempotencyConflict, MemoryIdempotencyStore
-from iread_ai.providers import GMSTextProvider, GenerationProviderError
+from iread_ai.providers import GenerationProviderError, GMSTextProvider
+
+
+@pytest.fixture(autouse=True)
+def configured_internal_key(monkeypatch) -> None:
+    configured = app_module.settings.model_copy(
+        update={"internal_api_key": SecretStr("local-development-key")}
+    )
+    monkeypatch.setattr(app_module, "settings", configured)
+    monkeypatch.setattr(app_module.app.state, "settings", configured)
 
 
 def _headers(key: str) -> dict[str, str]:

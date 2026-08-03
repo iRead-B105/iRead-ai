@@ -1,7 +1,6 @@
-from dataclasses import replace
-
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import SecretStr
 
 import iread_ai.app as app_module
 
@@ -15,11 +14,15 @@ def request_headers(request_id: str) -> dict[str, str]:
 
 @pytest.fixture(autouse=True)
 def configured_internal_key(monkeypatch) -> None:
+    configured = app_module.settings.model_copy(
+        update={"internal_api_key": SecretStr(AUTH_HEADERS["X-API-Key"])}
+    )
     monkeypatch.setattr(
         app_module,
         "settings",
-        replace(app_module.settings, internal_api_key=AUTH_HEADERS["X-API-Key"]),
+        configured,
     )
+    monkeypatch.setattr(app_module.app.state, "settings", configured)
 
 
 def candidate_request(training_type: str) -> dict:
@@ -215,7 +218,7 @@ def test_story_completes_only_on_page_one_hundred() -> None:
     assert body["completed"] is True
 
 
-def test_image_generation_returns_retrievable_svg() -> None:
+def test_image_generation_returns_retrievable_png() -> None:
     response = client.post(
         "/api/v1/images/generate",
         headers=request_headers("image-1"),
@@ -224,7 +227,8 @@ def test_image_generation_returns_retrievable_svg() -> None:
     assert response.status_code == 200
     image = client.get(response.json()["imageUrl"])
     assert image.status_code == 200
-    assert image.headers["content-type"].startswith("image/svg+xml")
+    assert image.headers["content-type"].startswith("image/png")
+    assert image.content.startswith(b"\x89PNG\r\n\x1a\n")
 
 
 def test_internal_generation_rejects_missing_api_key() -> None:

@@ -1,22 +1,22 @@
 from __future__ import annotations
+
 import hashlib
 import json
-
 from typing import Any
 
 from .generation_models import (
     ContinueStoryRequest,
     EvaluateTrainingRequest,
     EvaluateTrainingResponse,
+    GeneratedStoryLine,
     GenerateStoryRequest,
     GenerateStoryResponse,
-    GeneratedStoryLine,
-    StoryBranchOption,
-    StoryBranchPrompt,
     GenerateTrainingRequest,
     GenerateTrainingResponse,
     SpeechSynthesisRequest,
     SpeechTranscriptionResponse,
+    StoryBranchOption,
+    StoryBranchPrompt,
     TrainingCandidateRequest,
     TrainingCandidateResponse,
 )
