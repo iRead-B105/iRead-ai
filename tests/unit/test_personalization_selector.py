@@ -145,8 +145,27 @@ def test_contract_failure_is_detected() -> None:
     assert set(result.contract_failures) == {
         "SENTENCE_COUNT",
         "WRITTEN_SYLLABLE_RANGE",
-        "DIRECT_DIALOGUE_COUNT",
     }
+
+
+def test_contract_treats_direct_dialogue_as_a_maximum() -> None:
+    profile = GenerationProfile(content_contract=ContentContract())
+
+    without_dialogue = evaluate_candidate(
+        "without-dialogue",
+        ("하나.", "둘.", "셋.", "넷."),
+        profile,
+        StubAnalyzer(_analysis(dialogue=0)),  # type: ignore[arg-type]
+    )
+    with_too_much_dialogue = evaluate_candidate(
+        "too-much-dialogue",
+        ("하나.", "둘.", "셋.", "넷."),
+        profile,
+        StubAnalyzer(_analysis(dialogue=2)),  # type: ignore[arg-type]
+    )
+
+    assert without_dialogue.contract_pass
+    assert "DIRECT_DIALOGUE_COUNT" in with_too_much_dialogue.contract_failures
 
 
 def test_select_best_uses_required_lexicographic_order() -> None:

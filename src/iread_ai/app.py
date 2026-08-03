@@ -3,13 +3,16 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+from collections import OrderedDict
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
 
 from fastapi import File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 
+from .adapters.generation.gms_gemini_image import GMSGeminiImageGenerator
 from .config import Settings
 from .generation_models import (
     EvaluateTrainingRequest,
@@ -34,6 +37,7 @@ from .idempotency import (
 from .main import create_app
 from .mock_generators import evaluate_training, generate_legacy_training
 from .models import PronunciationAnalysisResponse
+from .ports.story_image_generator import StoryImageProviderError
 from .pronunciation import (
     AzurePronunciationProvider,
     DeterministicPronunciationProvider,
@@ -71,6 +75,24 @@ text_provider = (
     if settings.generation_provider == "gms" and settings.gms_key is not None
     else None
 )
+legacy_image_generator = (
+    GMSGeminiImageGenerator(
+        gms_key=settings.gms_key.get_secret_value(),
+        model=settings.gms_gemini_image_model,
+        base_url=settings.gms_base_url,
+        timeout_seconds=settings.gms_image_timeout_seconds,
+        max_image_bytes=settings.gms_image_max_bytes,
+        max_response_bytes=settings.gms_image_max_response_bytes,
+        max_request_bytes=settings.gms_image_max_request_bytes,
+    )
+    if settings.story_image_provider == "gemini" and settings.gms_key is not None
+    else None
+)
+_generated_images: OrderedDict[str, tuple[bytes, str]] = OrderedDict()
+_MAX_GENERATED_IMAGES = 128
+_LEGACY_IMAGE_POLICY = (
+    Path(__file__).resolve().parent / "prompts" / "story_image_legacy.md"
+).read_text(encoding="utf-8")
 
 # Personalized story, chapter, and Gemini image routes are assembled by the
 # canonical app factory. The legacy training and speech contracts below remain
@@ -201,7 +223,7 @@ def training_evaluate(
     tags=["generation"],
     summary="레거시 이미지 생성 호환 API",
 )
-def image_generate(
+async def image_generate(
     request: GenerateImageRequest,
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
@@ -209,12 +231,38 @@ def image_generate(
     _require_api_key(x_api_key)
     _validate_idempotency(request.requestId, idempotency_key)
     kind = "character" if request.prompt.strip().startswith("[STORY_CHARACTER]") else "scene"
-    digest = hashlib.sha256(request.prompt.encode("utf-8")).hexdigest()[:16]
+    digest = hashlib.sha256(
+        f"{request.requestId}\0{_LEGACY_IMAGE_POLICY}\0{request.prompt}".encode()
+    ).hexdigest()[:32]
+    if legacy_image_generator is not None and digest not in _generated_images:
+        prompt = (
+            f"{_LEGACY_IMAGE_POLICY}\n\n"
+            f"[UNTRUSTED STORY SCENE DATA]\n{request.prompt.strip()}"
+        )
+        try:
+            generated = await legacy_image_generator.generate(
+                prompt=prompt,
+                references=(),
+                aspect_ratio="1:1" if kind == "character" else "21:9",
+            )
+        except StoryImageProviderError as exception:
+            raise HTTPException(
+                status_code=503 if exception.retryable else 502,
+                detail=exception.safe_message,
+            ) from exception
+        _generated_images[digest] = (generated.content, generated.mime_type)
+        _generated_images.move_to_end(digest)
+        while len(_generated_images) > _MAX_GENERATED_IMAGES:
+            _generated_images.popitem(last=False)
     query = urlencode({"label": digest, "kind": kind})
     return GenerateImageResponse(
         requestId=request.requestId,
-        imageUrl=f"/api/v1/images/mock/generated.png?{query}",
-        provider="IREAD_MOCK_AI_PNG_V1",
+        imageUrl=f"/api/v1/images/generated.png?{query}",
+        provider=(
+            f"GMS_GEMINI_{legacy_image_generator.model}"
+            if legacy_image_generator is not None
+            else "IREAD_MOCK_AI_PNG_V1"
+        ),
     )
 
 
@@ -223,6 +271,12 @@ _MOCK_PNG = base64.b64decode(
 )
 
 
+@app.get(
+    "/api/v1/images/generated.png",
+    tags=["generation"],
+    response_class=Response,
+    summary="생성 이미지 조회",
+)
 @app.get(
     "/api/v1/images/mock/generated.png",
     tags=["generation"],
@@ -233,8 +287,13 @@ def generated_image(
     label: str = Query(default="iread", max_length=64),
     kind: str = Query(default="scene", pattern="^(scene|character)$"),
 ) -> Response:
-    del label, kind
-    return Response(content=_MOCK_PNG, media_type="image/png")
+    del kind
+    generated = _generated_images.get(label)
+    if generated is None:
+        return Response(content=_MOCK_PNG, media_type="image/png")
+    _generated_images.move_to_end(label)
+    content, mime_type = generated
+    return Response(content=content, media_type=mime_type)
 
 
 @app.post(

@@ -12,6 +12,8 @@ def _openapi() -> dict[str, object]:
             app_env="test",
             internal_api_key="story-image-contract-key",
             story_provider="mock",
+            story_image_provider="disabled",
+            generation_provider="mock",
             gms_key=None,
         )
     )

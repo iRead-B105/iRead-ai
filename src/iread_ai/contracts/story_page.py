@@ -86,7 +86,7 @@ class IntegerRangePayload(StoryPageContractModel):
 
 
 class StoryPageContentContract(StoryPageContractModel):
-    sentence_count: Literal[4]
+    sentence_count: Literal[3, 4]
     preferred_written_syllables: IntegerRangePayload
     accepted_written_syllables: IntegerRangePayload
     direct_dialogue_count: StrictInt = Field(ge=0, le=2)

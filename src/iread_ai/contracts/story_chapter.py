@@ -190,21 +190,26 @@ class GeneratedStoryChapterPagePayload(StoryPageContractModel):
     sentences: list[NonEmptyText] = Field(min_length=3, max_length=4)
     visual_scene: StoryVisualScenePayload
     question: NonEmptyText | None
+    subtitle: NonEmptyText | None
     choices: list[NonEmptyText] = Field(max_length=3)
     requires_branch_input: StrictBool
 
     @model_validator(mode="after")
     def validate_branch_contract(self) -> Self:
         if self.requires_branch_input:
-            if self.question is None or len(self.choices) != 3:
+            if (
+                self.question is None
+                or self.subtitle is None
+                or len(self.choices) != 3
+            ):
                 raise ValueError(
-                    "a branching page requires one question and exactly three choices"
+                    "a branching page requires a subtitle, one question, and exactly three choices"
                 )
             if len(set(self.choices)) != 3:
                 raise ValueError("branch choices must be distinct")
-        elif self.question is not None or self.choices:
+        elif self.question is not None or self.subtitle is not None or self.choices:
             raise ValueError(
-                "a non-branching page must not contain a question or choices"
+                "a non-branching page must not contain a subtitle, question, or choices"
             )
         return self
 

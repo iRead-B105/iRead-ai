@@ -181,7 +181,7 @@ def evaluate_candidate(
         <= contract.accepted_max_syllables
     ):
         failures.append("WRITTEN_SYLLABLE_RANGE")
-    if analysis.dialogue_sentence_count != contract.direct_dialogue:
+    if analysis.dialogue_sentence_count > contract.direct_dialogue:
         failures.append("DIRECT_DIALOGUE_COUNT")
     accepted_length_distance = _range_distance(
         analysis.written_syllables,
@@ -192,7 +192,8 @@ def evaluate_candidate(
         20 * abs(len(sentence_list) - contract.sentence_count)
         + 25 * sum(not sentence for sentence in sentence_list)
         + accepted_length_distance
-        + 10 * abs(analysis.dialogue_sentence_count - contract.direct_dialogue)
+        + 10
+        * max(0, analysis.dialogue_sentence_count - contract.direct_dialogue)
     )
 
     excluded_overage = 0

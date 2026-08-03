@@ -93,6 +93,9 @@ def _chapter_response(
                     page_number=page_number,
                 ),
                 "question": page_question,
+                "subtitle": (
+                    "다음 말을 고르는 갈림길" if page_question else None
+                ),
                 "choices": (
                     [
                         "용기를 내자고 말해요.",

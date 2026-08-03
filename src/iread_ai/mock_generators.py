@@ -499,6 +499,7 @@ STORY_SCRIPTS: dict[str, dict[str, list[str]]] = {
 
 def _story_branch_prompt() -> StoryBranchPrompt:
     return StoryBranchPrompt(
+        subtitle="별빛 숲의 갈림길",
         options=[
             StoryBranchOption(optionNo=1, label="반짝이는 별빛 길로 간다"),
             StoryBranchOption(optionNo=2, label="작은 친구가 가리킨 숲길로 간다"),

@@ -76,13 +76,14 @@ def _candidate(
             "거북이는 흔들림 없이 돌길을 건너가요.",
         ],
         "child_detour_end_sentence_index": (
-            4 if child_branch_active else None
+            3 if child_branch_active else None
         ),
     }
     if branch_required:
         document.update(
             {
                 "question": "거북이는 돌길에서 무엇을 쓸까요?",
+                "subtitle": "돌길에서 고를 작은 도움",
                 "choices": [
                     "긴 막대를 써요.",
                     "넓은 잎을 밟아요.",
@@ -145,7 +146,7 @@ def test_context_and_candidate_validate_dynamic_chapter_contract() -> None:
                 branch_required=True,
             )["sentences"]
         ),
-        child_detour_end_sentence_index=4,
+        child_detour_end_sentence_index=3,
         question="거북이는 무엇을 쓸까요?",
         choices=("막대를 써요.", "잎을 밟아요.", "밧줄을 잡아요."),
     )
@@ -153,8 +154,8 @@ def test_context_and_candidate_validate_dynamic_chapter_contract() -> None:
     branch_plan = context.to_dict()["child_branch_plan"]
     assert branch_plan["active"] is True
     assert branch_plan["answer_owner_candidates"] == ["거북이"]
-    assert branch_plan["answer_delivery"] == "sentence_2_direct_dialogue"
-    assert candidate.child_detour_end_sentence_index == 4
+    assert branch_plan["answer_delivery"] == "natural_direct_dialogue"
+    assert candidate.child_detour_end_sentence_index == 3
     assert len(candidate.sentences) == 8
 
     with pytest.raises(ValueError, match="between 8 and 16"):
@@ -162,11 +163,11 @@ def test_context_and_candidate_validate_dynamic_chapter_contract() -> None:
             candidate_id="too-short",
             sentences=("가요.",) * 5,
         )
-    with pytest.raises(ValueError, match="must be 4"):
+    with pytest.raises(ValueError, match="must be 3 or 4"):
         ChapterCandidate(
             candidate_id="wrong-detour",
             sentences=("가요.",) * 8,
-            child_detour_end_sentence_index=3,
+            child_detour_end_sentence_index=2,
         )
 
 
@@ -182,7 +183,8 @@ def test_prompt_is_utf8_and_user_document_contains_context_and_profile() -> None
     assert "한 장 전체" in system_prompt
     assert "페이지 번호나 페이지 묶음을" in system_prompt
     assert "난 금방 이길 거야!" in system_prompt
-    assert "2, 6, 10, 14" in system_prompt
+    assert "대사를 0개 또는 1개" in system_prompt
+    assert "무조건 2문장에 배치하지" in system_prompt
     assert "본문 마지막 문장 다음" in system_prompt
     assert "이미 울린 신호" in system_prompt
     assert "나무 구호" in system_prompt
@@ -265,19 +267,19 @@ async def test_openai_generator_requests_three_whole_chapter_candidates_once() -
     item_schema = candidates_schema["items"]
     assert candidates_schema["minItems"] == 3
     assert candidates_schema["maxItems"] == 3
-    assert item_schema["properties"]["sentences"]["minItems"] == 8
-    assert item_schema["properties"]["sentences"]["maxItems"] == 16
+    assert item_schema["properties"]["sentences"]["minItems"] == 9
+    assert item_schema["properties"]["sentences"]["maxItems"] == 9
     assert item_schema["properties"]["sentences"]["items"]["pattern"] == (
         "[가-힣]"
     )
     assert item_schema["properties"][
         "child_detour_end_sentence_index"
-    ]["enum"] == [4]
+    ]["enum"] == [3]
     assert {"question", "choices"} <= set(item_schema["required"])
     assert item_schema["properties"]["choices"]["minItems"] == 3
     assert item_schema["properties"]["choices"]["maxItems"] == 3
     assert len(batch.candidates) == 3
-    assert batch.candidates[0].child_detour_end_sentence_index == 4
+    assert batch.candidates[0].child_detour_end_sentence_index == 3
     assert batch.candidates[0].question
     assert batch.usage["total_tokens"] == 680
     assert requests[0]["max_output_tokens"] == 1200
@@ -335,7 +337,7 @@ async def test_mock_generator_obeys_count_and_child_detour_contract() -> None:
         for candidate in batch.candidates
     )
     assert all(
-        candidate.child_detour_end_sentence_index == 4
+        candidate.child_detour_end_sentence_index == 3
         for candidate in batch.candidates
     )
     assert all(candidate.question for candidate in batch.candidates)

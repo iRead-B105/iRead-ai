@@ -156,7 +156,7 @@ def _build_partition(
         failures: list[str] = []
         if accepted_distance:
             failures.append("WRITTEN_SYLLABLE_RANGE")
-        if dialogue_count != direct_dialogue_per_page:
+        if dialogue_count > direct_dialogue_per_page:
             failures.append("DIRECT_DIALOGUE_COUNT")
         pages.append(
             DynamicStoryPage(
@@ -176,7 +176,7 @@ def _build_partition(
     failure_count = sum(len(page.contract_failures) for page in pages)
     accepted_penalty = sum(page.accepted_length_distance for page in pages)
     dialogue_penalty = sum(
-        abs(page.direct_dialogue_count - direct_dialogue_per_page)
+        max(0, page.direct_dialogue_count - direct_dialogue_per_page)
         for page in pages
     )
     return ChapterPartition(
