@@ -20,11 +20,12 @@
 1. `questions[].totalScore`가 있으면 Backend의 0~1000 점수를 0~100으로 환산한다.
 2. `totalScore`가 없으면 `isCorrect=true` 또는 `correctionConfirmed=true`를 100점,
    `isCorrect=false`를 0점으로 처리한다.
-3. `pronunciationAnalyses`는 `questionNo`별로 `attemptNo`가 가장 큰 마지막 시도만
-   사용한다.
+3. `pronunciationAnalyses`는 `questionNo`별로 `attemptNo`가 가장 큰 마지막 완료 시도만
+   사용한다. `questionCompleted=false`인 미완료 입력은 점수에서 제외한다.
 4. 선택형 결과와 발음 분석이 같은 `questionNo`를 가지면 발음 정확도를 우선한다.
 5. 문항·발음 분석이 전혀 없을 때만 최종 `wordAttempts[].totalScore`를 보조 근거로
-   사용한다.
+   사용한다. 같은 `questionNo`·`targetIndex`·`tokenIndex`의 여러 기록은 마지막 확정
+   시도만 사용한다.
 6. 최종 정확도는 중복을 제거한 문항 점수의 산술 평균이다.
 7. 채점 가능한 근거가 없으면 기존 임시 구현처럼 100점이 아니라 0점을 반환한다.
 8. 점수가 허용 범위를 벗어나거나 배열·객체 구조가 잘못되면 `422`를 반환한다.
@@ -35,18 +36,45 @@
 브라우저 16 kHz WAV 녹음
   → Backend 또는 검토 UI
   → AI /api/v1/speech/pronunciation/analyze
-  → Azure 발음평가 또는 GMS Whisper 전사 기반 읽기 일치도
-  → 정확도·완성도·단어별 오류(Azure는 유창성 포함)
+  → Azure Speech ko-KR scripted 발음평가
+  → 정확도·완성도·유창성·단어별 오류와 음성 구간
   → AI /api/v1/trainings/evaluate
   → 최종 accuracy
 ```
 
-`AI_PRONUNCIATION_PROVIDER=gms`는 녹음을 GMS `whisper-1`로 실제 전사한 뒤 기준 문장과
-한글 자모 단위 편집 거리를 계산한다. 따라서 녹음 내용에 따라 점수가 달라지지만,
-음소·강세·운율을 직접 평가하는 임상적 발음 점수는 아니다. Azure를 사용할 수 있을 때는
-scripted pronunciation assessment가 정확도·유창성·완성도를 직접 반환한다.
-발음 분석 응답의 `recognizedText`에는 GMS Whisper 또는 Azure가 실제로 인식한 문장이
-들어가며, 검토 화면에서는 기준 문장과 함께 표시한다.
+운영 기본 공급자는 `AI_PRONUNCIATION_PROVIDER=azure`다. Azure scripted pronunciation
+assessment가 정확도·유창성·완성도와 단어별 오류를 직접 반환한다. GMS Whisper 경로는
+기존 개발 환경 호환용으로만 유지하며 운영 점수를 대신하는 fallback으로 사용하지 않는다.
+Azure 장애 시 문자열 일치도로 점수를 대체하지 않고 재시도 가능한 외부 공급자 오류를
+반환한다.
+
+발음 분석 응답의 `recognizedText`에는 공급자가 인식한 문장이 들어가며 검토 화면에서는
+`음성 인식 문장`으로 표시한다. 원본 녹음은 분석 요청 동안만 임시로 사용하고 저장하지
+않는다.
+
+## 서비스 적용 피드백
+
+발음 점수는 구체적인 자음·모음 대치를 추정하는 진단값이 아니라 단어별 읽기 수행
+근거로 사용한다. `training_feedback.build_pronunciation_feedback`은 발음 응답을 다음과
+같이 안전하게 해석한다.
+
+- 아이에게는 가장 낮은 단어를 최대 2개까지만 골라 다시 읽을 행동을 안내한다.
+- 교수자에게는 전체 정확도·유창성·완성도와 우선 확인 단어를 수치와 함께 제공한다.
+- `Omission`은 읽지 않은 단어, `Insertion`은 추가로 읽은 단어로 구분한다.
+- Azure가 제공하지 않은 한국어 음소 대치나 학습장애 진단을 생성하지 않는다.
+- 인식 문장은 기준 문장과 같지만 완성도가 0점인 경우 원시 결과 재확인 경고를 표시한다.
+- 누적 단어 점수는 Backend가 문항의 `targetFeatureCodes`와 결합해 학생 특징 프로필,
+  다음 5개 훈련 추천과 교수자 보고서 근거로 사용한다.
+
+훈련 유형별 해석은 다음과 같다.
+
+| 훈련 | 평가 초점 |
+| --- | --- |
+| 자모·음절 따라 보기 | 음성 입력 확인. 실제 아동 음성 보정 전까지 점수는 검증 자료로만 사용 |
+| 글자 만들기·빼기·바꾸기 | 조작 결과를 소리 내어 읽은 정확도 |
+| 낱말·문장·짧은 글 읽기 | 단어별 정확도와 누락 여부 |
+| 문장 따라 읽기·끊어 읽기·반복 읽기 | 단어 정확도와 전체 유창성 |
+| 짧은 이야기 읽기 | 정확도와 유창성. 한국어에서 지원하지 않는 감정·억양 점수는 생성하지 않음 |
 
 ## 평가 API 예시
 
@@ -107,16 +135,7 @@ cd "C:\Users\SSAFY\Documents\New project\iRead-full-project-test\services\ai"
 - `직접 녹음`: Chrome에서는 마이크로 바로 녹음할 수 있고, Codex 내장 브라우저에서는
   WAV·MP3·M4A·MP4·WebM·OGG 녹음 파일을 업로드해 같은 평가 흐름을 실행할 수 있다.
 
-GMS 키가 이미 설정된 개발 환경에서는 다음 설정으로 실제 녹음 기반 읽기 일치도를 쓸 수
-있다.
-
-```dotenv
-AI_PRONUNCIATION_PROVIDER=gms
-AI_GMS_SPEECH_MODEL=whisper-1
-AI_GMS_SPEECH_TIMEOUT_SECONDS=45
-```
-
-음소·유창성까지 평가하려면 Azure 설정을 사용한다.
+실제 훈련 평가는 Azure 설정을 사용한다.
 
 ```dotenv
 AI_PRONUNCIATION_PROVIDER=azure
@@ -135,6 +154,7 @@ docker compose -f compose.training-evaluation-ui.yaml up -d --build
 
 ```powershell
 & ".\.venv\Scripts\pytest.exe" `
+  tests\unit\test_training_feedback.py `
   tests\unit\test_training_evaluation.py `
   tests\test_training_evaluation_api.py `
   tests\ui\test_training_evaluation_review_app.py

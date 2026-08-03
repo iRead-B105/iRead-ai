@@ -1,5 +1,4 @@
 from datetime import timedelta
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -23,7 +22,6 @@ class _FakeSpeechSdk:
         Audio16Khz32KBitRateMonoMp3 = "mp3"
 
     def __init__(self) -> None:
-        self.output_path: Path | None = None
         owner = self
 
         class SpeechConfig:
@@ -34,27 +32,22 @@ class _FakeSpeechSdk:
             def set_speech_synthesis_output_format(self, _: str) -> None:
                 pass
 
-        class AudioOutputConfig:
-            def __init__(self, *, filename: str) -> None:
-                owner.output_path = Path(filename)
-
         class SpeechSynthesizer:
             def __init__(self, *, speech_config, audio_config) -> None:
-                del speech_config, audio_config
+                del speech_config
+                assert audio_config is None
 
             def speak_text_async(self, text: str):
                 assert text == "테스트 음성"
-                assert owner.output_path is not None
-                owner.output_path.write_bytes(b"ID3-test-audio")
                 result = SimpleNamespace(
                     reason=owner.ResultReason.SynthesizingAudioCompleted,
                     audio_duration=123,
+                    audio_data=b"ID3-result-audio",
                 )
                 return SimpleNamespace(get=lambda: result)
 
         self.SpeechConfig = SpeechConfig
         self.SpeechSynthesizer = SpeechSynthesizer
-        self.audio = SimpleNamespace(AudioOutputConfig=AudioOutputConfig)
 
 
 def test_azure_recognition_ticks_are_converted_to_milliseconds() -> None:
@@ -90,7 +83,7 @@ def test_local_synthesis_fails_instead_of_returning_silent_mp3() -> None:
         DeterministicSpeechProvider().synthesize(request)
 
 
-def test_azure_synthesis_releases_and_removes_temporary_mp3(monkeypatch) -> None:
+def test_azure_synthesis_returns_sdk_audio_without_a_temporary_file(monkeypatch) -> None:
     fake_sdk = _FakeSpeechSdk()
     provider = AzureSpeechProvider(
         Settings(
@@ -106,7 +99,5 @@ def test_azure_synthesis_releases_and_removes_temporary_mp3(monkeypatch) -> None
         SpeechSynthesisRequest(requestId="tts-temp-cleanup", text="테스트 음성")
     )
 
-    assert result.audio == b"ID3-test-audio"
+    assert result.audio == b"ID3-result-audio"
     assert result.duration_ms == 123
-    assert fake_sdk.output_path is not None
-    assert not fake_sdk.output_path.exists()

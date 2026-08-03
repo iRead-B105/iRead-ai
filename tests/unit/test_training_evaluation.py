@@ -126,3 +126,58 @@ def test_out_of_range_pronunciation_score_is_rejected() -> None:
                 ]
             }
         )
+
+
+def test_incomplete_pronunciation_attempt_is_not_scored() -> None:
+    breakdown = evaluate_training_result(
+        {
+            "questions": [{"questionNo": 1, "totalScore": 800}],
+            "pronunciationAnalyses": [
+                {
+                    "questionNo": 1,
+                    "attemptNo": 1,
+                    "pronunciationAccuracyScore": 30,
+                    "questionCompleted": False,
+                }
+            ],
+        }
+    )
+
+    assert breakdown.accuracy == 80
+    assert breakdown.warnings == ("INCOMPLETE_PRONUNCIATION_IGNORED",)
+
+
+def test_word_attempt_fallback_uses_latest_final_attempt_per_token() -> None:
+    breakdown = evaluate_training_result(
+        {
+            "wordAttempts": [
+                {
+                    "questionNo": 1,
+                    "targetIndex": 0,
+                    "tokenIndex": 0,
+                    "attemptNo": 1,
+                    "isFinal": True,
+                    "totalScore": 400,
+                },
+                {
+                    "questionNo": 1,
+                    "targetIndex": 0,
+                    "tokenIndex": 0,
+                    "attemptNo": 2,
+                    "isFinal": True,
+                    "totalScore": 800,
+                },
+                {
+                    "questionNo": 1,
+                    "targetIndex": 0,
+                    "tokenIndex": 1,
+                    "attemptNo": 1,
+                    "isFinal": True,
+                    "totalScore": 600,
+                },
+            ]
+        }
+    )
+
+    assert breakdown.accuracy == 70
+    assert [item.score for item in breakdown.question_scores] == [80, 60]

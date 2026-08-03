@@ -53,9 +53,16 @@ def evaluate_training_result(result: Mapping[str, Any]) -> TrainingEvaluationBre
         key = _question_key(question, fallback=f"objective:{index + 1}")
         scores[key] = QuestionScore(key, "OBJECTIVE", score)
 
-    latest_pronunciations = _latest_pronunciation_by_question(
-        _optional_sequence(result, "pronunciationAnalyses")
+    pronunciation_analyses = _optional_sequence(result, "pronunciationAnalyses")
+    incomplete_count = sum(
+        1
+        for index, raw_analysis in enumerate(pronunciation_analyses)
+        if _mapping(raw_analysis, f"pronunciationAnalyses[{index}]").get("questionCompleted")
+        is False
     )
+    if incomplete_count:
+        warnings.append("INCOMPLETE_PRONUNCIATION_IGNORED")
+    latest_pronunciations = _latest_pronunciation_by_question(pronunciation_analyses)
     for key, analysis in latest_pronunciations.items():
         score = _percentage(
             analysis.get("pronunciationAccuracyScore"),
@@ -104,6 +111,8 @@ def _latest_pronunciation_by_question(
     latest: dict[str, tuple[int, int, Mapping[str, Any]]] = {}
     for index, raw_analysis in enumerate(analyses):
         analysis = _mapping(raw_analysis, f"pronunciationAnalyses[{index}]")
+        if analysis.get("questionCompleted") is False:
+            continue
         key = _question_key(analysis, fallback=f"pronunciation:{index + 1}")
         attempt = _nonnegative_integer(
             analysis.get("attemptNo", index + 1),
@@ -116,7 +125,7 @@ def _latest_pronunciation_by_question(
 
 
 def _final_word_attempt_scores(attempts: Sequence[Any]) -> list[float]:
-    scores: list[float] = []
+    latest: dict[tuple[object, object, object], tuple[int, int, float]] = {}
     for index, raw_attempt in enumerate(attempts):
         attempt = _mapping(raw_attempt, f"wordAttempts[{index}]")
         if attempt.get("isFinal") is False:
@@ -128,9 +137,30 @@ def _final_word_attempt_scores(attempts: Sequence[Any]) -> list[float]:
                 attempt.get("pronunciationAccuracyScore"),
                 f"wordAttempts[{index}].pronunciationAccuracyScore",
             )
-        if score is not None:
-            scores.append(score)
-    return scores
+        if score is None:
+            continue
+        position = _word_attempt_position(attempt, fallback=index)
+        attempt_no = _nonnegative_integer(
+            attempt.get("attemptNo", index + 1),
+            f"wordAttempts[{index}].attemptNo",
+        )
+        current = latest.get(position)
+        if current is None or (attempt_no, index) >= (current[0], current[1]):
+            latest[position] = (attempt_no, index, score)
+    return [value[2] for value in sorted(latest.values(), key=lambda item: item[1])]
+
+
+def _word_attempt_position(
+    attempt: Mapping[str, Any],
+    *,
+    fallback: int,
+) -> tuple[object, object, object]:
+    question = attempt.get("questionNo", attempt.get("questionNumber"))
+    target = attempt.get("targetIndex")
+    token = attempt.get("tokenIndex")
+    if question is None and target is None and token is None:
+        return ("row", fallback, fallback)
+    return (question, target, token)
 
 
 def _question_key(item: Mapping[str, Any], *, fallback: str) -> str:
