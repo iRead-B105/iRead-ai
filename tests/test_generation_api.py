@@ -4,6 +4,13 @@ from iread_ai.app import app
 
 client = TestClient(app)
 
+def auth_headers(request_id: str) -> dict[str, str]:
+    return {
+        "X-API-Key": "local-development-key",
+        "Idempotency-Key": request_id,
+    }
+
+
 
 def candidate_request(training_type: str) -> dict:
     return {
@@ -12,7 +19,14 @@ def candidate_request(training_type: str) -> dict:
         "trainingType": training_type,
         "count": 5,
         "difficulty": 2,
-        "targetFeatures": [],
+        "targetFeatures": [
+            {
+                "featureCode": "SYLLABLE_DECODING",
+                "weaknessScore": 0.8,
+                "confidence": 0.9,
+                "evidenceCount": 4,
+            }
+        ],
         "excludedFeatures": [],
         "additionalPrompt": "정확히 3개의 선택지를 생성한다.",
         "outputTemplate": {"type": training_type, "data": [{}]},
@@ -40,7 +54,7 @@ def test_all_training_types_generate_five_candidates() -> None:
         request = candidate_request(training_type)
         response = client.post(
             "/api/v1/trainings/candidates",
-            headers={"Idempotency-Key": request["requestId"]},
+            headers=auth_headers(request["requestId"]),
             json=request,
         )
         assert response.status_code == 200, (training_type, response.text)
@@ -59,6 +73,7 @@ def test_multiple_choice_contract_uses_three_choices() -> None:
         response = client.post(
             "/api/v1/trainings/candidates",
             json=candidate_request(training_type),
+            headers=auth_headers(f"contract-{training_type}"),
         )
         assert all(len(candidate["choices"]) == 3 for candidate in response.json()["data"])
 

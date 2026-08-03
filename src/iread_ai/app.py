@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hmac
 from html import escape
+from typing import Any, Callable
 from urllib.parse import urlencode
 
 from fastapi import FastAPI, File, Form, Header, HTTPException, Query, UploadFile
@@ -19,23 +20,47 @@ from .generation_models import (
     TrainingCandidateRequest,
     TrainingCandidateResponse,
 )
+from .generation_service import generate_training
+from .idempotency import (
+    IdempotencyConflict,
+    IdempotencyInProgress,
+    MemoryIdempotencyStore,
+)
 from .mock_generators import (
     continue_story,
     generate_legacy_training,
     generate_story,
-    generate_training_candidates,
 )
-from .models import PronunciationAnalysisResponse
+from .models import (
+    PronunciationAnalysisResponse,
+    TrainingEvaluateRequest,
+    TrainingEvaluateResponse,
+)
 from .pronunciation import AzurePronunciationProvider, PronunciationProviderError
+from .providers import GMSTextProvider
 
 
 settings = Settings.from_env()
 provider = AzurePronunciationProvider(settings)
+idempotency_store = MemoryIdempotencyStore(
+    ttl_seconds=settings.idempotency_ttl_seconds
+)
+text_provider = (
+    GMSTextProvider(
+        api_key=settings.gms_key,
+        model=settings.gms_text_model,
+        base_url=settings.gms_text_base_url,
+        timeout_seconds=settings.gms_text_timeout_seconds,
+        max_output_tokens=settings.gms_max_output_tokens,
+    )
+    if settings.generation_provider == "gms"
+    else None
+)
 app = FastAPI(
     title="iRead AI",
-    version="0.2.0",
+    version="0.3.0",
     description=(
-        "Azure 발음 평가와 백엔드 연동용 결정적 생성 mock을 함께 제공합니다."
+        "GMS 훈련 생성, 안전 대체 콘텐츠와 Azure 발음 평가를 제공합니다."
     ),
 )
 
@@ -51,6 +76,65 @@ def _validate_idempotency(
         )
 
 
+def _authorize(
+    x_api_key: str | None,
+    idempotency_key: str | None,
+) -> str:
+    _require_api_key(x_api_key)
+    if idempotency_key is None or not idempotency_key.strip():
+        raise HTTPException(status_code=400, detail="Idempotency-Key is required")
+    key = idempotency_key.strip()
+    if len(key) > 256:
+        raise HTTPException(status_code=400, detail="Idempotency-Key is too long")
+    return key
+
+
+def _execute_idempotent(
+    *,
+    scope: str,
+    key: str,
+    payload: Any,
+    action: Callable[[], Any],
+) -> tuple[Any, bool]:
+    try:
+        return idempotency_store.execute(
+            scope=scope,
+            key=key,
+            payload=payload,
+            action=action,
+        )
+    except IdempotencyConflict as exception:
+        raise HTTPException(
+            status_code=409,
+            detail="Idempotency-Key was reused with different request content",
+        ) from exception
+    except IdempotencyInProgress as exception:
+        raise HTTPException(
+            status_code=409,
+            detail="request with this Idempotency-Key is still in progress",
+        ) from exception
+
+
+def _evaluate_training(
+    request: TrainingEvaluateRequest,
+) -> TrainingEvaluateResponse:
+    questions = request.result.get("questions")
+    if not isinstance(questions, list) or not questions:
+        accuracy = 0.0
+    else:
+        correct = sum(
+            1
+            for question in questions
+            if isinstance(question, dict) and question.get("isCorrect") is True
+        )
+        accuracy = round(correct * 100 / len(questions), 2)
+    return TrainingEvaluateResponse(
+        requestId=request.requestId,
+        schemaVersion=request.schemaVersion,
+        accuracy=accuracy,
+    )
+
+
 @app.get("/health", tags=["system"])
 def health() -> dict[str, str]:
     return {"status": "UP", "service": "iread-ai"}
@@ -64,16 +148,26 @@ def health() -> dict[str, str]:
 )
 def training_candidates(
     request: TrainingCandidateRequest,
+    response: Response,
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
     idempotency_key: str | None = Header(
         default=None,
         alias="Idempotency-Key",
     ),
 ) -> TrainingCandidateResponse:
-    _validate_idempotency(request.requestId, idempotency_key)
-    try:
-        return generate_training_candidates(request)
-    except ValueError as exception:
-        raise HTTPException(status_code=422, detail=str(exception)) from exception
+    key = _authorize(x_api_key, idempotency_key)
+    result, replayed = _execute_idempotent(
+        scope="training-candidates",
+        key=key,
+        payload=request.model_dump(mode="json"),
+        action=lambda: generate_training(request, text_provider),
+    )
+    response.headers["X-AI-Provider"] = result.provider
+    if result.fallback:
+        response.headers["X-AI-Fallback"] = "safe-mock"
+    if replayed:
+        response.headers["Idempotent-Replayed"] = "true"
+    return result.value
 
 
 @app.post(
@@ -84,13 +178,47 @@ def training_candidates(
 )
 def training_generate(
     request: GenerateTrainingRequest,
+    response: Response,
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
     idempotency_key: str | None = Header(
         default=None,
         alias="Idempotency-Key",
     ),
 ) -> GenerateTrainingResponse:
-    _validate_idempotency(request.requestId, idempotency_key)
-    return generate_legacy_training(request)
+    key = _authorize(x_api_key, idempotency_key)
+    result, replayed = _execute_idempotent(
+        scope="training-generate",
+        key=key,
+        payload=request.model_dump(mode="json"),
+        action=lambda: generate_legacy_training(request),
+    )
+    if replayed:
+        response.headers["Idempotent-Replayed"] = "true"
+    return result
+
+
+@app.post(
+    "/api/v1/trainings/evaluate",
+    response_model=TrainingEvaluateResponse,
+    tags=["generation"],
+    summary="훈련 결과 정확도 평가",
+)
+def training_evaluate(
+    request: TrainingEvaluateRequest,
+    response: Response,
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> TrainingEvaluateResponse:
+    key = _authorize(x_api_key, idempotency_key)
+    result, replayed = _execute_idempotent(
+        scope="training-evaluate",
+        key=key,
+        payload=request.model_dump(mode="json"),
+        action=lambda: _evaluate_training(request),
+    )
+    if replayed:
+        response.headers["Idempotent-Replayed"] = "true"
+    return result
 
 
 @app.post(

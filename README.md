@@ -1,7 +1,7 @@
 # iRead AI
 
-iRead의 FastAPI 기반 AI 서비스입니다. Azure 단어별 발음 평가와 실제 AI 서버
-구현팀이 참고할 수 있는 결정적 생성 mock API를 함께 제공합니다.
+iRead의 FastAPI 기반 AI 서비스입니다. GMS 훈련 텍스트 생성, 안전한 Mock 대체와
+Azure 단어별 발음 평가를 제공합니다.
 
 ## 제공 엔드포인트
 
@@ -10,6 +10,7 @@ iRead의 FastAPI 기반 AI 서비스입니다. Azure 단어별 발음 평가와 
 | `GET` | `/health` | 서버 상태 확인 |
 | `POST` | `/api/v1/trainings/candidates` | 34개 훈련 타입별 문항 후보 생성 |
 | `POST` | `/api/v1/trainings/generate` | 레거시 훈련 데이터 envelope 생성 |
+| `POST` | `/api/v1/trainings/evaluate` | 훈련 정답률 평가 |
 | `POST` | `/api/v1/story/generate` | 최초 이야기 대사 1~5 생성 |
 | `POST` | `/api/v1/story/continue` | 분기 선택을 반영한 대사 6~10 생성 |
 | `POST` | `/api/v1/images/generate` | 훈련 장면·이야기 친구 이미지 URL 생성 |
@@ -41,6 +42,21 @@ uv run pytest
 Backend의 `AI_API_KEY`와 AI 서버의 `AI_INTERNAL_API_KEY`는 같은 값을
 사용합니다.
 
+## GMS A안 훈련 생성
+
+실제 훈련 텍스트는 GMS의 OpenAI 호환 Responses API와 `gpt-5.4-mini`를 사용합니다.
+
+- 자동 테스트와 기본 로컬 실행: `AI_GENERATION_PROVIDER=mock`
+- 실제 GMS 실행: `AI_GENERATION_PROVIDER=gms`와 `GMS_KEY` 설정
+- 모든 내부 요청: `X-API-Key`와 `Idempotency-Key` 필수
+- 같은 멱등성 키·같은 본문: 저장된 응답 재생
+- 같은 멱등성 키·다른 본문: `409 Conflict`
+- 텍스트 공급자 오류 또는 검증 실패: 안전한 결정적 콘텐츠 즉시 반환
+- 실제 키는 응답과 로그에 포함하지 않음
+
+Production에서는 기본 개발 키와 Mock provider를 사용할 수 없습니다.
+
+
 ## 발음 평가
 
 `POST /api/v1/speech/pronunciation/analyze`는 30초 미만 한국어 읽기 녹음과
@@ -54,8 +70,7 @@ Backend의 `AI_API_KEY`와 AI 서버의 `AI_INTERNAL_API_KEY`는 같은 값을
 - Azure 자격증명과 원본 응답은 응답·로그에 노출하지 않음
 
 WAV는 8/16kHz, 16-bit mono PCM을 기본 입력으로 사용합니다. WebM·MP3·MP4/M4A
-같은 압축 음성 처리를 위해서는 Azure Speech SDK와 같은 아키텍처의 GStreamer
-런타임 및 플러그인이 필요합니다.
+같은 압축 음성 처리는 별도 음성 통합 브랜치에서 제공합니다.
 
 ## 생성 mock 책임 범위
 
