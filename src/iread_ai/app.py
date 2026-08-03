@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
-from html import escape
+from collections.abc import Callable
+from typing import Any
 from urllib.parse import urlencode
 
 from fastapi import File, Form, Header, HTTPException, Query, UploadFile
@@ -21,18 +23,23 @@ from .generation_models import (
     TrainingCandidateRequest,
     TrainingCandidateResponse,
 )
-from .main import create_app
-from .mock_generators import (
-    evaluate_training,
-    generate_legacy_training,
-    generate_training_candidates,
+from .generation_service import generate_training
+from .idempotency import (
+    IdempotencyConflict,
+    IdempotencyInProgress,
 )
+from .idempotency import (
+    MemoryIdempotencyStore as TrainingIdempotencyStore,
+)
+from .main import create_app
+from .mock_generators import evaluate_training, generate_legacy_training
 from .models import PronunciationAnalysisResponse
 from .pronunciation import (
     AzurePronunciationProvider,
     DeterministicPronunciationProvider,
     PronunciationProviderError,
 )
+from .providers import GMSTextProvider
 from .speech import (
     AzureSpeechProvider,
     DeterministicSpeechProvider,
@@ -50,20 +57,73 @@ speech_provider = (
     if settings.speech_provider == "azure"
     else DeterministicSpeechProvider()
 )
-app = create_app(
-    settings=settings,
+idempotency_store = TrainingIdempotencyStore(
+    ttl_seconds=settings.idempotency_ttl_seconds
+)
+text_provider = (
+    GMSTextProvider(
+        api_key=settings.gms_key.get_secret_value(),
+        model=settings.gms_text_model,
+        base_url=settings.gms_text_base_url,
+        timeout_seconds=settings.gms_text_timeout_seconds,
+        max_output_tokens=settings.gms_max_output_tokens,
+    )
+    if settings.generation_provider == "gms" and settings.gms_key is not None
+    else None
 )
 
+# Personalized story, chapter, and Gemini image routes are assembled by the
+# canonical app factory. The legacy training and speech contracts below remain
+# available to Backend while it migrates to the richer contracts.
+app = create_app(settings=settings)
 
-def _validate_idempotency(
-    request_id: str,
-    header_value: str | None,
-) -> None:
-    if header_value is not None and header_value != request_id:
+
+def _require_api_key(value: str | None) -> None:
+    configured = settings.internal_api_key
+    expected = (
+        configured.get_secret_value()
+        if hasattr(configured, "get_secret_value")
+        else str(configured)
+    )
+    if value is None or not hmac.compare_digest(value, expected):
+        raise HTTPException(status_code=401, detail="invalid API key")
+
+
+def _validate_idempotency(request_id: str, header_value: str | None) -> str:
+    if header_value is None or not header_value.strip():
+        raise HTTPException(status_code=400, detail="Idempotency-Key is required")
+    if header_value != request_id:
         raise HTTPException(
             status_code=400,
             detail="Idempotency-Key와 requestId가 일치해야 합니다.",
         )
+    return header_value
+
+
+def _execute_idempotent(
+    *,
+    scope: str,
+    key: str,
+    payload: Any,
+    action: Callable[[], Any],
+) -> tuple[Any, bool]:
+    try:
+        return idempotency_store.execute(
+            scope=scope,
+            key=key,
+            payload=payload,
+            action=action,
+        )
+    except IdempotencyConflict as exception:
+        raise HTTPException(
+            status_code=409,
+            detail="Idempotency-Key was reused with different request content",
+        ) from exception
+    except IdempotencyInProgress as exception:
+        raise HTTPException(
+            status_code=409,
+            detail="request with this Idempotency-Key is still in progress",
+        ) from exception
 
 
 @app.post(
@@ -74,16 +134,24 @@ def _validate_idempotency(
 )
 def training_candidates(
     request: TrainingCandidateRequest,
-    idempotency_key: str | None = Header(
-        default=None,
-        alias="Idempotency-Key",
-    ),
+    response: Response,
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> TrainingCandidateResponse:
-    _validate_idempotency(request.requestId, idempotency_key)
-    try:
-        return generate_training_candidates(request)
-    except ValueError as exception:
-        raise HTTPException(status_code=422, detail=str(exception)) from exception
+    _require_api_key(x_api_key)
+    key = _validate_idempotency(request.requestId, idempotency_key)
+    result, replayed = _execute_idempotent(
+        scope="training-candidates",
+        key=key,
+        payload=request.model_dump(mode="json"),
+        action=lambda: generate_training(request, text_provider),
+    )
+    response.headers["X-AI-Provider"] = result.provider
+    if result.fallback:
+        response.headers["X-AI-Fallback"] = "safe-mock"
+    if replayed:
+        response.headers["Idempotent-Replayed"] = "true"
+    return result.value
 
 
 @app.post(
@@ -94,25 +162,35 @@ def training_candidates(
 )
 def training_generate(
     request: GenerateTrainingRequest,
-    idempotency_key: str | None = Header(
-        default=None,
-        alias="Idempotency-Key",
-    ),
+    response: Response,
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> GenerateTrainingResponse:
-    _validate_idempotency(request.requestId, idempotency_key)
-    return generate_legacy_training(request)
+    _require_api_key(x_api_key)
+    key = _validate_idempotency(request.requestId, idempotency_key)
+    result, replayed = _execute_idempotent(
+        scope="training-generate",
+        key=key,
+        payload=request.model_dump(mode="json"),
+        action=lambda: generate_legacy_training(request),
+    )
+    if replayed:
+        response.headers["Idempotent-Replayed"] = "true"
+    return result
 
 
 @app.post(
     "/api/v1/trainings/evaluate",
     response_model=EvaluateTrainingResponse,
     tags=["generation"],
-    summary="훈련 결과 정확도 평가(결정적 mock)",
+    summary="훈련 결과 정확도 평가(결정적 규칙)",
 )
 def training_evaluate(
     request: EvaluateTrainingRequest,
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> EvaluateTrainingResponse:
+    _require_api_key(x_api_key)
     _validate_idempotency(request.requestId, idempotency_key)
     return evaluate_training(request)
 
@@ -121,80 +199,60 @@ def training_evaluate(
     "/api/v1/images/generate",
     response_model=GenerateImageResponse,
     tags=["generation"],
-    summary="훈련 장면 또는 완료 이야기 주인공 이미지 생성",
+    summary="레거시 이미지 생성 호환 API",
 )
 def image_generate(
     request: GenerateImageRequest,
-    idempotency_key: str | None = Header(
-        default=None,
-        alias="Idempotency-Key",
-    ),
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> GenerateImageResponse:
+    _require_api_key(x_api_key)
     _validate_idempotency(request.requestId, idempotency_key)
-    kind = (
-        "character"
-        if request.prompt.strip().startswith("[STORY_CHARACTER]")
-        else "scene"
-    )
-    prompt_digest = hashlib.sha256(request.prompt.encode("utf-8")).hexdigest()[:16]
-    query = urlencode({"label": f"mock-{prompt_digest}", "kind": kind})
+    kind = "character" if request.prompt.strip().startswith("[STORY_CHARACTER]") else "scene"
+    digest = hashlib.sha256(request.prompt.encode("utf-8")).hexdigest()[:16]
+    query = urlencode({"label": digest, "kind": kind})
     return GenerateImageResponse(
         requestId=request.requestId,
-        imageUrl=f"/api/v1/images/mock/generated.svg?{query}",
-        provider="IREAD_MOCK_AI_SVG_V1",
+        imageUrl=f"/api/v1/images/mock/generated.png?{query}",
+        provider="IREAD_MOCK_AI_PNG_V1",
     )
+
+
+_MOCK_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+)
 
 
 @app.get(
-    "/api/v1/images/mock/generated.svg",
+    "/api/v1/images/mock/generated.png",
     tags=["generation"],
     response_class=Response,
-    summary="결정적 mock 이미지 조회",
+    summary="결정적 mock PNG 조회",
 )
 def generated_image(
-    label: str = Query(default="iRead 생성 이미지", max_length=300),
+    label: str = Query(default="iread", max_length=64),
     kind: str = Query(default="scene", pattern="^(scene|character)$"),
 ) -> Response:
-    display = label.replace("[STORY_CHARACTER]", "").strip()
-    if len(display) > 42:
-        display = display[:42] + "…"
-    title = "이야기 친구" if kind == "character" else "훈련 장면"
-    accent = "#7867c7" if kind == "character" else "#4c9f70"
-    svg = f"""<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540" viewBox="0 0 960 540">
-      <rect width="960" height="540" rx="32" fill="#f7f3ff"/>
-      <circle cx="480" cy="220" r="118" fill="{accent}" opacity=".18"/>
-      <circle cx="480" cy="210" r="76" fill="{accent}"/>
-      <circle cx="452" cy="195" r="8" fill="#fff"/>
-      <circle cx="508" cy="195" r="8" fill="#fff"/>
-      <path d="M450 235 Q480 260 510 235" fill="none" stroke="#fff" stroke-width="9" stroke-linecap="round"/>
-      <rect x="130" y="355" width="700" height="112" rx="30" fill="#fff"/>
-      <text x="480" y="397" text-anchor="middle" font-family="sans-serif" font-size="26" font-weight="700" fill="{accent}">{escape(title)}</text>
-      <text x="480" y="438" text-anchor="middle" font-family="sans-serif" font-size="21" fill="#4f4965">{escape(display)}</text>
-    </svg>"""
-    return Response(content=svg, media_type="image/svg+xml")
+    del label, kind
+    return Response(content=_MOCK_PNG, media_type="image/png")
 
 
 @app.post(
     "/api/v1/speech/pronunciation/analyze",
     response_model=PronunciationAnalysisResponse,
+    tags=["speech"],
 )
 async def analyze_pronunciation(
     requestId: str = Form(min_length=1),
     expectedText: str = Form(min_length=1),
     audioFile: UploadFile = File(),
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
-    idempotency_key: str | None = Header(
-        default=None,
-        alias="Idempotency-Key",
-    ),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> PronunciationAnalysisResponse:
     _require_api_key(x_api_key)
-    if idempotency_key != requestId:
-        raise HTTPException(
-            status_code=409,
-            detail="Idempotency-Key must match requestId",
-        )
+    _validate_idempotency(requestId, idempotency_key)
     audio = await audioFile.read(settings.max_audio_bytes + 1)
+    filename = audioFile.filename
     await audioFile.close()
     if not audio:
         raise HTTPException(status_code=400, detail="audioFile is empty")
@@ -205,7 +263,7 @@ async def analyze_pronunciation(
             request_id=requestId,
             reference_text=expectedText,
             audio=audio,
-            original_filename=audioFile.filename,
+            original_filename=filename,
         )
     except PronunciationProviderError as exception:
         raise HTTPException(status_code=502, detail=str(exception)) from exception
@@ -222,10 +280,13 @@ async def transcribe_speech(
     studentId: int = Form(ge=1),
     expectedText: str | None = Form(default=None),
     audioFile: UploadFile = File(),
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> SpeechTranscriptionResponse:
+    _require_api_key(x_api_key)
     _validate_idempotency(requestId, idempotency_key)
     audio = await audioFile.read(settings.max_audio_bytes + 1)
+    filename = audioFile.filename
     await audioFile.close()
     if not audio:
         raise HTTPException(status_code=400, detail="audioFile is empty")
@@ -236,7 +297,7 @@ async def transcribe_speech(
         return speech_provider.transcribe(
             request_id=requestId,
             audio=audio,
-            original_filename=audioFile.filename,
+            original_filename=filename,
         )
     except SpeechProviderError as exception:
         raise HTTPException(status_code=502, detail=str(exception)) from exception
@@ -250,8 +311,10 @@ async def transcribe_speech(
 )
 def synthesize_speech(
     request: SpeechSynthesisRequest,
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> Response:
+    _require_api_key(x_api_key)
     _validate_idempotency(request.requestId, idempotency_key)
     try:
         result = speech_provider.synthesize(request)
@@ -265,9 +328,3 @@ def synthesize_speech(
             "X-Audio-Duration-Ms": str(result.duration_ms),
         },
     )
-
-
-def _require_api_key(value: str | None) -> None:
-    expected = settings.internal_api_key.get_secret_value()
-    if not expected or value is None or not hmac.compare_digest(value, expected):
-        raise HTTPException(status_code=401, detail="invalid API key")

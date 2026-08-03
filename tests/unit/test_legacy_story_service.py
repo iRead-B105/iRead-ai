@@ -114,7 +114,7 @@ def _opening_request() -> GenerateStoryRequest:
 
 
 @pytest.mark.asyncio
-async def test_opening_maps_personalized_chapter_to_legacy_five_lines() -> None:
+async def test_opening_maps_personalized_chapter_to_first_four_pages() -> None:
     sentences = [f"첫 장 문장 {index}." for index in range(1, 9)]
     chapter = _Chapter(
         [
@@ -131,15 +131,15 @@ async def test_opening_maps_personalized_chapter_to_legacy_five_lines() -> None:
 
     response = await service.generate(_opening_request())
 
-    assert len(response.lines) == 5
+    assert len(response.lines) == 4
     assert [line.requiresBranchInput for line in response.lines] == [
-        False,
         False,
         False,
         False,
         True,
     ]
-    assert " ".join(line.content for line in response.lines[:4]) == " ".join(sentences)
+    assert " ".join(line.content for line in response.lines[:3]) == " ".join(sentences)
+    assert response.nextProgress == 4
     assert response.lines[-1].content == "거북이는 이제 무엇을 할까요?"
     assert [option.label for option in response.lines[-1].branchPrompt.options] == [
         "계속 걸어요.",
@@ -165,7 +165,11 @@ async def test_continue_preserves_full_history_and_confirmed_branch_input() -> N
         [
             _Page(sentences=sentences[:4]),
             _Page(sentences=sentences[4:8]),
-            _Page(sentences=sentences[8:]),
+            _Page(
+                sentences=sentences[8:],
+                question="이제 어떻게 할까요?",
+                choices=["응원해요.", "함께 가요.", "잠깐 쉬어요."],
+            ),
         ]
     )
     generator = _RecordingChapterService(chapter)
@@ -173,35 +177,35 @@ async def test_continue_preserves_full_history_and_confirmed_branch_input() -> N
     payload = {
         **_opening_request().model_dump(mode="json"),
         "requestId": "legacy-continue",
-        "currentProgress": 50,
-        "currentStoryLineId": 5,
+        "currentProgress": 4,
+        "currentStoryLineId": 4,
         "branchIntent": "큰 소리로 응원해요.",
         "history": [
             {
                 "storyLineId": index,
                 "content": f"앞 이야기 {index}.",
-                "requiresBranchInput": index == 5,
+                "requiresBranchInput": index == 4,
             }
-            for index in range(1, 6)
+            for index in range(1, 5)
         ],
     }
     request = ContinueStoryRequest.model_validate(payload)
 
     response = await service.continue_story(request)
 
-    assert response.completed is True
-    assert response.nextProgress == 100
+    assert response.completed is False
+    assert response.nextProgress == 9
     assert len(response.lines) == 5
-    assert " ".join(line.content for line in response.lines) == " ".join(sentences)
-    assert all(line.branchPrompt is None for line in response.lines)
+    assert " ".join(line.content for line in response.lines[:4]) == " ".join(sentences)
+    assert response.lines[-1].branchPrompt is not None
 
     chapter_request = generator.requests[0]
-    assert chapter_request.conclude is True
-    assert chapter_request.story_revision == 1
+    assert chapter_request.conclude is False
+    assert chapter_request.story_revision == 4
     assert chapter_request.branch_input is not None
     assert chapter_request.branch_input.source == "TEXT_CONFIRMED"
     assert chapter_request.branch_input.text == "큰 소리로 응원해요."
-    assert chapter_request.story_state.last_question == "앞 이야기 5."
+    assert chapter_request.story_state.last_question == "앞 이야기 4."
     assert "앞 이야기 1." in chapter_request.story_state.rolling_summary
     assert len(chapter_request.story_state.recent_pages) == 4
 

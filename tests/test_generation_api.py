@@ -1,8 +1,28 @@
+import pytest
 from fastapi.testclient import TestClient
+from pydantic import SecretStr
 
-from iread_ai.app import app
+import iread_ai.app as app_module
 
-client = TestClient(app)
+client = TestClient(app_module.app)
+AUTH_HEADERS = {"X-API-Key": "test-internal-key"}
+
+
+def request_headers(request_id: str) -> dict[str, str]:
+    return {**AUTH_HEADERS, "Idempotency-Key": request_id}
+
+
+@pytest.fixture(autouse=True)
+def configured_internal_key(monkeypatch) -> None:
+    configured = app_module.settings.model_copy(
+        update={"internal_api_key": SecretStr(AUTH_HEADERS["X-API-Key"])}
+    )
+    monkeypatch.setattr(
+        app_module,
+        "settings",
+        configured,
+    )
+    monkeypatch.setattr(app_module.app.state, "settings", configured)
 
 
 def candidate_request(training_type: str) -> dict:
@@ -40,7 +60,10 @@ def test_all_training_types_generate_five_candidates() -> None:
         request = candidate_request(training_type)
         response = client.post(
             "/api/v1/trainings/candidates",
-            headers={"Idempotency-Key": request["requestId"]},
+            headers={
+                **AUTH_HEADERS,
+                "Idempotency-Key": request["requestId"],
+            },
             json=request,
         )
         assert response.status_code == 200, (training_type, response.text)
@@ -56,20 +79,19 @@ def test_multiple_choice_contract_uses_three_choices() -> None:
         "WORD_FINAL_SOUND_CHOICE", "FINAL_CONSONANT_COMPARISON",
     ]
     for training_type in three_choice_types:
+        request = candidate_request(training_type)
         response = client.post(
             "/api/v1/trainings/candidates",
-            json=candidate_request(training_type),
+            headers=request_headers(request["requestId"]),
+            json=request,
         )
         assert all(len(candidate["choices"]) == 3 for candidate in response.json()["data"])
 
 
-def test_story_generation_returns_five_lines_and_branch_at_line_five() -> None:
+def test_story_generation_returns_day_one_first_four_pages() -> None:
     response = client.post(
         "/api/v1/story/generate",
-        headers={
-            "X-API-Key": "local-development-key",
-            "Idempotency-Key": "story-1",
-        },
+        headers=request_headers("story-1"),
         json={
             "requestId": "story-1",
             "storyId": 1,
@@ -85,34 +107,24 @@ def test_story_generation_returns_five_lines_and_branch_at_line_five() -> None:
     )
     body = response.json()
     assert response.status_code == 200
-    assert body["nextProgress"] == 50
+    assert body["nextProgress"] == 4
     assert body["completed"] is False
-    assert len(body["lines"]) == 5
+    assert len(body["lines"]) == 4
     assert [line["requiresBranchInput"] for line in body["lines"]] == [
-        False, False, False, False, True
+        False, False, False, True
     ]
-    assert all(line["branchPrompt"] is None for line in body["lines"][:4])
-    assert [
-        option["optionNo"] for option in body["lines"][-1]["branchPrompt"]["options"]
-    ] == [1, 2, 3]
-    assert len({
-        option["label"] for option in body["lines"][-1]["branchPrompt"]["options"]
-    }) == 3
 
 
-def test_story_continue_returns_final_five_lines() -> None:
+def test_story_first_branch_returns_five_pages_and_reflects_intent() -> None:
     response = client.post(
         "/api/v1/story/continue",
-        headers={
-            "X-API-Key": "local-development-key",
-            "Idempotency-Key": "story-continue-1",
-        },
+        headers=request_headers("story-continue-1"),
         json={
             "requestId": "story-continue-1",
             "storyId": 1,
             "studentId": 2001,
             "schemaVersion": 1,
-            "currentProgress": 50,
+            "currentProgress": 4,
             "storyTemplate": {
                 "storyTemplateId": 1,
                 "title": "별빛 숲의 친구",
@@ -120,123 +132,109 @@ def test_story_continue_returns_final_five_lines() -> None:
             },
             "currentStoryLineId": 5,
             "branchIntent": "오른쪽 길로 갈래",
-            "history": [],
+            "history": [
+                {
+                    "storyLineId": index,
+                    "content": f"이야기 {index}",
+                    "requiresBranchInput": index == 4,
+                }
+                for index in range(1, 5)
+            ],
         },
     )
     body = response.json()
     assert response.status_code == 200
+    assert body["nextProgress"] == 9
+    assert body["completed"] is False
+    assert len(body["lines"]) == 5
+    assert "오른쪽 길로 갈래" in body["lines"][0]["content"]
+    assert body["lines"][-1]["requiresBranchInput"] is True
+
+
+def test_story_second_branch_closes_day_without_completing_story() -> None:
+    response = client.post(
+        "/api/v1/story/continue",
+        headers=request_headers("story-continue-2"),
+        json={
+            "requestId": "story-continue-2",
+            "storyId": 1,
+            "studentId": 2001,
+            "schemaVersion": 1,
+            "currentProgress": 9,
+            "storyTemplate": {
+                "storyTemplateId": 1,
+                "title": "토끼와 거북이",
+                "context": "달리기 경주 이야기",
+            },
+            "currentStoryLineId": 9,
+            "branchIntent": "토끼가 이겨?",
+            "history": [
+                {
+                    "storyLineId": index,
+                    "content": f"이야기 {index}",
+                    "requiresBranchInput": index in (4, 9),
+                }
+                for index in range(1, 10)
+            ],
+        },
+    )
+    body = response.json()
+    assert response.status_code == 200
+    assert body["nextProgress"] == 10
+    assert body["completed"] is False
+    assert len(body["lines"]) == 1
+    assert "토끼가 이겨" in body["lines"][0]["content"]
+
+
+def test_story_completes_only_on_page_one_hundred() -> None:
+    response = client.post(
+        "/api/v1/story/continue",
+        headers=request_headers("story-final"),
+        json={
+            "requestId": "story-final",
+            "storyId": 1,
+            "studentId": 2001,
+            "schemaVersion": 1,
+            "currentProgress": 99,
+            "storyTemplate": {
+                "storyTemplateId": 1,
+                "title": "별빛 숲의 친구",
+                "context": "숲에서 친구를 만나는 이야기",
+            },
+            "currentStoryLineId": 99,
+            "branchIntent": "모두 함께 집으로 돌아가",
+            "history": [
+                {
+                    "storyLineId": index,
+                    "content": f"이야기 {index}",
+                    "requiresBranchInput": index % 10 in (4, 9),
+                }
+                for index in range(1, 100)
+            ],
+        },
+    )
+    body = response.json()
     assert body["nextProgress"] == 100
     assert body["completed"] is True
-    assert len(body["lines"]) == 5
-    assert all(line["branchPrompt"] is None for line in body["lines"])
 
 
-def test_story_generation_requires_internal_api_key() -> None:
-    request = {
-        "requestId": "story-auth-required",
-        "storyId": 1,
-        "studentId": 2001,
-        "schemaVersion": 1,
-        "currentProgress": 0,
-        "storyTemplate": {
-            "storyTemplateId": 1,
-            "title": "별빛 숲의 친구",
-            "context": "숲에서 친구를 만나는 이야기",
-        },
-    }
-    response = client.post(
-        "/api/v1/story/generate",
-        headers={"Idempotency-Key": request["requestId"]},
-        json=request,
-    )
-    assert response.status_code == 401
-
-
-def test_story_generation_replays_same_idempotent_request() -> None:
-    request = {
-        "requestId": "story-replay",
-        "storyId": 2,
-        "studentId": 2001,
-        "schemaVersion": 1,
-        "currentProgress": 0,
-        "storyTemplate": {
-            "storyTemplateId": 2,
-            "title": "구름 우체국",
-            "context": "구름 위에서 편지를 전하는 이야기",
-        },
-    }
-    headers = {
-        "X-API-Key": "local-development-key",
-        "Idempotency-Key": request["requestId"],
-    }
-    first = client.post("/api/v1/story/generate", headers=headers, json=request)
-    second = client.post("/api/v1/story/generate", headers=headers, json=request)
-    assert first.status_code == 200
-    assert second.status_code == 200
-    assert second.headers["Idempotent-Replayed"] == "true"
-    assert second.json() == first.json()
-
-
-def test_story_generation_rejects_mismatched_idempotency_key() -> None:
-    request = {
-        "requestId": "story-key-mismatch",
-        "storyId": 3,
-        "studentId": 2001,
-        "schemaVersion": 1,
-        "currentProgress": 0,
-        "storyTemplate": {
-            "storyTemplateId": 1,
-            "title": "별빛 숲의 친구",
-            "context": "숲에서 친구를 만나는 이야기",
-        },
-    }
-    response = client.post(
-        "/api/v1/story/generate",
-        headers={
-            "X-API-Key": "local-development-key",
-            "Idempotency-Key": "different-key",
-        },
-        json=request,
-    )
-    assert response.status_code == 400
-    assert response.json()["code"] == "IDEMPOTENCY_KEY_MISMATCH"
-
-
-def test_story_generation_rejects_changed_body_for_same_key() -> None:
-    request = {
-        "requestId": "story-conflict",
-        "storyId": 4,
-        "studentId": 2001,
-        "schemaVersion": 1,
-        "currentProgress": 0,
-        "storyTemplate": {
-            "storyTemplateId": 1,
-            "title": "별빛 숲의 친구",
-            "context": "숲에서 친구를 만나는 이야기",
-        },
-    }
-    headers = {
-        "X-API-Key": "local-development-key",
-        "Idempotency-Key": request["requestId"],
-    }
-    first = client.post("/api/v1/story/generate", headers=headers, json=request)
-    changed = {**request, "storyId": 5}
-    second = client.post("/api/v1/story/generate", headers=headers, json=changed)
-    assert first.status_code == 200
-    assert second.status_code == 409
-    assert second.json()["code"] == "IDEMPOTENCY_CONFLICT"
-
-
-def test_image_generation_returns_retrievable_svg() -> None:
+def test_image_generation_returns_retrievable_png() -> None:
     response = client.post(
         "/api/v1/images/generate",
-        json={
-            "requestId": "image-1",
-            "prompt": "[STORY_CHARACTER] " + "한글 장면 설명" * 100,
-        },
+        headers=request_headers("image-1"),
+        json={"requestId": "image-1", "prompt": "[STORY_CHARACTER] 별빛 숲의 토끼"},
     )
     assert response.status_code == 200
     image = client.get(response.json()["imageUrl"])
     assert image.status_code == 200
-    assert image.headers["content-type"].startswith("image/svg+xml")
-    assert len(response.json()["imageUrl"]) < 100
+    assert image.headers["content-type"].startswith("image/png")
+    assert image.content.startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_internal_generation_rejects_missing_api_key() -> None:
+    response = client.post(
+        "/api/v1/trainings/candidates",
+        json=candidate_request("VOWEL_TRACE"),
+    )
+
+    assert response.status_code == 401

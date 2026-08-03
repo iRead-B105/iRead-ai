@@ -20,17 +20,29 @@ class TrainingCandidateRequest(ContractModel):
     requestId: str = Field(min_length=1, max_length=128)
     schemaVersion: int = Field(ge=1)
     trainingType: str = Field(min_length=1)
-    count: int = Field(default=5, ge=1, le=20)
+    count: int = Field(default=5, ge=5, le=5)
     difficulty: int = Field(ge=1, le=5)
     targetFeatures: list[TrainingTargetFeature] = Field(default_factory=list, max_length=2)
     excludedFeatures: list[str] = Field(default_factory=list)
     additionalPrompt: str = ""
     outputTemplate: dict[str, Any]
 
+    @model_validator(mode="after")
+    def validate_feature_policy(self) -> "TrainingCandidateRequest":
+        excluded = [feature.strip() for feature in self.excludedFeatures]
+        if any(not feature for feature in excluded) or len(excluded) != len(set(excluded)):
+            raise ValueError("excludedFeatures must be unique and non-empty")
+        target = {feature.featureCode for feature in self.targetFeatures}
+        overlap = target.intersection(excluded)
+        if overlap:
+            raise ValueError("targetFeatures and excludedFeatures must not overlap")
+        return self
+
+
 
 class TrainingCandidateResponse(ContractModel):
     type: str
-    data: list[dict[str, Any]]
+    data: list[dict[str, Any]] = Field(min_length=1, max_length=5)
 
 
 class GenerateTrainingRequest(ContractModel):
@@ -115,7 +127,8 @@ class GenerateStoryResponse(ContractModel):
     schemaVersion: int
     nextProgress: int = Field(ge=0, le=100)
     completed: bool
-    lines: list[GeneratedStoryLine] = Field(min_length=5, max_length=5)
+    lines: list[GeneratedStoryLine] = Field(min_length=1, max_length=5)
+
 
 
 class GenerateImageRequest(ContractModel):

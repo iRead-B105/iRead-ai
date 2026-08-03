@@ -69,12 +69,14 @@ class LegacyStoryGenerationService:
         self,
         request: GenerateStoryRequest,
     ) -> GenerateStoryResponse:
+        if request.currentProgress != 0:
+            raise ValueError("initial story generation requires currentProgress=0")
         chapter_request = _build_chapter_request(request, conclude=False)
         chapter = await self._chapter_service.generate(chapter_request)
         chapter = chapter.validate_against_request(chapter_request)
         narrative_lines = _balanced_lines(
             _chapter_sentences(chapter),
-            line_count=4,
+            line_count=3,
         )
         final_page = chapter.pages[-1]
         if final_page.question is None or len(final_page.choices) != 3:
@@ -94,7 +96,7 @@ class LegacyStoryGenerationService:
         response = GenerateStoryResponse(
             requestId=request.requestId,
             schemaVersion=request.schemaVersion,
-            nextProgress=50,
+            nextProgress=4,
             completed=False,
             lines=[
                 *(
@@ -123,26 +125,70 @@ class LegacyStoryGenerationService:
         self,
         request: ContinueStoryRequest,
     ) -> GenerateStoryResponse:
-        chapter_request = _build_chapter_request(request, conclude=True)
+        page_count = len(request.history)
+        page_in_day = page_count % 10
+        if request.currentProgress != page_count:
+            raise ValueError("currentProgress must match history page count")
+        if page_in_day == 4:
+            narrative_count = 4
+            requires_branch = True
+        elif page_in_day == 9:
+            narrative_count = 1
+            requires_branch = False
+        elif page_in_day == 0 and 0 < page_count < 100:
+            narrative_count = 3
+            requires_branch = True
+        else:
+            raise ValueError(
+                "story continuation must start after page 4, 9, or 10"
+            )
+
+        chapter_request = _build_chapter_request(
+            request,
+            conclude=not requires_branch,
+        )
         chapter = await self._chapter_service.generate(chapter_request)
         chapter = chapter.validate_against_request(chapter_request)
         narrative_lines = _balanced_lines(
             _chapter_sentences(chapter),
-            line_count=5,
+            line_count=narrative_count,
         )
+        lines = [
+            GeneratedStoryLine(
+                content=line,
+                requiresBranchInput=False,
+                branchPrompt=None,
+            )
+            for line in narrative_lines
+        ]
+        if requires_branch:
+            final_page = chapter.pages[-1]
+            if final_page.question is None or len(final_page.choices) != 3:
+                raise ValueError(
+                    "branching chapter must end with one question and three choices"
+                )
+            lines.append(
+                GeneratedStoryLine(
+                    content=final_page.question,
+                    requiresBranchInput=True,
+                    branchPrompt=StoryBranchPrompt(
+                        options=[
+                            StoryBranchOption(optionNo=index, label=label)
+                            for index, label in enumerate(
+                                _unique_choice_labels(final_page.choices),
+                                start=1,
+                            )
+                        ]
+                    ),
+                )
+            )
+        next_progress = page_count + len(lines)
         response = GenerateStoryResponse(
             requestId=request.requestId,
             schemaVersion=request.schemaVersion,
-            nextProgress=100,
-            completed=True,
-            lines=[
-                GeneratedStoryLine(
-                    content=line,
-                    requiresBranchInput=False,
-                    branchPrompt=None,
-                )
-                for line in narrative_lines
-            ],
+            nextProgress=next_progress,
+            completed=next_progress == 100,
+            lines=lines,
         )
         _log_generation_quality(
             operation="CONTINUE",
@@ -163,6 +209,7 @@ def _build_chapter_request(
     )
     characters = _story_characters(title, context)
     history = list(request.history) if isinstance(request, ContinueStoryRequest) else []
+    page_count = len(history)
     last_question = next(
         (
             line.content.strip()
@@ -206,8 +253,8 @@ def _build_chapter_request(
         "schemaVersion": 3,
         "storyId": request.storyId,
         "studentId": request.studentId,
-        "storyRevision": 1 if conclude else 0,
-        "chapterNumber": 2 if conclude else 1,
+        "storyRevision": page_count,
+        "chapterNumber": page_count // 10 + 1,
         "conclude": conclude,
         "storyTemplate": {
             "templateId": request.storyTemplate.storyTemplateId,

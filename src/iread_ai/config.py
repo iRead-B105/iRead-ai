@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     azure_speech_key: str = ""
     azure_speech_region: str = ""
     azure_speech_language: str = "ko-KR"
+    azure_speech_voice: str = "ko-KR-SunHiNeural"
     pronunciation_provider: Literal["azure", "deterministic"] = Field(
         default="deterministic",
         validation_alias="AI_PRONUNCIATION_PROVIDER",
@@ -37,7 +38,6 @@ class Settings(BaseSettings):
         default="deterministic",
         validation_alias="AI_SPEECH_PROVIDER",
     )
-    azure_speech_voice: str = "ko-KR-SunHiNeural"
     max_audio_bytes: int = Field(
         default=20 * 1024 * 1024,
         gt=0,
@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     )
 
     story_provider: Literal["mock", "openai", "gms"] = "mock"
+    generation_provider: Literal["mock", "gms"] = Field(
+        default="mock",
+        validation_alias="AI_GENERATION_PROVIDER",
+    )
     openai_api_key: SecretStr | None = None
     openai_model: str = "gpt-5.4-mini"
     openai_base_url: str = "https://api.openai.com/v1"
@@ -90,7 +94,25 @@ class Settings(BaseSettings):
     character_reference_dir: Path = Path("assets/character-references")
 
     model_timeout_seconds: float = Field(default=28.0, gt=0, le=29.0)
-    idempotency_ttl_seconds: float = Field(default=600.0, gt=0)
+    idempotency_ttl_seconds: float = Field(
+        default=600.0,
+        gt=0,
+        validation_alias=AliasChoices(
+            "AI_IDEMPOTENCY_TTL_SECONDS",
+            "IDEMPOTENCY_TTL_SECONDS",
+        ),
+    )
+    gms_text_timeout_seconds: float = Field(
+        default=28.0,
+        gt=0,
+        validation_alias="AI_GMS_TEXT_TIMEOUT_SECONDS",
+    )
+    gms_max_output_tokens: int = Field(
+        default=3200,
+        ge=256,
+        le=16_384,
+        validation_alias="AI_GMS_MAX_OUTPUT_TOKENS",
+    )
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -105,6 +127,10 @@ class Settings(BaseSettings):
             raise ValueError("Set a unique AI_INTERNAL_API_KEY in production")
         if self.app_env == "production" and self.story_provider == "mock":
             raise ValueError("STORY_PROVIDER=mock is not allowed in production")
+        if self.app_env == "production" and self.generation_provider == "mock":
+            raise ValueError(
+                "AI_GENERATION_PROVIDER=mock is not allowed in production"
+            )
         if self.story_provider == "openai" and (
             self.openai_api_key is None
             or not self.openai_api_key.get_secret_value()
@@ -116,6 +142,12 @@ class Settings(BaseSettings):
             self.gms_key is None or not self.gms_key.get_secret_value()
         ):
             raise ValueError("GMS_KEY is required when STORY_PROVIDER=gms")
+        if self.generation_provider == "gms" and (
+            self.gms_key is None or not self.gms_key.get_secret_value()
+        ):
+            raise ValueError(
+                "GMS_KEY is required when AI_GENERATION_PROVIDER=gms"
+            )
         if self.story_image_provider == "gemini" and (
             self.gms_key is None or not self.gms_key.get_secret_value()
         ):
@@ -146,6 +178,16 @@ class Settings(BaseSettings):
         if self.story_provider == "openai":
             return self.openai_base_url.rstrip("/")
         raise RuntimeError("mock story generation does not use an API URL")
+
+    @property
+    def gms_text_model(self) -> str:
+        return self.openai_model
+
+    @property
+    def gms_text_base_url(self) -> str:
+        if self.gms_openai_base_url:
+            return self.gms_openai_base_url.rstrip("/")
+        return f"{self.gms_base_url.rstrip('/')}/api.openai.com/v1"
 
 
 @lru_cache
