@@ -1,0 +1,173 @@
+from __future__ import annotations
+
+from typing import Any
+
+from iread_ai.curriculum_models import CurriculumRecommendRequest, RecentCurriculumTraining
+from iread_ai.curriculum_recommender import recommend_curriculum
+from iread_ai.devtools.curriculum_samples import curriculum_sample
+
+
+class _FakeProvider:
+    def __init__(self, document: dict[str, Any]) -> None:
+        self.document = document
+
+    def generate_json(self, **_: Any) -> dict[str, Any]:
+        return self.document
+
+
+def _request(sample_name: str, *, use_llm: bool = False) -> CurriculumRecommendRequest:
+    sample = curriculum_sample(sample_name)
+    return CurriculumRecommendRequest(
+        requestId=f"test-{sample_name}",
+        schemaVersion=1,
+        featureProfiles=sample["featureProfiles"],
+        recentTrainings=sample["recentTrainings"],
+        useLlm=use_llm,
+    )
+
+
+def test_letter_level_student_cannot_receive_passage_or_fluency_training() -> None:
+    response = recommend_curriculum(_request("자모 읽기가 어려운 학생"), provider=None)
+
+    assert response.currentStage == 1
+    assert response.maximumAllowedStage == 2
+    assert len(response.recommendations) == 5
+    assert all(item.curriculumStage <= 2 for item in response.recommendations)
+    assert 26 not in {item.trainingTemplateId for item in response.recommendations}
+    short_passage = next(item for item in response.candidateAudit if item.trainingTemplateId == 26)
+    assert short_passage.status == "BLOCKED"
+    assert short_passage.reasonCode == "PREREQUISITE_STAGE_NOT_REACHED"
+
+
+def test_recommendation_has_three_core_one_reinforcement_and_one_stretch() -> None:
+    response = recommend_curriculum(_request("음절 결합이 어려운 학생"), provider=None)
+
+    roles = [item.role for item in response.recommendations]
+    assert roles.count("CORE") == 3
+    assert roles.count("REINFORCEMENT") == 1
+    assert roles.count("STRETCH") == 1
+    assert len({item.trainingTemplateId for item in response.recommendations}) == 5
+    assert {6, 14, 24}.isdisjoint(item.trainingTemplateId for item in response.recommendations)
+
+
+def test_no_evidence_starts_with_conservative_foundation_plan() -> None:
+    response = recommend_curriculum(_request("신규 학생 · 근거 없음"), provider=None)
+
+    assert response.dataSufficiency == "INSUFFICIENT"
+    assert response.currentStage == 1
+    assert response.maximumAllowedStage == 2
+    assert max(item.curriculumStage for item in response.recommendations) == 2
+    assert all(item.recommendedDifficulty <= 2 for item in response.recommendations)
+
+
+def test_sentence_student_can_receive_stage_eight_scaffold() -> None:
+    response = recommend_curriculum(_request("문장·유창성 단계 학생"), provider=None)
+
+    assert response.currentStage == 7
+    assert response.maximumAllowedStage == 8
+    assert 27 not in {item.trainingTemplateId for item in response.recommendations}
+    core = [item for item in response.recommendations if item.role == "CORE"]
+    assert all(item.curriculumStage in {6, 7} for item in core)
+    stretch = next(item for item in response.recommendations if item.role == "STRETCH")
+    assert stretch.curriculumStage == 8
+    repeated = next(item for item in response.candidateAudit if item.trainingTemplateId == 27)
+    assert repeated.reasonCode == "RECENT_COOLDOWN_NOT_PREFERRED"
+
+
+def test_recent_templates_are_reused_when_fresh_candidates_cannot_fill_plan() -> None:
+    request = _request("자모 읽기가 어려운 학생")
+    request = request.model_copy(
+        update={
+            "recentTrainings": [
+                RecentCurriculumTraining(
+                    trainingTemplateId=template_id,
+                    accuracy=0.5,
+                    daysAgo=1,
+                )
+                for template_id in (1, 2, 3, 4, 5)
+            ]
+        }
+    )
+
+    response = recommend_curriculum(request, provider=None)
+
+    assert len(response.recommendations) == 5
+    assert all(item.curriculumStage <= 2 for item in response.recommendations)
+
+
+def test_valid_llm_reranking_is_used() -> None:
+    provider = _FakeProvider(
+        {
+            "selections": [
+                {
+                    "trainingTemplateId": 2,
+                    "role": "CORE",
+                    "reasonCodes": ["HIGH_WEAKNESS", "CURRENT_STAGE_MATCH"],
+                    "rationale": "기본 자음 정확도를 보완하기 위해 먼저 배치했습니다.",
+                },
+                {
+                    "trainingTemplateId": 1,
+                    "role": "CORE",
+                    "reasonCodes": ["LOW_ACCURACY", "CURRENT_STAGE_MATCH"],
+                    "rationale": "기본 모음 읽기를 현재 단계에서 반복하도록 배치했습니다.",
+                },
+                {
+                    "trainingTemplateId": 3,
+                    "role": "CORE",
+                    "reasonCodes": ["CURRENT_STAGE_MATCH"],
+                    "rationale": "글자에서 음절로 연결되는 기초 연습으로 배치했습니다.",
+                },
+                {
+                    "trainingTemplateId": 4,
+                    "role": "REINFORCEMENT",
+                    "reasonCodes": ["FOUNDATION_REVIEW"],
+                    "rationale": "자음 소리를 다시 확인하는 보강 활동으로 배치했습니다.",
+                },
+                {
+                    "trainingTemplateId": 5,
+                    "role": "STRETCH",
+                    "reasonCodes": ["NEXT_STAGE_SCAFFOLD"],
+                    "rationale": "허용된 다음 단계에서 모음 소리를 확장하도록 배치했습니다.",
+                },
+            ]
+        }
+    )
+
+    response = recommend_curriculum(
+        _request("자모 읽기가 어려운 학생", use_llm=True),
+        provider=provider,  # type: ignore[arg-type]
+    )
+
+    assert response.recommendationProvider == "gms"
+    assert [item.trainingTemplateId for item in response.recommendations] == [2, 1, 3, 4, 5]
+
+
+def test_invalid_llm_stage_jump_uses_deterministic_fallback() -> None:
+    provider = _FakeProvider(
+        {
+            "selections": [
+                {
+                    "trainingTemplateId": template_id,
+                    "role": role,
+                    "reasonCodes": ["CURRENT_STAGE_MATCH"],
+                    "rationale": "입력 근거에 따른 추천입니다.",
+                }
+                for template_id, role in [
+                    (1, "CORE"),
+                    (2, "CORE"),
+                    (26, "CORE"),
+                    (4, "REINFORCEMENT"),
+                    (5, "STRETCH"),
+                ]
+            ]
+        }
+    )
+
+    response = recommend_curriculum(
+        _request("자모 읽기가 어려운 학생", use_llm=True),
+        provider=provider,  # type: ignore[arg-type]
+    )
+
+    assert response.recommendationProvider == "deterministic-fallback"
+    assert 26 not in {item.trainingTemplateId for item in response.recommendations}
+    assert response.warnings

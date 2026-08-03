@@ -1,5 +1,35 @@
 # iRead AI
 
+## API capability index
+
+All internal endpoints require `X-API-Key`. Mutating endpoints also require an
+`Idempotency-Key` equal to the request body's `requestId` unless their detailed
+contract states otherwise. Interactive OpenAPI documentation is available at
+`http://localhost:8081/docs`.
+
+| Capability | Endpoint | Implementation |
+|---|---|---|
+| Training candidates | `POST /api/v1/trainings/candidates` | Rule DB for mechanical types; GMS plus validation for language types |
+| Five-activity training set | `POST /api/v1/training-sets/generate` | Mixed rule/LLM generation with local personalization scoring |
+| Regenerate one activity | `POST /api/v1/training-activities/generate` | Same selection and validation pipeline as a training set |
+| Curriculum recommendation | `POST /api/v1/curricula/recommend` | Stage-gated recommendation with deterministic fallback |
+| Training evaluation | `POST /api/v1/trainings/evaluate` | Deterministic scoring and validation |
+| Lexicon status | `GET /api/v1/lexicon/status` | AI-owned SQLite status |
+| Lexicon palette | `POST /api/v1/lexicon/palettes/query` | Profile-filtered vocabulary and phonology palette |
+| Teacher report | `POST /api/v1/reports/analyze` | Evidence-based analysis with optional GMS narration |
+| Personalized story | `POST /api/v1/story/generate`, `POST /api/v1/story/continue` | Personalized story v1 compatibility API |
+| Personalized chapter | `POST /api/v3/story/chapters/generate` | Candidate generation, Kiwi/G2P analysis, and local repair |
+| Story image | `POST /api/v1/story/images/generate` | Optional Gemini image generation |
+| Pronunciation | `POST /api/v1/speech/pronunciation/analyze` | Azure assessment, GMS transcription match, or deterministic test provider |
+
+Detailed contracts and examples:
+
+- [Training item generation](docs/TRAINING_ITEM_GENERATION.md)
+- [Curriculum recommendation](docs/CURRICULUM_RECOMMENDATION.md)
+- [Training evaluation](docs/TRAINING_EVALUATION.md)
+- [Lexicon database](docs/LEXICON_DATABASE.md)
+- [Teacher report analysis](docs/TEACHER_REPORT_ANALYSIS.md)
+
 iRead의 FastAPI 기반 AI 서비스입니다. GMS 맞춤 훈련 생성, 10일 분기 이야기와
 Azure Speech 기반 발음 평가·STT·TTS를 제공합니다.
 

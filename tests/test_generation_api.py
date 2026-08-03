@@ -5,6 +5,7 @@ from pydantic import SecretStr
 import iread_ai.app as app_module
 from iread_ai.main import create_app
 from iread_ai.ports.story_image_generator import GeneratedStoryImage
+from iread_ai.training_bank.generator import RULE_BASED_TYPES
 
 client = TestClient(app_module.app)
 AUTH_HEADERS = {"X-API-Key": "test-internal-key"}
@@ -100,6 +101,112 @@ def test_multiple_choice_contract_uses_three_choices() -> None:
             json=request,
         )
         assert all(len(candidate["choices"]) == 3 for candidate in response.json()["data"])
+
+
+def test_basic_choice_type_uses_rule_database() -> None:
+    request = candidate_request("CONSONANT_SOUND_CHOICE")
+    response = client.post(
+        "/api/v1/trainings/candidates",
+        headers=request_headers(request["requestId"]),
+        json=request,
+    )
+
+    assert response.status_code == 200
+    assert response.headers["X-AI-Provider"] == "rule-db"
+    assert len(response.json()["data"]) == 5
+
+
+def test_all_mechanical_training_types_use_rule_database() -> None:
+    for training_type in sorted(RULE_BASED_TYPES):
+        request = candidate_request(training_type)
+        request["requestId"] = f"all-rule-{training_type}"
+        response = client.post(
+            "/api/v1/trainings/candidates",
+            headers=request_headers(request["requestId"]),
+            json=request,
+        )
+
+        assert response.status_code == 200, (training_type, response.text)
+        assert response.headers["X-AI-Provider"] == "rule-db"
+        assert len(response.json()["data"]) == 5
+
+
+def test_sentence_training_uses_curated_fallback_without_gms() -> None:
+    request = candidate_request("SENTENCE_READING")
+    request["requestId"] = "curated-sentence-reading"
+    response = client.post(
+        "/api/v1/trainings/candidates",
+        headers=request_headers(request["requestId"]),
+        json=request,
+    )
+
+    assert response.status_code == 200
+    assert response.headers["X-AI-Provider"] == "curated-fallback"
+
+
+def test_training_set_uses_five_different_activities_for_one_vowel_goal() -> None:
+    request_id = "training-set-vowel-a"
+    response = client.post(
+        "/api/v1/training-sets/generate",
+        headers=request_headers(request_id),
+        json={
+            "requestId": request_id,
+            "schemaVersion": 1,
+            "curriculumArea": "LETTER_SOUND",
+            "activityCount": 5,
+            "difficulty": 1,
+            "targetFeatures": [
+                {
+                    "featureCode": "GRAPHEME.VOWEL.BASIC.ㅏ",
+                    "weaknessScore": 0.8,
+                    "confidence": 0.9,
+                    "evidenceCount": 10,
+                }
+            ],
+            "excludedFeatures": [],
+            "preferredTrainingTypes": [],
+            "additionalPrompt": "",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["focusFeatureCodes"] == ["GRAPHEME.VOWEL.BASIC.ㅏ"]
+    assert len(body["activities"]) == 5
+    assert len({activity["trainingType"] for activity in body["activities"]}) == 5
+    assert body["activities"][0]["item"]["soundText"] == "아"
+    assert response.headers["X-AI-Provider"].startswith("mixed:")
+
+
+def test_single_training_activity_can_be_regenerated() -> None:
+    request_id = "regenerate-vowel-choice"
+    response = client.post(
+        "/api/v1/training-activities/generate",
+        headers=request_headers(request_id),
+        json={
+            "requestId": request_id,
+            "schemaVersion": 1,
+            "sequence": 2,
+            "trainingType": "VOWEL_SOUND_CHOICE",
+            "difficulty": 1,
+            "targetFeatures": [
+                {
+                    "featureCode": "GRAPHEME.VOWEL.BASIC.ㅏ",
+                    "weaknessScore": 0.8,
+                    "confidence": 0.9,
+                    "evidenceCount": 10,
+                }
+            ],
+            "excludedFeatures": [],
+            "additionalPrompt": "",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    activity = response.json()["activity"]
+    assert activity["trainingType"] == "VOWEL_SOUND_CHOICE"
+    assert activity["targetFeatureCodes"] == ["GRAPHEME.VOWEL.BASIC.ㅏ"]
+    assert response.headers["X-AI-Provider"] == "rule-db"
 
 
 def test_story_generation_returns_day_one_first_four_pages() -> None:

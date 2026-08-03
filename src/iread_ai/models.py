@@ -24,4 +24,5 @@ class PronunciationAnalysisResponse(BaseModel):
     pronScore: float | None = Field(default=None, ge=0, le=100)
     confidence: float = Field(ge=0, le=1)
     analysisVersion: str = Field(min_length=1)
+    recognizedText: str | None = None
     words: list[PronunciationWordResult] = Field(min_length=1)

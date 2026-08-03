@@ -30,13 +30,15 @@ def _training_request(request_id: str = "reliable-training") -> dict:
     return {
         "requestId": request_id,
         "schemaVersion": 2,
-        "trainingType": "VOWEL_TRACE",
+        "trainingType": "SENTENCE_READING",
         "count": 5,
         "difficulty": 2,
         "targetFeatures": [],
         "excludedFeatures": [],
         "additionalPrompt": "",
-        "outputTemplate": {"data": [{"target": "<string>"}]},
+        "outputTemplate": {
+            "data": [{"sentence": "<string>", "tokens": ["<string>"]}]
+        },
     }
 
 
@@ -63,8 +65,8 @@ def test_training_provider_failure_returns_safe_fallback(monkeypatch) -> None:
     )
 
     assert response.status_code == 200
-    assert response.headers["X-AI-Provider"] == "safe-mock"
-    assert response.headers["X-AI-Fallback"] == "safe-mock"
+    assert response.headers["X-AI-Provider"] == "curated-fallback"
+    assert response.headers["X-AI-Fallback"] == "curated-fallback"
     assert len(response.json()["data"]) == 5
 
 

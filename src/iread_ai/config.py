@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     azure_speech_region: str = ""
     azure_speech_language: str = "ko-KR"
     azure_speech_voice: str = "ko-KR-SunHiNeural"
-    pronunciation_provider: Literal["azure", "deterministic"] = Field(
+    pronunciation_provider: Literal["azure", "gms", "deterministic"] = Field(
         default="deterministic",
         validation_alias="AI_PRONUNCIATION_PROVIDER",
     )
@@ -92,6 +92,10 @@ class Settings(BaseSettings):
         le=32 * 1024 * 1024,
     )
     character_reference_dir: Path = Path("assets/character-references")
+    lexicon_database_path: Path = Field(
+        default=Path("local-output/lexicon/story-lexicon.sqlite3"),
+        validation_alias="AI_LEXICON_DB_PATH",
+    )
 
     model_timeout_seconds: float = Field(default=75.0, gt=0, le=120.0)
     idempotency_ttl_seconds: float = Field(
@@ -106,6 +110,17 @@ class Settings(BaseSettings):
         default=28.0,
         gt=0,
         validation_alias="AI_GMS_TEXT_TIMEOUT_SECONDS",
+    )
+    gms_speech_model: str = Field(
+        default="whisper-1",
+        min_length=1,
+        validation_alias="AI_GMS_SPEECH_MODEL",
+    )
+    gms_speech_timeout_seconds: float = Field(
+        default=45.0,
+        gt=0,
+        le=120,
+        validation_alias="AI_GMS_SPEECH_TIMEOUT_SECONDS",
     )
     gms_max_output_tokens: int = Field(
         default=3200,
@@ -147,6 +162,12 @@ class Settings(BaseSettings):
         ):
             raise ValueError(
                 "GMS_KEY is required when AI_GENERATION_PROVIDER=gms"
+            )
+        if self.pronunciation_provider == "gms" and (
+            self.gms_key is None or not self.gms_key.get_secret_value()
+        ):
+            raise ValueError(
+                "GMS_KEY is required when AI_PRONUNCIATION_PROVIDER=gms"
             )
         if self.story_image_provider == "gemini" and (
             self.gms_key is None or not self.gms_key.get_secret_value()

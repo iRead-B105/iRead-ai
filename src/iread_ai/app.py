@@ -9,11 +9,13 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
 
-from fastapi import File, Form, Header, HTTPException, Query, UploadFile
+from fastapi import File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.responses import Response
 
 from .adapters.generation.gms_gemini_image import GMSGeminiImageGenerator
 from .config import Settings
+from .curriculum_models import CurriculumRecommendRequest, CurriculumRecommendResponse
+from .curriculum_recommender import recommend_curriculum
 from .generation_models import (
     EvaluateTrainingRequest,
     EvaluateTrainingResponse,
@@ -23,10 +25,14 @@ from .generation_models import (
     GenerateTrainingResponse,
     SpeechSynthesisRequest,
     SpeechTranscriptionResponse,
+    TrainingActivityRequest,
+    TrainingActivityResponse,
     TrainingCandidateRequest,
     TrainingCandidateResponse,
+    TrainingSetRequest,
+    TrainingSetResponse,
 )
-from .generation_service import generate_training
+from .generation_service import enrich_training_request_with_lexicon, generate_training
 from .idempotency import (
     IdempotencyConflict,
     IdempotencyInProgress,
@@ -35,12 +41,13 @@ from .idempotency import (
     MemoryIdempotencyStore as TrainingIdempotencyStore,
 )
 from .main import create_app
-from .mock_generators import evaluate_training, generate_legacy_training
+from .mock_generators import generate_legacy_training
 from .models import PronunciationAnalysisResponse
 from .ports.story_image_generator import StoryImageProviderError
 from .pronunciation import (
     AzurePronunciationProvider,
     DeterministicPronunciationProvider,
+    GMSPronunciationProvider,
     PronunciationProviderError,
 )
 from .providers import GMSTextProvider
@@ -49,13 +56,16 @@ from .speech import (
     DeterministicSpeechProvider,
     SpeechProviderError,
 )
+from .training_evaluation import TrainingEvaluationError, evaluate_training
+from .training_set_service import generate_training_activity, generate_training_set
 
 settings = Settings.from_env()
-provider = (
-    AzurePronunciationProvider(settings)
-    if settings.pronunciation_provider == "azure"
-    else DeterministicPronunciationProvider()
-)
+if settings.pronunciation_provider == "azure":
+    provider = AzurePronunciationProvider(settings)
+elif settings.pronunciation_provider == "gms":
+    provider = GMSPronunciationProvider(settings)
+else:
+    provider = DeterministicPronunciationProvider()
 speech_provider = (
     AzureSpeechProvider(settings)
     if settings.speech_provider == "azure"
@@ -157,6 +167,7 @@ def _execute_idempotent(
 def training_candidates(
     request: TrainingCandidateRequest,
     response: Response,
+    http_request: Request,
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> TrainingCandidateResponse:
@@ -166,14 +177,112 @@ def training_candidates(
         scope="training-candidates",
         key=key,
         payload=request.model_dump(mode="json"),
-        action=lambda: generate_training(request, text_provider),
+        action=lambda: generate_training(
+            enrich_training_request_with_lexicon(
+                request,
+                http_request.app.state.lexicon_service,
+            ),
+            text_provider,
+        ),
     )
     response.headers["X-AI-Provider"] = result.provider
     if result.fallback:
-        response.headers["X-AI-Fallback"] = "safe-mock"
+        response.headers["X-AI-Fallback"] = "curated-fallback"
     if replayed:
         response.headers["Idempotent-Replayed"] = "true"
     return result.value
+
+
+@app.post(
+    "/api/v1/training-sets/generate",
+    response_model=TrainingSetResponse,
+    tags=["generation"],
+    summary="한 학습 목표를 서로 다른 5개 훈련 활동으로 구성",
+)
+def training_set_generate(
+    request: TrainingSetRequest,
+    response: Response,
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> TrainingSetResponse:
+    _require_api_key(x_api_key)
+    key = _validate_idempotency(request.requestId, idempotency_key)
+    result, replayed = _execute_idempotent(
+        scope="training-set-generate",
+        key=key,
+        payload=request.model_dump(mode="json"),
+        action=lambda: generate_training_set(
+            request,
+            text_provider,
+            lexicon_service=app.state.lexicon_service,
+            analyzer=app.state.story_chapter_analyzer,
+        ),
+    )
+    response.headers["X-AI-Provider"] = "mixed:" + ",".join(
+        sorted(set(result.providers))
+    )
+    if replayed:
+        response.headers["Idempotent-Replayed"] = "true"
+    return result.response
+
+
+@app.post(
+    "/api/v1/curricula/recommend",
+    response_model=CurriculumRecommendResponse,
+    tags=["recommendation"],
+    summary="학생의 읽기 단계와 취약 특징에 맞는 다음 훈련 5개 추천",
+)
+def curriculum_recommend(
+    request: CurriculumRecommendRequest,
+    response: Response,
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> CurriculumRecommendResponse:
+    _require_api_key(x_api_key)
+    key = _validate_idempotency(request.requestId, idempotency_key)
+    result, replayed = _execute_idempotent(
+        scope="curriculum-recommend",
+        key=key,
+        payload=request.model_dump(mode="json"),
+        action=lambda: recommend_curriculum(request, text_provider),
+    )
+    response.headers["X-AI-Provider"] = result.recommendationProvider
+    if result.recommendationProvider == "deterministic-fallback":
+        response.headers["X-AI-Fallback"] = "stage-gated-deterministic"
+    if replayed:
+        response.headers["Idempotent-Replayed"] = "true"
+    return result
+
+
+@app.post(
+    "/api/v1/training-activities/generate",
+    response_model=TrainingActivityResponse,
+    tags=["generation"],
+    summary="맞춤 훈련 세트의 활동 하나를 재생성",
+)
+def training_activity_generate(
+    request: TrainingActivityRequest,
+    response: Response,
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> TrainingActivityResponse:
+    _require_api_key(x_api_key)
+    key = _validate_idempotency(request.requestId, idempotency_key)
+    result, replayed = _execute_idempotent(
+        scope="training-activity-generate",
+        key=key,
+        payload=request.model_dump(mode="json"),
+        action=lambda: generate_training_activity(
+            request,
+            text_provider,
+            lexicon_service=app.state.lexicon_service,
+            analyzer=app.state.story_chapter_analyzer,
+        ),
+    )
+    response.headers["X-AI-Provider"] = result.activity.provider
+    if replayed:
+        response.headers["Idempotent-Replayed"] = "true"
+    return result
 
 
 @app.post(
@@ -209,12 +318,25 @@ def training_generate(
 )
 def training_evaluate(
     request: EvaluateTrainingRequest,
+    response: Response,
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> EvaluateTrainingResponse:
     _require_api_key(x_api_key)
-    _validate_idempotency(request.requestId, idempotency_key)
-    return evaluate_training(request)
+    key = _validate_idempotency(request.requestId, idempotency_key)
+    try:
+        result, replayed = _execute_idempotent(
+            scope="training-evaluate",
+            key=key,
+            payload=request.model_dump(mode="json"),
+            action=lambda: evaluate_training(request),
+        )
+    except TrainingEvaluationError as exception:
+        raise HTTPException(status_code=422, detail=str(exception)) from exception
+    response.headers["X-AI-Provider"] = "hybrid-evaluator"
+    if replayed:
+        response.headers["Idempotent-Replayed"] = "true"
+    return result
 
 
 @app.post(
