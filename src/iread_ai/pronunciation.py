@@ -8,7 +8,6 @@ from .audio import AudioPreparationError, stage_azure_audio
 from .config import Settings
 from .models import PronunciationAnalysisResponse, PronunciationWordResult
 
-
 ANALYSIS_VERSION = "AZURE_SPEECH_KO_KR_WORD_V1"
 DETERMINISTIC_ANALYSIS_VERSION = "IREAD_DETERMINISTIC_KO_KR_WORD_V1"
 TICKS_PER_MILLISECOND = 10_000

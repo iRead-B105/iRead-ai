@@ -1,0 +1,75 @@
+{
+  "requestId": "story-image-example-001",
+  "schemaVersion": 1,
+  "storyId": 101,
+  "storyRevision": 8,
+  "chapterNumber": 2,
+  "pageNumber": 1,
+  "sentences": [
+    "토끼가 출발선에서 웃어요.",
+    "거북이는 종을 바라봐요.",
+    "두 친구가 출발을 기다려요."
+  ],
+  "visualScene": {
+    "shot": "WIDE_THREE_QUARTER",
+    "characters": [
+      {
+        "characterId": "hare",
+        "present": true,
+        "position": "출발선 왼쪽",
+        "orientation": "결승선 방향",
+        "gazeTarget": "finishBell",
+        "action": "두 발을 모으고 출발을 기다림",
+        "emotion": {
+          "type": "EXCITED",
+          "intensity": "MEDIUM"
+        }
+      },
+      {
+        "characterId": "tortoise",
+        "present": true,
+        "position": "출발선 오른쪽",
+        "orientation": "결승선 방향",
+        "gazeTarget": "finishBell",
+        "action": "고개를 들고 차분히 출발을 기다림",
+        "emotion": {
+          "type": "FOCUSED",
+          "intensity": "LOW"
+        }
+      }
+    ],
+    "mustInclude": [
+      "출발선",
+      "언덕 너머의 종"
+    ],
+    "mustAvoid": [
+      "글자",
+      "테두리",
+      "같은 캐릭터 중복"
+    ]
+  },
+  "storyContext": {
+    "title": "토끼와 거북이",
+    "characters": [
+      {
+        "characterId": "hare",
+        "name": "토끼",
+        "role": "주인공",
+        "immutableTraits": [
+          "하얀 털",
+          "긴 귀"
+        ]
+      },
+      {
+        "characterId": "tortoise",
+        "name": "거북이",
+        "role": "주인공",
+        "immutableTraits": [
+          "초록 등딱지",
+          "차분한 성격"
+        ]
+      }
+    ]
+  },
+  "characterReferences": []
+}

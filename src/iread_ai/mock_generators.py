@@ -1,20 +1,22 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any
 
 from .generation_models import (
     ContinueStoryRequest,
     EvaluateTrainingRequest,
     EvaluateTrainingResponse,
+    GeneratedStoryLine,
     GenerateStoryRequest,
     GenerateStoryResponse,
-    GeneratedStoryLine,
-    StoryBranchOption,
-    StoryBranchPrompt,
     GenerateTrainingRequest,
     GenerateTrainingResponse,
     SpeechSynthesisRequest,
     SpeechTranscriptionResponse,
+    StoryBranchOption,
+    StoryBranchPrompt,
     TrainingCandidateRequest,
     TrainingCandidateResponse,
 )
@@ -343,8 +345,28 @@ def _candidate(training_type: str, index: int) -> dict[str, Any]:
     raise ValueError(f"지원하지 않는 trainingType입니다: {training_type}")
 
 
+def _training_offset(request: TrainingCandidateRequest) -> int:
+    policy = {
+        "difficulty": request.difficulty,
+        "targets": sorted(
+            (item.featureCode, item.weaknessScore, item.confidence)
+            for item in request.targetFeatures
+        ),
+        "excluded": sorted(request.excludedFeatures),
+        "prompt": request.additionalPrompt,
+    }
+    digest = hashlib.sha256(
+        json.dumps(policy, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).digest()
+    return (digest[0] + request.difficulty - 1) % 5
+
+
 def generate_training_candidates(request: TrainingCandidateRequest) -> TrainingCandidateResponse:
-    data = [_candidate(request.trainingType, index % 5) for index in range(request.count)]
+    offset = _training_offset(request)
+    data = [
+        _candidate(request.trainingType, (offset + index) % 5)
+        for index in range(request.count)
+    ]
     return TrainingCandidateResponse(type=request.trainingType, data=data)
 
 

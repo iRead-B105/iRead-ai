@@ -1,0 +1,126 @@
+{
+  "requestId": "story-opening-001",
+  "schemaVersion": 3,
+  "storyId": 101,
+  "studentId": 7,
+  "storyRevision": 0,
+  "chapterNumber": 1,
+  "conclude": false,
+  "storyTemplate": {
+    "templateId": 11,
+    "version": 3,
+    "title": "토끼와 거북이",
+    "context": "빠른 토끼와 느리지만 끈기 있는 거북이가 숲길에서 경주해요.",
+    "currentBeat": {
+      "beatId": "race-challenge",
+      "goal": "토끼가 거북이를 놀리고, 거북이가 경주를 제안해요.",
+      "questionFocus": "경주가 시작된 뒤 생길 재미있는 사건",
+      "allowedBranchSlots": [
+        "FUNNY_SOUND",
+        "SURPRISING_EVENT"
+      ]
+    }
+  },
+  "storyState": {
+    "rollingSummary": "",
+    "resolvedFacts": [],
+    "unresolvedHooks": [
+      "토끼와 거북이가 경주를 시작하려 해요."
+    ],
+    "recentPages": [],
+    "characters": [
+      {
+        "characterId": "hare",
+        "name": "토끼",
+        "role": "빠르고 자만하는 주인공",
+        "immutableTraits": [
+          "빠르다",
+          "처음에는 거북이를 얕본다"
+        ]
+      },
+      {
+        "characterId": "tortoise",
+        "name": "거북이",
+        "role": "느리지만 끈기 있는 주인공",
+        "immutableTraits": [
+          "천천히 간다",
+          "포기하지 않는다"
+        ]
+      }
+    ],
+    "lastQuestion": null
+  },
+  "chapterPlan": {
+    "orderedEvents": [
+      {
+        "eventId": "hare-teases",
+        "lockedEvent": "토끼가 느린 거북이를 놀려요.",
+        "requiredCharacters": [
+          "hare",
+          "tortoise"
+        ],
+        "requiredConcepts": [
+          "토끼의 자만",
+          "거북이의 반응"
+        ]
+      },
+      {
+        "eventId": "race-begins",
+        "lockedEvent": "거북이가 경주를 제안하고 둘이 출발해요.",
+        "requiredCharacters": [
+          "hare",
+          "tortoise"
+        ],
+        "requiredConcepts": [
+          "경주 제안",
+          "출발"
+        ]
+      }
+    ],
+    "minPages": 2,
+    "maxPages": 4,
+    "questionFocus": "경주가 시작된 뒤 생길 재미있는 사건"
+  },
+  "branchInput": null,
+  "generationProfile": {
+    "schemaVersion": 2,
+    "generationProfileVersion": 7,
+    "sourceReadingProfileVersion": 12,
+    "compilerVersion": "reading-policy-v2",
+    "policyHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "contentContract": {
+      "sentenceCount": 4,
+      "preferredWrittenSyllables": {
+        "min": 55,
+        "max": 70
+      },
+      "acceptedWrittenSyllables": {
+        "min": 50,
+        "max": 75
+      },
+      "directDialogueCount": 1
+    },
+    "skills": [
+      {
+        "code": "ONSET_ㄲ",
+        "role": "LIMITED",
+        "maxOccurrences": 1,
+        "targetMin": null,
+        "targetMax": null,
+        "unitPenalty": 1.2
+      },
+      {
+        "code": "PHONO_LIAISON",
+        "role": "EXCLUDED",
+        "maxOccurrences": 0,
+        "targetMin": null,
+        "targetMax": null,
+        "unitPenalty": 1.5
+      }
+    ],
+    "protectedTerms": [
+      "토끼",
+      "거북이"
+    ]
+  }
+}

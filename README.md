@@ -1,7 +1,7 @@
 # iRead AI
 
-iRead의 FastAPI 기반 AI 서비스입니다. Azure 단어별 발음 평가와 실제 AI 서버
-구현팀이 참고할 수 있는 결정적 생성 mock API를 함께 제공합니다.
+iRead의 FastAPI 기반 AI 서비스입니다. GMS 맞춤 훈련 생성, 10일 분기 이야기와
+Azure Speech 기반 발음 평가·STT·TTS를 제공합니다.
 
 ## 제공 엔드포인트
 
@@ -10,11 +10,16 @@ iRead의 FastAPI 기반 AI 서비스입니다. Azure 단어별 발음 평가와 
 | `GET` | `/health` | 서버 상태 확인 |
 | `POST` | `/api/v1/trainings/candidates` | 34개 훈련 타입별 문항 후보 생성 |
 | `POST` | `/api/v1/trainings/generate` | 레거시 훈련 데이터 envelope 생성 |
+| `POST` | `/api/v1/trainings/evaluate` | 훈련 결과 정확도 평가 |
 | `POST` | `/api/v1/story/generate` | 1일차 첫 4페이지와 첫 분기 생성 |
 | `POST` | `/api/v1/story/continue` | 음성 선택을 반영해 당일 5페이지·마감 1페이지 또는 다음 날 첫 4페이지 생성 |
 | `POST` | `/api/v1/images/generate` | 훈련 장면·이야기 친구 이미지 URL 생성 |
-| `GET` | `/api/v1/images/mock/generated.svg` | 생성된 mock SVG 조회 |
+| `GET` | `/api/v1/images/mock/generated.png` | 레거시 호환용 안전한 mock PNG 조회 |
 | `POST` | `/api/v1/speech/pronunciation/analyze` | Azure 단어별 발음 평가 |
+| `POST` | `/api/v1/speech/transcribe` | 이야기·훈련 음성 STT |
+| `POST` | `/api/v1/speech/synthesize` | 이야기 문장 TTS |
+| `POST` | `/api/v3/story/chapters/generate` | 읽기 수준 기반 개인화 이야기 장 생성 |
+| `POST` | `/api/v1/story/images/generate` | Gemini 기반 이야기 장면 이미지 생성 |
 
 정확한 요청·응답 모델은 실행 후 `http://localhost:8081/docs`의 OpenAPI
 문서에서 확인할 수 있습니다.
@@ -41,6 +46,28 @@ uv run pytest
 Backend의 `AI_API_KEY`와 AI 서버의 `AI_INTERNAL_API_KEY`는 같은 값을
 사용합니다.
 
+## GMS 맞춤 훈련 생성
+
+훈련 후보는 GMS의 OpenAI 호환 Responses API와 `gpt-5.4-mini`를 사용합니다.
+
+- 자동 테스트와 기본 로컬 실행: `AI_GENERATION_PROVIDER=mock`
+- 실제 GMS 실행: `AI_GENERATION_PROVIDER=gms`와 `GMS_KEY` 설정
+- 외부 응답은 JSON Schema와 훈련별 안전 규칙을 통과해야 사용
+- 공급자 오류·시간 초과·검증 실패 시 안전한 결정적 후보로 대체
+- 같은 멱등성 키와 본문은 저장 응답을 재생하고, 다른 본문은 `409` 반환
+- Production에서는 기본 개발 키와 Mock 생성 provider 사용 금지
+
+## GMS 개인화 이야기와 Gemini 이미지
+
+- 실제 이야기 생성: `STORY_PROVIDER=gms`
+- 실제 장면 이미지 생성: `STORY_IMAGE_PROVIDER=gemini`
+- 두 기능 모두 `GMS_KEY`를 공유하며 비밀값은 응답과 로그에 남기지 않음
+- 이야기 프롬프트는 `src/iread_ai/prompts/`에서 버전 관리
+- 레거시 `/story/generate`, `/story/continue`도 같은 개인화 장 생성기를 사용하며
+  하루 `4페이지 → 선택 → 5페이지 → 선택 → 1페이지 마감` 계약으로 변환
+- `/images/generate`는 기존 Backend 호환용 mock PNG이며, 실제 Gemini 결과는
+  구조화된 `/story/images/generate` 계약을 사용
+
 ## 발음 평가
 
 `POST /api/v1/speech/pronunciation/analyze`는 30초 미만 한국어 읽기 녹음과
@@ -57,10 +84,10 @@ WAV는 8/16kHz, 16-bit mono PCM을 기본 입력으로 사용합니다. WebM·MP
 같은 압축 음성 처리를 위해서는 Azure Speech SDK와 같은 아키텍처의 GStreamer
 런타임 및 플러그인이 필요합니다.
 
-## 생성 mock 책임 범위
+## 로컬 mock 책임 범위
 
-생성 mock은 동일한 입력에 동일한 훈련 문항·이야기·이미지를 반환합니다. 실제
-AI 구현에서는 생성 방식만 교체하고 JSON 필드, 상태 코드,
+로컬 mock은 동일한 입력에 동일한 훈련 문항·이야기·이미지를 반환합니다. 실제
+GMS/Gemini 설정에서도 JSON 필드, 상태 코드,
 `Idempotency-Key` 계약을 유지합니다.
 
 정답 채점, 재시도·힌트·완료 판정과 단어별 시도 로그 저장은 백엔드가 담당하므로

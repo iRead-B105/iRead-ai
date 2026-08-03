@@ -1,0 +1,132 @@
+{
+  "requestId": "story-continuation-001",
+  "schemaVersion": 3,
+  "storyId": 101,
+  "studentId": 7,
+  "storyRevision": 8,
+  "chapterNumber": 2,
+  "conclude": false,
+  "storyTemplate": {
+    "templateId": 11,
+    "version": 3,
+    "title": "토끼와 거북이",
+    "context": "토끼와 거북이가 숲길에서 경주해요.",
+    "currentBeat": {
+      "beatId": "hare-rests",
+      "goal": "토끼가 쉬는 동안 거북이가 계속 나아가요.",
+      "questionFocus": "토끼가 다음에 고를 재미있는 행동",
+      "allowedBranchSlots": [
+        "FUNNY_SOUND",
+        "HELPFUL_ITEM"
+      ]
+    }
+  },
+  "storyState": {
+    "rollingSummary": "경주가 시작되었고 토끼가 먼저 달려갔어요.",
+    "resolvedFacts": [
+      "경주가 시작되었어요."
+    ],
+    "unresolvedHooks": [
+      "토끼와 거북이가 언덕을 넘어야 해요."
+    ],
+    "recentPages": [
+      {
+        "pageNumber": 3,
+        "sentences": [
+          "거북이는 높은 언덕 앞에 섰어요.",
+          "토끼는 나무 아래에서 쉬었어요.",
+          "“나는 계속 갈 거야.” 거북이가 말했어요."
+        ],
+        "question": "어떤 소리로 경주를 시작할까요?"
+      }
+    ],
+    "characters": [
+      {
+        "characterId": "hare",
+        "name": "토끼",
+        "role": "주인공",
+        "immutableTraits": [
+          "빠르다",
+          "처음에는 자만한다"
+        ]
+      },
+      {
+        "characterId": "tortoise",
+        "name": "거북이",
+        "role": "주인공",
+        "immutableTraits": [
+          "천천히 간다",
+          "포기하지 않는다"
+        ]
+      }
+    ],
+    "lastQuestion": "어떤 소리로 경주를 시작할까요?"
+  },
+  "chapterPlan": {
+    "orderedEvents": [
+      {
+        "eventId": "child-answer-event",
+        "lockedEvent": "아이의 답에 담긴 소리가 숲에 실제로 울려요.",
+        "requiredCharacters": [
+          "hare",
+          "tortoise"
+        ],
+        "requiredConcepts": [
+          "선택한 소리",
+          "두 주인공의 반응"
+        ]
+      },
+      {
+        "eventId": "return-to-race",
+        "lockedEvent": "짧은 소동 뒤 두 주인공이 경주로 돌아가요.",
+        "requiredCharacters": [
+          "hare",
+          "tortoise"
+        ],
+        "requiredConcepts": [
+          "경주 재개"
+        ]
+      }
+    ],
+    "minPages": 2,
+    "maxPages": 4,
+    "questionFocus": "토끼가 다음에 고를 재미있는 행동"
+  },
+  "branchInput": {
+    "source": "TEXT_CONFIRMED",
+    "text": "방구 소리로 출발해요!"
+  },
+  "generationProfile": {
+    "schemaVersion": 2,
+    "generationProfileVersion": 7,
+    "sourceReadingProfileVersion": 12,
+    "compilerVersion": "reading-policy-v2",
+    "policyHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "contentContract": {
+      "sentenceCount": 4,
+      "preferredWrittenSyllables": {
+        "min": 55,
+        "max": 70
+      },
+      "acceptedWrittenSyllables": {
+        "min": 50,
+        "max": 75
+      },
+      "directDialogueCount": 1
+    },
+    "skills": [
+      {
+        "code": "ONSET_ㄲ",
+        "role": "LIMITED",
+        "maxOccurrences": 1,
+        "targetMin": null,
+        "targetMax": null,
+        "unitPenalty": 1.2
+      }
+    ],
+    "protectedTerms": [
+      "토끼",
+      "거북이"
+    ]
+  }
+}

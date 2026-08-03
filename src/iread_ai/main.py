@@ -1,0 +1,226 @@
+from __future__ import annotations
+
+import asyncio
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+
+from iread_ai.adapters.generation.gms_gemini_image import (
+    GMSGeminiImageGenerator,
+)
+from iread_ai.adapters.idempotency.memory import MemoryIdempotencyStore
+from iread_ai.api.comparison import router as comparison_router
+from iread_ai.api.errors import install_error_handlers
+from iread_ai.api.legacy_story import router as legacy_story_router
+from iread_ai.api.story_chapter import router as story_chapter_router
+from iread_ai.api.story_image import router as story_image_router
+from iread_ai.application.legacy_story_service import LegacyStoryGenerationService
+from iread_ai.application.personalized_chapter_service import (
+    PersonalizedStoryChapterService,
+)
+from iread_ai.application.story_image_service import (
+    KnownCharacterReferenceRepository,
+    StoryImageApplicationService,
+)
+from iread_ai.config import Settings, get_settings
+from iread_ai.personalization.analyzer import KoreanReadingAnalyzer
+from iread_ai.personalization.chapter_comparison import (
+    ChapterGenerationComparisonService,
+)
+from iread_ai.personalization.chapter_generator import (
+    MockChapterCandidateGenerator,
+    OpenAIChapterCandidateGenerator,
+)
+from iread_ai.personalization.generator import (
+    MockPageCandidateGenerator,
+    OpenAIPageCandidateGenerator,
+)
+from iread_ai.personalization.prompts import BASELINE_PROMPT_MODE
+from iread_ai.personalization.visual_scene import (
+    MockVisualScenePlanner,
+    OpenAIVisualScenePlanner,
+    VisualScenePlanner,
+)
+from iread_ai.ports.idempotency_store import IdempotencyStore
+
+
+def create_app(
+    *,
+    settings: Settings | None = None,
+    idempotency_store: IdempotencyStore | None = None,
+    chapter_generation_comparison_service: (
+        ChapterGenerationComparisonService | None
+    ) = None,
+    story_chapter_service: PersonalizedStoryChapterService | None = None,
+    story_image_service: StoryImageApplicationService | None = None,
+) -> FastAPI:
+    settings = settings or get_settings()
+    idempotency_store = idempotency_store or MemoryIdempotencyStore(
+        ttl_seconds=settings.idempotency_ttl_seconds
+    )
+    story_image_service = story_image_service or _build_story_image_service(
+        settings
+    )
+
+    legacy_story_chapter_service = story_chapter_service
+    chapter_analyzer: KoreanReadingAnalyzer | None = None
+    chapter_generator: (
+        MockChapterCandidateGenerator | OpenAIChapterCandidateGenerator | None
+    ) = None
+    if story_chapter_service is None:
+        chapter_analyzer = KoreanReadingAnalyzer()
+        chapter_repairer = _build_page_candidate_generator(settings)
+        chapter_generator = _build_chapter_candidate_generator(settings)
+        visual_scene_planner = _build_visual_scene_planner(settings)
+        story_chapter_service = PersonalizedStoryChapterService(
+            generator=chapter_generator,
+            analyzer=chapter_analyzer,
+            repairer=chapter_repairer,
+            candidate_count=settings.chapter_candidate_count,
+            visual_scene_planner=visual_scene_planner,
+        )
+        legacy_story_chapter_service = PersonalizedStoryChapterService(
+            generator=chapter_generator,
+            analyzer=chapter_analyzer,
+            repairer=chapter_repairer,
+            candidate_count=settings.chapter_candidate_count,
+            visual_scene_planner=MockVisualScenePlanner(),
+        )
+
+    chapter_comparison_analyzer: KoreanReadingAnalyzer | None = None
+    if (
+        chapter_generation_comparison_service is None
+        and settings.app_env != "production"
+    ):
+        chapter_comparison_analyzer = (
+            chapter_analyzer or KoreanReadingAnalyzer()
+        )
+        if chapter_generator is None:
+            chapter_generator = _build_chapter_candidate_generator(settings)
+        baseline_chapter_service = PersonalizedStoryChapterService(
+            generator=chapter_generator,
+            analyzer=chapter_comparison_analyzer,
+            repairer=None,
+            candidate_count=1,
+            prompt_mode=BASELINE_PROMPT_MODE,
+        )
+        chapter_generation_comparison_service = (
+            ChapterGenerationComparisonService(
+                baseline_service=baseline_chapter_service,
+            )
+        )
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        if settings.app_env != "test":
+            analyzers = {
+                id(analyzer): analyzer
+                for analyzer in (
+                    chapter_analyzer,
+                    chapter_comparison_analyzer,
+                )
+                if analyzer is not None
+            }
+            for analyzer in analyzers.values():
+                await asyncio.to_thread(analyzer.warmup)
+        yield
+
+    app = FastAPI(
+        title="iRead AI",
+        version="0.2.0",
+        description="Backend 전용 iRead AI 내부 API",
+        lifespan=lifespan,
+    )
+    app.state.settings = settings
+    app.state.idempotency_store = idempotency_store
+    app.state.story_chapter_service = story_chapter_service
+    assert legacy_story_chapter_service is not None
+    app.state.legacy_story_service = LegacyStoryGenerationService(
+        chapter_service=legacy_story_chapter_service,
+    )
+    app.state.story_chapter_analyzer = chapter_analyzer
+    app.state.story_image_service = story_image_service
+    app.state.chapter_generation_comparison_service = (
+        chapter_generation_comparison_service
+    )
+    install_error_handlers(app)
+    app.include_router(legacy_story_router)
+    app.include_router(story_chapter_router)
+    app.include_router(story_image_router)
+    app.include_router(comparison_router)
+
+    @app.get("/health", tags=["operations"])
+    async def health() -> dict[str, str]:
+        return {
+            "status": "UP",
+            "service": "iread-ai",
+            "storyProvider": settings.story_provider,
+            "storyImageProvider": settings.story_image_provider,
+        }
+
+    return app
+
+
+def _build_page_candidate_generator(
+    settings: Settings,
+) -> MockPageCandidateGenerator | OpenAIPageCandidateGenerator:
+    if settings.story_provider == "mock":
+        return MockPageCandidateGenerator()
+    return OpenAIPageCandidateGenerator(
+        api_key=settings.story_api_key,
+        model=settings.openai_model,
+        base_url=settings.story_api_base_url,
+        timeout_seconds=settings.model_timeout_seconds,
+        max_output_tokens=settings.openai_max_output_tokens,
+    )
+
+
+def _build_chapter_candidate_generator(
+    settings: Settings,
+) -> MockChapterCandidateGenerator | OpenAIChapterCandidateGenerator:
+    if settings.story_provider == "mock":
+        return MockChapterCandidateGenerator()
+    return OpenAIChapterCandidateGenerator(
+        api_key=settings.story_api_key,
+        model=settings.openai_model,
+        base_url=settings.story_api_base_url,
+        timeout_seconds=settings.model_timeout_seconds,
+        max_output_tokens=settings.openai_chapter_max_output_tokens,
+    )
+
+
+def _build_visual_scene_planner(
+    settings: Settings,
+) -> VisualScenePlanner:
+    if settings.story_provider == "mock":
+        return MockVisualScenePlanner()
+    return OpenAIVisualScenePlanner(
+        api_key=settings.story_api_key,
+        model=settings.openai_model,
+        base_url=settings.story_api_base_url,
+        timeout_seconds=settings.visual_scene_timeout_seconds,
+        max_output_tokens=settings.openai_visual_scene_max_output_tokens,
+    )
+
+
+def _build_story_image_service(
+    settings: Settings,
+) -> StoryImageApplicationService:
+    generator = None
+    if settings.story_image_provider == "gemini":
+        assert settings.gms_key is not None
+        generator = GMSGeminiImageGenerator(
+            gms_key=settings.gms_key.get_secret_value(),
+            model=settings.gms_gemini_image_model,
+            base_url=settings.gms_base_url,
+            timeout_seconds=settings.gms_image_timeout_seconds,
+            max_image_bytes=settings.gms_image_max_bytes,
+            max_response_bytes=settings.gms_image_max_response_bytes,
+            max_request_bytes=settings.gms_image_max_request_bytes,
+        )
+    return StoryImageApplicationService(
+        generator=generator,
+        references=KnownCharacterReferenceRepository(
+            root=settings.character_reference_dir,
+        ),
+    )
