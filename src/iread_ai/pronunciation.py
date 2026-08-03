@@ -2,14 +2,15 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-import tempfile
 from typing import Any
 
+from .audio import AudioPreparationError, stage_azure_audio
 from .config import Settings
 from .models import PronunciationAnalysisResponse, PronunciationWordResult
 
 
 ANALYSIS_VERSION = "AZURE_SPEECH_KO_KR_WORD_V1"
+DETERMINISTIC_ANALYSIS_VERSION = "IREAD_DETERMINISTIC_KO_KR_WORD_V1"
 TICKS_PER_MILLISECOND = 10_000
 
 
@@ -34,18 +35,13 @@ class AzurePronunciationProvider:
         if not self._settings.azure_speech_region:
             raise PronunciationProviderError("Azure Speech region is not configured")
 
-        suffix = _safe_suffix(original_filename)
         path: Path | None = None
         try:
-            with tempfile.NamedTemporaryFile(
-                prefix="iread-pronunciation-",
-                suffix=suffix,
-                delete=False,
-            ) as temporary:
-                temporary.write(audio)
-                path = Path(temporary.name)
+            path = stage_azure_audio(audio, original_filename)
             payload = self._recognize(reference_text, path)
             return parse_azure_result(request_id=request_id, payload=payload)
+        except AudioPreparationError as exception:
+            raise PronunciationProviderError(str(exception)) from exception
         finally:
             if path is not None:
                 path.unlink(missing_ok=True)
@@ -89,6 +85,45 @@ class AzurePronunciationProvider:
             raise PronunciationProviderError(
                 "Azure Speech returned an invalid result"
             ) from exception
+
+
+class DeterministicPronunciationProvider:
+    """Local integration provider used when Azure credentials are unavailable.
+
+    It keeps the Backend -> AI contract real without pretending to be a
+    production speech assessment. Production must select the Azure provider.
+    """
+
+    def analyze(
+        self,
+        *,
+        request_id: str,
+        reference_text: str,
+        audio: bytes,
+        original_filename: str | None,
+    ) -> PronunciationAnalysisResponse:
+        del audio, original_filename
+        words = reference_text.split() or [reference_text]
+        return PronunciationAnalysisResponse(
+            requestId=request_id,
+            pronunciationAccuracyScore=0.0,
+            fluencyScore=0.0,
+            completenessScore=0.0,
+            pronScore=0.0,
+            confidence=0.0,
+            analysisVersion=DETERMINISTIC_ANALYSIS_VERSION,
+            words=[
+                PronunciationWordResult(
+                    resultIndex=index,
+                    word=word,
+                    accuracyScore=0.0,
+                    errorType="Omission",
+                    offsetMs=0,
+                    durationMs=0,
+                )
+                for index, word in enumerate(words)
+            ],
+        )
 
 
 def parse_azure_result(
@@ -142,11 +177,3 @@ def _ticks_to_ms(value: object) -> int:
 def _optional_float(value: object) -> float | None:
     return None if value is None else float(value)
 
-
-def _safe_suffix(filename: str | None) -> str:
-    if not filename:
-        return ".audio"
-    suffix = Path(filename).suffix.lower()
-    if suffix in {".wav", ".webm", ".mp3", ".mp4", ".m4a"}:
-        return suffix
-    return ".audio"

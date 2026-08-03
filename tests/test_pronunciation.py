@@ -2,7 +2,24 @@ from pathlib import Path
 from typing import Any
 
 from iread_ai.config import Settings
-from iread_ai.pronunciation import AzurePronunciationProvider, parse_azure_result
+from iread_ai.pronunciation import (
+    AzurePronunciationProvider,
+    DeterministicPronunciationProvider,
+    parse_azure_result,
+)
+
+
+def test_local_pronunciation_never_awards_points_from_audio_length() -> None:
+    result = DeterministicPronunciationProvider().analyze(
+        request_id="local-1",
+        reference_text="가 나",
+        audio=b"not-real-speech" * 10_000,
+        original_filename="recording.webm",
+    )
+
+    assert result.pronunciationAccuracyScore == 0
+    assert result.confidence == 0
+    assert [word.errorType for word in result.words] == ["Omission", "Omission"]
 
 
 def test_parses_sentence_into_word_scores_and_milliseconds() -> None:
@@ -115,6 +132,7 @@ def test_removes_temporary_audio_after_analysis() -> None:
             azure_speech_region="koreacentral",
             azure_speech_language="ko-KR",
             max_audio_bytes=1024,
+            pronunciation_provider="azure",
         )
     )
 
