@@ -1,5 +1,36 @@
 # iRead AI
 
+## API capability index
+
+All internal endpoints require `X-API-Key`. Mutating endpoints also require an
+`Idempotency-Key` equal to the request body's `requestId` unless their detailed
+contract states otherwise. Interactive OpenAPI documentation is available at
+`http://localhost:8081/docs`.
+
+| Capability | Endpoint | Implementation |
+|---|---|---|
+| Training candidates | `POST /api/v1/trainings/candidates` | Rule DB for mechanical types; GMS plus validation for language types |
+| Five-activity training set | `POST /api/v1/training-sets/generate` | Mixed rule/LLM generation with local personalization scoring |
+| Regenerate one activity | `POST /api/v1/training-activities/generate` | Same selection and validation pipeline as a training set |
+| Curriculum recommendation | `POST /api/v1/curricula/recommend` | Stage-gated recommendation with deterministic fallback |
+| Training evaluation | `POST /api/v1/trainings/evaluate` | Deterministic scoring and validation |
+| Lexicon status | `GET /api/v1/lexicon/status` | AI-owned SQLite status |
+| Lexicon palette | `POST /api/v1/lexicon/palettes/query` | Profile-filtered vocabulary and phonology palette |
+| Teacher report | `POST /api/v1/reports/analyze` | Evidence-based analysis with optional GMS narration |
+| Personalized story | `POST /api/v1/story/generate`, `POST /api/v1/story/continue` | Personalized story v1 compatibility API |
+| Personalized chapter | `POST /api/v3/story/chapters/generate` | Candidate generation, Kiwi/G2P analysis, and local repair |
+| Story image | `POST /api/v1/story/images/generate` | Optional Gemini image generation |
+| Pronunciation | `POST /api/v1/speech/pronunciation/analyze` | Azure assessment, GMS transcription match, or deterministic test provider |
+
+Detailed contracts and examples:
+
+- [Training item generation](docs/TRAINING_ITEM_GENERATION.md)
+- [Curriculum recommendation](docs/CURRICULUM_RECOMMENDATION.md)
+- [Training evaluation](docs/TRAINING_EVALUATION.md)
+- [Lexicon database](docs/LEXICON_DATABASE.md)
+- [Teacher report analysis](docs/TEACHER_REPORT_ANALYSIS.md)
+- [Backend reading profile AI integration](docs/BACKEND_READING_PROFILE_AI_INTEGRATION.md)
+
 iRead의 FastAPI 기반 AI 서비스입니다. GMS 맞춤 훈련 생성, 10일 분기 이야기와
 Azure Speech 기반 발음 평가·STT·TTS를 제공합니다.
 
@@ -47,19 +78,22 @@ uv run pytest
 Backend의 `AI_API_KEY`와 AI 서버의 `AI_INTERNAL_API_KEY`는 같은 값을
 사용합니다.
 
-## GMS 맞춤 훈련 생성
+## OpenAI/GMS 맞춤 훈련 생성
 
-훈련 후보는 GMS의 OpenAI 호환 Responses API와 `gpt-5.4-mini`를 사용합니다.
+훈련 후보는 OpenAI Responses API 또는 GMS의 OpenAI 호환 Responses API와
+`gpt-5.4-mini`를 사용합니다.
 
 - 자동 테스트와 기본 로컬 실행: `AI_GENERATION_PROVIDER=mock`
+- OpenAI 직접 실행: `AI_GENERATION_PROVIDER=openai`와 `OPENAI_API_KEY` 설정
 - 실제 GMS 실행: `AI_GENERATION_PROVIDER=gms`와 `GMS_KEY` 설정
 - 외부 응답은 JSON Schema와 훈련별 안전 규칙을 통과해야 사용
 - 공급자 오류·시간 초과·검증 실패 시 안전한 결정적 후보로 대체
 - 같은 멱등성 키와 본문은 저장 응답을 재생하고, 다른 본문은 `409` 반환
 - Production에서는 기본 개발 키와 Mock 생성 provider 사용 금지
 
-## GMS 개인화 이야기와 Gemini 이미지
+## OpenAI/GMS 개인화 이야기와 Gemini 이미지
 
+- OpenAI 직접 이야기 생성: `STORY_PROVIDER=openai`
 - 실제 이야기 생성: `STORY_PROVIDER=gms`
 - 실제 장면 이미지 생성: `STORY_IMAGE_PROVIDER=gemini`
 - 두 기능 모두 `GMS_KEY`를 공유하며 비밀값은 응답과 로그에 남기지 않음

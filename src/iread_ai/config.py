@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     azure_speech_region: str = ""
     azure_speech_language: str = "ko-KR"
     azure_speech_voice: str = "ko-KR-SunHiNeural"
-    pronunciation_provider: Literal["azure", "deterministic"] = Field(
+    pronunciation_provider: Literal["azure", "gms", "deterministic"] = Field(
         default="deterministic",
         validation_alias="AI_PRONUNCIATION_PROVIDER",
     )
@@ -45,7 +45,7 @@ class Settings(BaseSettings):
     )
 
     story_provider: Literal["mock", "openai", "gms"] = "mock"
-    generation_provider: Literal["mock", "gms"] = Field(
+    generation_provider: Literal["mock", "openai", "gms"] = Field(
         default="mock",
         validation_alias="AI_GENERATION_PROVIDER",
     )
@@ -108,6 +108,10 @@ class Settings(BaseSettings):
         le=32 * 1024 * 1024,
     )
     character_reference_dir: Path = Path("assets/character-references")
+    lexicon_database_path: Path = Field(
+        default=Path("local-output/lexicon/story-lexicon.sqlite3"),
+        validation_alias="AI_LEXICON_DB_PATH",
+    )
 
     model_timeout_seconds: float = Field(default=75.0, gt=0, le=120.0)
     idempotency_ttl_seconds: float = Field(
@@ -122,6 +126,17 @@ class Settings(BaseSettings):
         default=28.0,
         gt=0,
         validation_alias="AI_GMS_TEXT_TIMEOUT_SECONDS",
+    )
+    gms_speech_model: str = Field(
+        default="whisper-1",
+        min_length=1,
+        validation_alias="AI_GMS_SPEECH_MODEL",
+    )
+    gms_speech_timeout_seconds: float = Field(
+        default=45.0,
+        gt=0,
+        le=120,
+        validation_alias="AI_GMS_SPEECH_TIMEOUT_SECONDS",
     )
     gms_max_output_tokens: int = Field(
         default=3200,
@@ -154,6 +169,13 @@ class Settings(BaseSettings):
             raise ValueError(
                 "OPENAI_API_KEY is required when STORY_PROVIDER=openai"
             )
+        if self.generation_provider == "openai" and (
+            self.openai_api_key is None
+            or not self.openai_api_key.get_secret_value()
+        ):
+            raise ValueError(
+                "OPENAI_API_KEY is required when AI_GENERATION_PROVIDER=openai"
+            )
         if self.story_provider == "gms" and (
             self.gms_key is None or not self.gms_key.get_secret_value()
         ):
@@ -163,6 +185,12 @@ class Settings(BaseSettings):
         ):
             raise ValueError(
                 "GMS_KEY is required when AI_GENERATION_PROVIDER=gms"
+            )
+        if self.pronunciation_provider == "gms" and (
+            self.gms_key is None or not self.gms_key.get_secret_value()
+        ):
+            raise ValueError(
+                "GMS_KEY is required when AI_PRONUNCIATION_PROVIDER=gms"
             )
         if self.story_image_provider == "gemini" and (
             self.gms_key is None or not self.gms_key.get_secret_value()
@@ -204,6 +232,36 @@ class Settings(BaseSettings):
         if self.gms_openai_base_url:
             return self.gms_openai_base_url.rstrip("/")
         return f"{self.gms_base_url.rstrip('/')}/api.openai.com/v1"
+
+    @property
+    def text_api_key(self) -> str:
+        if self.generation_provider == "openai":
+            assert self.openai_api_key is not None
+            return self.openai_api_key.get_secret_value()
+        if self.generation_provider == "gms":
+            assert self.gms_key is not None
+            return self.gms_key.get_secret_value()
+        raise RuntimeError("mock text generation does not use an API key")
+
+    @property
+    def text_base_url(self) -> str:
+        if self.generation_provider == "openai":
+            return self.openai_base_url.rstrip("/")
+        if self.generation_provider == "gms":
+            return self.gms_text_base_url
+        raise RuntimeError("mock text generation does not use an API URL")
+
+    @property
+    def text_timeout_seconds(self) -> float:
+        if self.generation_provider == "openai":
+            return self.model_timeout_seconds
+        return self.gms_text_timeout_seconds
+
+    @property
+    def text_max_output_tokens(self) -> int:
+        if self.generation_provider == "openai":
+            return self.openai_max_output_tokens
+        return self.gms_max_output_tokens
 
 
 @lru_cache

@@ -308,14 +308,15 @@ def _candidate(training_type: str, index: int) -> dict[str, Any]:
             "completedSentence": sentence,
         }
     if training_type == "FILL_IN_THE_BLANK":
-        answer = WORDS[index]
+        choices = _rotate(["모자", "기차", "바다", "나비", "사과"], index)[:3]
+        answer = choices[0]
         return {
-            "sentence": "책상 위에 {{blank}} 그림이 있다.",
+            "sentence": "책상 위에 {{blank}}를 놓았어요.",
             "inputType": "CHOICE",
-            "choices": [answer, "기차", "연필"],
+            "choices": choices,
             "answerIndex": 0,
             "acceptedAnswers": [answer],
-            "completedSentence": f"책상 위에 {answer} 그림이 있다.",
+            "completedSentence": f"책상 위에 {answer}를 놓았어요.",
         }
     if training_type == "IMAGE_SENTENCE_MATCH":
         sentence = SENTENCES[index]
@@ -338,8 +339,21 @@ def _candidate(training_type: str, index: int) -> dict[str, Any]:
         return {
             "title": f"{WORDS[index]} 이야기",
             "sentences": [
-                {"speaker": "NARRATOR", "text": SENTENCES[index], "emotion": "CALM"},
-                {"speaker": "CHARACTER", "text": "오늘은 정말 즐거워!", "emotion": "HAPPY"},
+                {
+                    "speaker": "NARRATOR",
+                    "text": "강아지가 숲길에서 작은 문을 찾았어요.",
+                    "emotion": "CALM",
+                },
+                {
+                    "speaker": "CHARACTER",
+                    "text": "“안에는 무엇이 있을까?”",
+                    "emotion": "SURPRISED",
+                },
+                {
+                    "speaker": "NARRATOR",
+                    "text": "친구와 문을 열자 밝은 별이 나왔어요.",
+                    "emotion": "HAPPY",
+                },
             ],
         }
     raise ValueError(f"지원하지 않는 trainingType입니다: {training_type}")

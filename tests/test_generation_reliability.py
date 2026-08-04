@@ -30,13 +30,15 @@ def _training_request(request_id: str = "reliable-training") -> dict:
     return {
         "requestId": request_id,
         "schemaVersion": 2,
-        "trainingType": "VOWEL_TRACE",
+        "trainingType": "SENTENCE_READING",
         "count": 5,
         "difficulty": 2,
         "targetFeatures": [],
         "excludedFeatures": [],
         "additionalPrompt": "",
-        "outputTemplate": {"data": [{"target": "<string>"}]},
+        "outputTemplate": {
+            "data": [{"sentence": "<string>", "tokens": ["<string>"]}]
+        },
     }
 
 
@@ -63,8 +65,8 @@ def test_training_provider_failure_returns_safe_fallback(monkeypatch) -> None:
     )
 
     assert response.status_code == 200
-    assert response.headers["X-AI-Provider"] == "safe-mock"
-    assert response.headers["X-AI-Fallback"] == "safe-mock"
+    assert response.headers["X-AI-Provider"] == "curated-fallback"
+    assert response.headers["X-AI-Fallback"] == "curated-fallback"
     assert len(response.json()["data"]) == 5
 
 
@@ -185,6 +187,38 @@ def test_gms_text_provider_uses_responses_json_schema() -> None:
         system_prompt="safe",
         user_prompt="training",
     ) == {"value": "안전한 훈련"}
+
+
+def test_text_provider_identifies_direct_openai_requests() -> None:
+    provider = GMSTextProvider(
+        api_key="openai-key",
+        model="gpt-test",
+        base_url="https://api.openai.com/v1",
+        timeout_seconds=1,
+        max_output_tokens=256,
+        provider_name="openai",
+        client=httpx.Client(
+            transport=httpx.MockTransport(
+                lambda _request: httpx.Response(
+                    200,
+                    json={"status": "completed", "output_text": '{"ok":true}'},
+                )
+            )
+        ),
+    )
+
+    assert provider.provider_name == "openai"
+    assert provider.generate_json(
+        schema_name="test_schema",
+        schema={
+            "type": "object",
+            "properties": {"ok": {"type": "boolean"}},
+            "required": ["ok"],
+            "additionalProperties": False,
+        },
+        system_prompt="safe",
+        user_prompt="training",
+    ) == {"ok": True}
 
 
 def test_training_candidates_allow_generic_generation_without_weak_profiles(

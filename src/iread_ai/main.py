@@ -8,13 +8,18 @@ from fastapi import FastAPI
 from iread_ai.adapters.generation.gms_gemini_image import (
     GMSGeminiImageGenerator,
 )
+from iread_ai.adapters.generation.gms_teacher_report import (
+    GMSTeacherReportNarrator,
+)
 from iread_ai.adapters.idempotency.memory import MemoryIdempotencyStore
 from iread_ai.api.branch_input_review import router as branch_input_review_router
 from iread_ai.api.comparison import router as comparison_router
 from iread_ai.api.errors import install_error_handlers
 from iread_ai.api.legacy_story import router as legacy_story_router
+from iread_ai.api.lexicon import router as lexicon_router
 from iread_ai.api.story_chapter import router as story_chapter_router
 from iread_ai.api.story_image import router as story_image_router
+from iread_ai.api.teacher_report import router as teacher_report_router
 from iread_ai.application.branch_input_review import (
     BranchInputReviewer,
     DeterministicBranchInputReviewer,
@@ -28,7 +33,11 @@ from iread_ai.application.story_image_service import (
     KnownCharacterReferenceRepository,
     StoryImageApplicationService,
 )
+from iread_ai.application.teacher_report_summary_service import (
+    TeacherReportSummaryService,
+)
 from iread_ai.config import Settings, get_settings
+from iread_ai.lexicon.service import LexiconPaletteService
 from iread_ai.personalization.analyzer import KoreanReadingAnalyzer
 from iread_ai.personalization.chapter_comparison import (
     ChapterGenerationComparisonService,
@@ -48,6 +57,7 @@ from iread_ai.personalization.visual_scene import (
     VisualScenePlanner,
 )
 from iread_ai.ports.idempotency_store import IdempotencyStore
+from iread_ai.providers import GMSTextProvider
 
 
 def create_app(
@@ -59,6 +69,8 @@ def create_app(
     ) = None,
     story_chapter_service: PersonalizedStoryChapterService | None = None,
     story_image_service: StoryImageApplicationService | None = None,
+    teacher_report_service: TeacherReportSummaryService | None = None,
+    lexicon_service: LexiconPaletteService | None = None,
     branch_input_reviewer: BranchInputReviewer | None = None,
 ) -> FastAPI:
     settings = settings or get_settings()
@@ -67,6 +79,12 @@ def create_app(
     )
     story_image_service = story_image_service or _build_story_image_service(
         settings
+    )
+    teacher_report_service = teacher_report_service or _build_teacher_report_service(
+        settings
+    )
+    lexicon_service = lexicon_service or LexiconPaletteService(
+        settings.lexicon_database_path
     )
     branch_input_reviewer = branch_input_reviewer or _build_branch_input_reviewer(
         settings
@@ -133,7 +151,10 @@ def create_app(
             }
             for analyzer in analyzers.values():
                 await asyncio.to_thread(analyzer.warmup)
-        yield
+        try:
+            yield
+        finally:
+            lexicon_service.close()
 
     app = FastAPI(
         title="iRead AI",
@@ -150,6 +171,8 @@ def create_app(
     )
     app.state.story_chapter_analyzer = chapter_analyzer
     app.state.story_image_service = story_image_service
+    app.state.teacher_report_service = teacher_report_service
+    app.state.lexicon_service = lexicon_service
     app.state.branch_input_reviewer = branch_input_reviewer
     app.state.chapter_generation_comparison_service = (
         chapter_generation_comparison_service
@@ -159,6 +182,8 @@ def create_app(
     app.include_router(branch_input_review_router)
     app.include_router(story_chapter_router)
     app.include_router(story_image_router)
+    app.include_router(teacher_report_router)
+    app.include_router(lexicon_router)
     app.include_router(comparison_router)
 
     @app.get("/health", tags=["operations"])
@@ -167,7 +192,12 @@ def create_app(
             "status": "UP",
             "service": "iread-ai",
             "storyProvider": settings.story_provider,
+            "trainingGenerationProvider": settings.generation_provider,
             "storyImageProvider": settings.story_image_provider,
+            "teacherReportProvider": (
+                "gms" if settings.generation_provider == "gms" else "deterministic"
+            ),
+            "lexiconStatus": lexicon_service.status().status,
         }
 
     return app
@@ -248,3 +278,21 @@ def _build_story_image_service(
             root=settings.character_reference_dir,
         ),
     )
+
+
+def _build_teacher_report_service(
+    settings: Settings,
+) -> TeacherReportSummaryService:
+    narrator = None
+    if settings.generation_provider == "gms":
+        assert settings.gms_key is not None
+        narrator = GMSTeacherReportNarrator(
+            GMSTextProvider(
+                api_key=settings.gms_key.get_secret_value(),
+                model=settings.gms_text_model,
+                base_url=settings.gms_text_base_url,
+                timeout_seconds=settings.gms_text_timeout_seconds,
+                max_output_tokens=settings.gms_max_output_tokens,
+            )
+        )
+    return TeacherReportSummaryService(narrator=narrator)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 
@@ -26,15 +26,19 @@ class GMSTextProvider:
         base_url: str,
         timeout_seconds: float,
         max_output_tokens: int,
+        provider_name: Literal["gms", "openai"] = "gms",
         client: httpx.Client | None = None,
     ) -> None:
+        if provider_name not in {"gms", "openai"}:
+            raise ValueError("text provider name must be gms or openai")
         if not api_key.strip() or not model.strip():
-            raise ValueError("GMS text credentials and model must not be empty")
+            raise ValueError("text credentials and model must not be empty")
         parsed = httpx.URL(base_url)
         if parsed.scheme not in {"http", "https"} or not parsed.host:
-            raise ValueError("GMS text base URL must be an absolute HTTP(S) URL")
+            raise ValueError("text base URL must be an absolute HTTP(S) URL")
         if timeout_seconds <= 0 or max_output_tokens < 256:
-            raise ValueError("GMS text limits are invalid")
+            raise ValueError("text generation limits are invalid")
+        self._provider_name = provider_name
         self._api_key = api_key
         self._model = model
         self._url = f"{base_url.rstrip('/')}/responses"
@@ -45,6 +49,10 @@ class GMSTextProvider:
     @property
     def model(self) -> str:
         return self._model
+
+    @property
+    def provider_name(self) -> Literal["gms", "openai"]:
+        return self._provider_name
 
     def generate_json(
         self,
@@ -80,7 +88,7 @@ class GMSTextProvider:
         response = self._post(payload)
         if response.status_code >= 400:
             raise GenerationProviderError(
-                f"GMS text request failed with HTTP {response.status_code}",
+                f"{self._provider_name} text request failed with HTTP {response.status_code}",
                 retryable=_retryable_status(response.status_code),
             )
         try:
@@ -95,7 +103,7 @@ class GMSTextProvider:
             return output
         except (json.JSONDecodeError, TypeError, ValueError) as exception:
             raise GenerationProviderError(
-                "GMS text response did not match the requested JSON contract",
+                f"{self._provider_name} text response did not match the requested JSON contract",
                 retryable=False,
             ) from exception
 
@@ -116,11 +124,11 @@ class GMSTextProvider:
                 return client.post(self._url, headers=headers, json=payload)
         except (httpx.TimeoutException, TimeoutError) as exception:
             raise GenerationProviderError(
-                "GMS text request timed out", retryable=True
+                f"{self._provider_name} text request timed out", retryable=True
             ) from exception
         except httpx.RequestError as exception:
             raise GenerationProviderError(
-                "GMS text endpoint is unavailable", retryable=True
+                f"{self._provider_name} text endpoint is unavailable", retryable=True
             ) from exception
 
 

@@ -1,11 +1,15 @@
 from pathlib import Path
 from typing import Any
 
+import httpx
+
 from iread_ai.config import Settings
 from iread_ai.pronunciation import (
     AzurePronunciationProvider,
     DeterministicPronunciationProvider,
+    GMSPronunciationProvider,
     parse_azure_result,
+    score_transcribed_reading,
 )
 
 
@@ -92,6 +96,61 @@ def test_keeps_insertions_for_backend_alignment() -> None:
 
     assert result.words[0].resultIndex == 0
     assert result.words[0].errorType == "Insertion"
+
+
+def test_scores_perfect_gms_transcription_as_full_match() -> None:
+    result = score_transcribed_reading(
+        request_id="gms-perfect",
+        reference_text="토끼가 숲길을 걸어요.",
+        recognized_text="토끼가 숲길을 걸어요",
+    )
+
+    assert result.pronunciationAccuracyScore == 100
+    assert result.completenessScore == 100
+    assert result.fluencyScore is None
+    assert result.recognizedText == "토끼가 숲길을 걸어요"
+    assert [word.errorType for word in result.words] == ["None", "None", "None"]
+
+
+def test_scores_gms_transcription_from_actual_audio_request() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("/audio/transcriptions")
+        assert request.headers["Authorization"] == "Bearer gms-key"
+        assert b'recording.wav' in request.content
+        return httpx.Response(200, json={"text": "토끼가 숲길을 걸어요"})
+
+    provider = GMSPronunciationProvider(
+        Settings(
+            internal_api_key="internal",
+            pronunciation_provider="gms",
+            gms_key="gms-key",
+            gms_openai_base_url="https://example.test/v1",
+        ),
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = provider.analyze(
+        request_id="gms-audio",
+        reference_text="토끼가 숲길을 걸어요.",
+        audio=b"real-audio-payload",
+        original_filename="recording.wav",
+    )
+
+    assert result.pronunciationAccuracyScore == 100
+    assert result.analysisVersion.startswith("GMS_WHISPER1")
+    assert result.recognizedText == "토끼가 숲길을 걸어요"
+
+
+def test_gms_empty_transcription_is_scored_as_omission() -> None:
+    result = score_transcribed_reading(
+        request_id="gms-empty",
+        reference_text="사과를 먹어요",
+        recognized_text="",
+    )
+
+    assert result.pronunciationAccuracyScore == 0
+    assert result.completenessScore == 0
+    assert [word.errorType for word in result.words] == ["Omission", "Omission"]
 
 
 def test_removes_temporary_audio_after_analysis() -> None:

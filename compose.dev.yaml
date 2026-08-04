@@ -11,6 +11,7 @@ services:
       APP_ENV: development
       AI_INTERNAL_API_KEY: ${AI_INTERNAL_API_KEY:-local-development-key}
       AI_MAX_AUDIO_BYTES: ${AI_MAX_AUDIO_BYTES:-20971520}
+      AI_GENERATION_PROVIDER: ${AI_GENERATION_PROVIDER:-mock}
       STORY_PROVIDER: ${STORY_PROVIDER:-mock}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5.4-mini}

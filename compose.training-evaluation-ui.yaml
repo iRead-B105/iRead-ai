@@ -1,0 +1,24 @@
+name: iread-training-evaluation-review
+
+services:
+  training-evaluation-ui:
+    build:
+      context: .
+      dockerfile: Dockerfile.ui
+    command:
+      - streamlit
+      - run
+      - training_evaluation_review_app.py
+      - --server.address=0.0.0.0
+      - --server.port=8501
+      - --server.headless=true
+    ports:
+      - "127.0.0.1:8511:8501"
+    env_file:
+      - path: ./.env
+        required: false
+    environment:
+      IREAD_TRAINING_EVALUATION_ENDPOINT: http://host.docker.internal:8081/api/v1/trainings/evaluate
+      IREAD_PRONUNCIATION_ENDPOINT: http://host.docker.internal:8081/api/v1/speech/pronunciation/analyze
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

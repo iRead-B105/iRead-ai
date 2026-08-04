@@ -1,6 +1,6 @@
 """훈련·이야기·이미지 생성 API 계약 모델."""
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -26,6 +26,9 @@ class TrainingCandidateRequest(ContractModel):
     excludedFeatures: list[str] = Field(default_factory=list)
     additionalPrompt: str = ""
     outputTemplate: dict[str, Any]
+    useLexicon: bool = True
+    recommendedWords: list[str] = Field(default_factory=list, max_length=40)
+    recommendedWordsByFeature: dict[str, list[str]] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_feature_policy(self) -> "TrainingCandidateRequest":
@@ -36,13 +39,154 @@ class TrainingCandidateRequest(ContractModel):
         overlap = target.intersection(excluded)
         if overlap:
             raise ValueError("targetFeatures and excludedFeatures must not overlap")
+        for feature_code, words in self.recommendedWordsByFeature.items():
+            if not feature_code.strip():
+                raise ValueError("recommendedWordsByFeature keys must be non-empty")
+            if not words or len(words) > 20:
+                raise ValueError(
+                    "recommendedWordsByFeature values must contain between 1 and 20 words"
+                )
+            normalized = [word.strip() for word in words]
+            if any(not word for word in normalized) or len(normalized) != len(set(normalized)):
+                raise ValueError(
+                    "recommendedWordsByFeature values must contain unique non-empty words"
+                )
         return self
+
+
+TrainingLexicalPolicy = Literal["PSEUDOWORD_ALLOWED", "REAL_WORD_ONLY"]
+TrainingGenerationStrategy = Literal[
+    "RULE_DB",
+    "LLM_WITH_LOCAL_VALIDATION",
+    "CURATED_FALLBACK",
+]
+
+
+class TrainingGenerationMetadata(ContractModel):
+    provider: str
+    model: str
+    strategy: TrainingGenerationStrategy
+    lexicalPolicy: TrainingLexicalPolicy
+    lexiconApplied: bool
 
 
 
 class TrainingCandidateResponse(ContractModel):
     type: str
-    data: list[dict[str, Any]] = Field(min_length=1, max_length=5)
+    data: list[dict[str, Any]] = Field(min_length=5, max_length=5)
+    generationMetadata: TrainingGenerationMetadata | None = None
+
+
+TrainingCurriculumArea = Literal[
+    "AUTO",
+    "LETTER_SOUND",
+    "BLENDING",
+    "WORD_READING",
+    "SENTENCE",
+    "FLUENCY",
+]
+
+
+class TrainingActivityRequest(ContractModel):
+    requestId: str = Field(min_length=1, max_length=128)
+    schemaVersion: int = Field(default=1, ge=1)
+    sequence: int = Field(default=1, ge=1, le=5)
+    trainingType: str = Field(min_length=1)
+    difficulty: int = Field(ge=1, le=5)
+    targetFeatures: list[TrainingTargetFeature] = Field(default_factory=list, max_length=2)
+    excludedFeatures: list[str] = Field(default_factory=list)
+    additionalPrompt: str = ""
+    useLexicon: bool = True
+
+    @model_validator(mode="after")
+    def validate_feature_policy(self) -> "TrainingActivityRequest":
+        _validate_training_feature_policy(self.targetFeatures, self.excludedFeatures)
+        return self
+
+
+class GeneratedTrainingActivity(ContractModel):
+    sequence: int = Field(ge=1, le=5)
+    templateId: int = Field(ge=1)
+    trainingType: str
+    name: str
+    group: str
+    strategy: str
+    provider: str
+    targetFeatureCodes: list[str]
+    rationale: str
+    item: dict[str, Any]
+    personalization: "TrainingPersonalizationEvidence"
+
+
+class TrainingCandidateFit(ContractModel):
+    candidateIndex: int = Field(ge=0, le=4)
+    score: float
+    targetOccurrences: dict[str, int]
+    excludedOccurrences: dict[str, int]
+    paletteWordUses: list[str]
+    analysisStatus: str
+    analysisError: str | None = None
+    writtenSyllableCount: int = Field(default=0, ge=0)
+    sentenceSyllableCounts: list[int] = Field(default_factory=list)
+    lengthStatus: str = "NOT_APPLICABLE"
+    lengthAdjustment: float = 0
+    targetLoadStatus: str = "NOT_APPLICABLE"
+    targetOccurrenceTotal: int = Field(default=0, ge=0)
+
+
+class TrainingPersonalizationEvidence(ContractModel):
+    lexiconApplied: bool
+    recommendedWords: list[str]
+    selectedCandidateIndex: int = Field(ge=0, le=4)
+    candidates: list[TrainingCandidateFit] = Field(min_length=1, max_length=5)
+    generationAttempts: int = Field(default=1, ge=1, le=2)
+
+
+class TrainingActivityResponse(ContractModel):
+    requestId: str
+    schemaVersion: int
+    activity: GeneratedTrainingActivity
+
+
+class TrainingSetRequest(ContractModel):
+    requestId: str = Field(min_length=1, max_length=128)
+    schemaVersion: int = Field(default=1, ge=1)
+    curriculumArea: TrainingCurriculumArea = "AUTO"
+    activityCount: int = Field(default=5, ge=5, le=5)
+    difficulty: int = Field(ge=1, le=5)
+    targetFeatures: list[TrainingTargetFeature] = Field(default_factory=list, max_length=2)
+    excludedFeatures: list[str] = Field(default_factory=list)
+    preferredTrainingTypes: list[str] = Field(default_factory=list, max_length=5)
+    additionalPrompt: str = ""
+    useLexicon: bool = True
+
+    @model_validator(mode="after")
+    def validate_policy(self) -> "TrainingSetRequest":
+        _validate_training_feature_policy(self.targetFeatures, self.excludedFeatures)
+        if len(self.preferredTrainingTypes) != len(set(self.preferredTrainingTypes)):
+            raise ValueError("preferredTrainingTypes must not contain duplicates")
+        return self
+
+
+class TrainingSetResponse(ContractModel):
+    requestId: str
+    schemaVersion: int
+    curriculumArea: TrainingCurriculumArea
+    focusFeatureCodes: list[str]
+    activities: list[GeneratedTrainingActivity] = Field(min_length=5, max_length=5)
+
+
+def _validate_training_feature_policy(
+    target_features: list[TrainingTargetFeature],
+    excluded_features: list[str],
+) -> None:
+    excluded = [feature.strip() for feature in excluded_features]
+    if any(not feature for feature in excluded) or len(excluded) != len(set(excluded)):
+        raise ValueError("excludedFeatures must be unique and non-empty")
+    target = {feature.featureCode for feature in target_features}
+    overlap = target.intersection(excluded)
+    if overlap:
+        raise ValueError("targetFeatures and excludedFeatures must not overlap")
 
 
 class GenerateTrainingRequest(ContractModel):

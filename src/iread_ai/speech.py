@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-import gc
-import tempfile
 from dataclasses import dataclass
-from pathlib import Path
 
 from .audio import AudioPreparationError, stage_azure_audio
 from .config import Settings
@@ -97,48 +94,32 @@ class AzureSpeechProvider:
         speech_config.set_speech_synthesis_output_format(
             speechsdk.SpeechSynthesisOutputFormat.Audio16Khz32KBitRateMonoMp3
         )
-        output_path: Path | None = None
-        try:
-            with tempfile.NamedTemporaryFile(
-                prefix="iread-tts-", suffix=".mp3", delete=False
-            ) as temporary:
-                output_path = Path(temporary.name)
-            audio, duration_ms = self._synthesize_to_file(
-                speechsdk=speechsdk,
-                speech_config=speech_config,
-                text=request.text,
-                output_path=output_path,
-            )
-            return SynthesizedSpeech(
-                audio=audio,
-                media_type="audio/mpeg",
-                duration_ms=duration_ms,
-            )
-        finally:
-            if output_path is not None:
-                # Azure SDK의 C++ 오디오 출력 객체가 함수 프레임을 벗어난 뒤에도
-                # Windows 파일 핸들을 잠시 유지할 수 있다. 참조 순환을 먼저
-                # 수거해야 임시 MP3를 안정적으로 삭제할 수 있다.
-                gc.collect()
-                output_path.unlink(missing_ok=True)
+        audio, duration_ms = self._synthesize_audio(
+            speechsdk=speechsdk,
+            speech_config=speech_config,
+            text=request.text,
+        )
+        return SynthesizedSpeech(
+            audio=audio,
+            media_type="audio/mpeg",
+            duration_ms=duration_ms,
+        )
 
     @staticmethod
-    def _synthesize_to_file(
+    def _synthesize_audio(
         *,
         speechsdk,
         speech_config,
         text: str,
-        output_path: Path,
     ) -> tuple[bytes, int]:
-        audio_config = speechsdk.audio.AudioOutputConfig(filename=str(output_path))
         synthesizer = speechsdk.SpeechSynthesizer(
             speech_config=speech_config,
-            audio_config=audio_config,
+            audio_config=None,
         )
         result = synthesizer.speak_text_async(text).get()
         if result.reason != speechsdk.ResultReason.SynthesizingAudioCompleted:
             raise SpeechProviderError("Azure Speech synthesis failed")
-        audio = output_path.read_bytes()
+        audio = bytes(getattr(result, "audio_data", b""))
         if not audio:
             raise SpeechProviderError("Azure Speech returned empty audio")
         return audio, _synthesis_duration_ms(result.audio_duration)
@@ -162,6 +143,7 @@ class AzureSpeechProvider:
         except ImportError as exception:
             raise SpeechProviderError("Azure Speech SDK is not installed") from exception
         return speechsdk
+
 
 class DeterministicSpeechProvider:
     """Honest local fallback.
@@ -188,6 +170,4 @@ class DeterministicSpeechProvider:
 
     def synthesize(self, request: SpeechSynthesisRequest) -> SynthesizedSpeech:
         del request
-        raise SpeechProviderError(
-            "Speech synthesis requires AI_SPEECH_PROVIDER=azure"
-        )
+        raise SpeechProviderError("Speech synthesis requires AI_SPEECH_PROVIDER=azure")
