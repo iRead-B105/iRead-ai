@@ -39,6 +39,12 @@
 `gazeTrend`는 보고서 스냅샷의 훈련·검사 시선 시계열과 대응한다. 원시 좌표, 원시
 시선 파일, 음성, 이름, 학생 ID는 계약에 포함하지 않는다.
 
+Backend `StudentFeatureProfileView`를 사용할 때는
+`reading_profile_request_adapter.build_teacher_report_request`가 Backend 전용 필드인
+`status`, `analysisVersion`, `analyzedAt`을 제거하고 보고서 요청을 만든다. 현재 Backend
+뷰에는 교수자 표시용 특징 이름이 없으므로 `featureLabels` 매핑을 함께 제공해야 한다.
+이전 정확도와 이전 약점 점수는 Backend가 별도 비교 스냅샷을 제공하기 전까지 생략한다.
+
 ## 응답 계약
 
 응답은 기존 보고서 스냅샷에 매핑할 수 있는 다음 값을 반환한다.

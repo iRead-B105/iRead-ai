@@ -7,6 +7,11 @@
 비율 지표는 `0.0~1.0`, 평균 발음 점수는 `0.0~100.0`이며, `featureCode`는 Backend
 `reading_features.feature_code` 네임스페이스를 사용한다.
 
+Backend `StudentFeatureProfileView`는
+`reading_profile_request_adapter.build_curriculum_recommend_request`를 통해 그대로
+정규화할 수 있다. 추천에 필요하지 않은 `status`, `analysisVersion`, `analyzedAt`은
+제거하고, 최근 훈련 이력은 `recentTrainings`로 별도 결합한다.
+
 ## 추천 파이프라인
 
 1. 프로필의 신뢰도와 근거 수를 확인한다.

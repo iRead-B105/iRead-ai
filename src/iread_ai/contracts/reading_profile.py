@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Annotated
+from datetime import datetime
+from typing import Annotated, Literal, Self
 
 from pydantic import (
     BaseModel,
@@ -11,6 +12,7 @@ from pydantic import (
     StrictStr,
     StringConstraints,
     field_validator,
+    model_validator,
 )
 
 UnitRate = Annotated[StrictFloat, Field(ge=0, le=1)]
@@ -20,6 +22,11 @@ ReadingFeatureCode = Annotated[
     StrictStr,
     StringConstraints(strip_whitespace=True, min_length=3, max_length=150),
 ]
+ProfileAnalysisVersion = Annotated[
+    StrictStr,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=80),
+]
+ProfileStatus = Literal["NORMAL", "WATCH", "WEAK", "CRITICAL"]
 
 READING_FEATURE_CATEGORIES = frozenset(
     {"GRAPHEME", "SYLLABLE", "PHONOLOGY", "WORD", "SENTENCE"}
@@ -76,12 +83,45 @@ class ReadingFeatureProfile(ReadingProfileContractModel):
         return value
 
 
+class BackendStudentFeatureProfileView(ReadingFeatureProfile):
+    """Exact AI-side contract for Backend StudentFeatureProfileView."""
+
+    skip_rate: UnitRate
+    status: ProfileStatus
+    analysis_version: ProfileAnalysisVersion
+    analyzed_at: datetime
+
+
+class StudentReadingProfileSnapshot(ReadingProfileContractModel):
+    feature_profiles: list[BackendStudentFeatureProfileView] = Field(max_length=200)
+
+    @model_validator(mode="after")
+    def validate_snapshot_consistency(self) -> Self:
+        feature_codes = [profile.feature_code for profile in self.feature_profiles]
+        if len(feature_codes) != len(set(feature_codes)):
+            raise ValueError("featureProfiles featureCode values must be unique")
+        versions = {profile.analysis_version for profile in self.feature_profiles}
+        if len(versions) > 1:
+            raise ValueError("featureProfiles analysisVersion values must match")
+        return self
+
+    @property
+    def profile_analysis_version(self) -> str:
+        if not self.feature_profiles:
+            return "WEAKNESS_V1"
+        return self.feature_profiles[0].analysis_version
+
+
 __all__ = [
     "NonNegativeFloat",
+    "BackendStudentFeatureProfileView",
+    "ProfileAnalysisVersion",
+    "ProfileStatus",
     "PronunciationScore",
     "READING_FEATURE_CATEGORIES",
     "ReadingFeatureCode",
     "ReadingFeatureProfile",
     "ReadingProfileContractModel",
+    "StudentReadingProfileSnapshot",
     "UnitRate",
 ]

@@ -5,7 +5,12 @@ from collections.abc import Iterator
 import pytest
 from fastapi.testclient import TestClient
 
+from iread_ai.application.reading_profile_request_adapter import (
+    build_teacher_report_request,
+)
 from iread_ai.config import Settings
+from iread_ai.contracts.reading_profile import StudentReadingProfileSnapshot
+from iread_ai.devtools.backend_profile_samples import backend_profile_sample
 from iread_ai.main import create_app
 from tests.unit.test_teacher_report_contracts import teacher_report_request_payload
 
@@ -58,6 +63,32 @@ def test_teacher_report_api_returns_existing_snapshot_fields(
     assert body["persistentDifficultyPatterns"]
     assert body["gazeDescriptions"]["training"]
     assert body["gazeDescriptions"]["test"]
+
+
+def test_teacher_report_api_accepts_backend_profile_snapshot_adapter_output(
+    client: TestClient,
+) -> None:
+    sample = backend_profile_sample()
+    snapshot = StudentReadingProfileSnapshot.model_validate(
+        {"featureProfiles": sample["featureProfiles"]}
+    )
+    request_id = "backend-profile-teacher-api"
+    request = build_teacher_report_request(
+        request_id=request_id,
+        snapshot=snapshot,
+        feature_labels=sample["featureLabels"],
+        gaze_trend=sample["gazeTrend"],
+    )
+
+    response = client.post(
+        API_PATH,
+        headers=_headers(idempotency_key=request_id),
+        json=request.model_dump(mode="json", by_alias=True),
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["requestId"] == request_id
+    assert response.json()["persistentDifficultyPatterns"]
 
 
 def test_teacher_report_api_requires_internal_api_key(client: TestClient) -> None:

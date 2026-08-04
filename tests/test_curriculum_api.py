@@ -5,6 +5,11 @@ from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
 import iread_ai.app as app_module
+from iread_ai.application.reading_profile_request_adapter import (
+    build_curriculum_recommend_request,
+)
+from iread_ai.contracts.reading_profile import StudentReadingProfileSnapshot
+from iread_ai.devtools.backend_profile_samples import backend_profile_sample
 from iread_ai.devtools.curriculum_samples import curriculum_sample
 
 client = TestClient(app_module.app)
@@ -42,6 +47,30 @@ def test_curriculum_recommendation_endpoint_returns_stage_gated_five() -> None:
     assert len(body["recommendations"]) == 5
     assert all(item["curriculumStage"] <= 2 for item in body["recommendations"])
     assert response.headers["X-AI-Provider"] == "deterministic"
+
+
+def test_curriculum_api_accepts_backend_profile_snapshot_adapter_output() -> None:
+    sample = backend_profile_sample()
+    snapshot = StudentReadingProfileSnapshot.model_validate(
+        {"featureProfiles": sample["featureProfiles"]}
+    )
+    request_id = "backend-profile-curriculum-api"
+    request = build_curriculum_recommend_request(
+        request_id=request_id,
+        snapshot=snapshot,
+        recent_trainings=sample["recentTrainings"],
+        use_llm=False,
+    )
+
+    response = client.post(
+        "/api/v1/curricula/recommend",
+        headers={**AUTH_HEADERS, "Idempotency-Key": request_id},
+        json=request.model_dump(mode="json", by_alias=True),
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["requestId"] == request_id
+    assert len(response.json()["recommendations"]) == 5
 
 
 def test_curriculum_recommendation_is_idempotent() -> None:
