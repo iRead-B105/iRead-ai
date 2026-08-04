@@ -12,6 +12,7 @@ def test_deployed_entrypoint_exposes_only_supported_story_surfaces() -> None:
         "/api/v1/trainings/generate",
         "/api/v1/story/generate",
         "/api/v1/story/continue",
+        "/api/v1/story/branch-input/review",
         "/api/v1/images/generate",
         "/api/v1/images/mock/generated.png",
         "/api/v1/speech/pronunciation/analyze",

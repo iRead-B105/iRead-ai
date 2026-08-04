@@ -12,6 +12,7 @@ from iread_ai.adapters.generation.gms_teacher_report import (
     GMSTeacherReportNarrator,
 )
 from iread_ai.adapters.idempotency.memory import MemoryIdempotencyStore
+from iread_ai.api.branch_input_review import router as branch_input_review_router
 from iread_ai.api.comparison import router as comparison_router
 from iread_ai.api.errors import install_error_handlers
 from iread_ai.api.legacy_story import router as legacy_story_router
@@ -19,6 +20,11 @@ from iread_ai.api.lexicon import router as lexicon_router
 from iread_ai.api.story_chapter import router as story_chapter_router
 from iread_ai.api.story_image import router as story_image_router
 from iread_ai.api.teacher_report import router as teacher_report_router
+from iread_ai.application.branch_input_review import (
+    BranchInputReviewer,
+    DeterministicBranchInputReviewer,
+    OpenAICompatibleBranchInputReviewer,
+)
 from iread_ai.application.legacy_story_service import LegacyStoryGenerationService
 from iread_ai.application.personalized_chapter_service import (
     PersonalizedStoryChapterService,
@@ -65,6 +71,7 @@ def create_app(
     story_image_service: StoryImageApplicationService | None = None,
     teacher_report_service: TeacherReportSummaryService | None = None,
     lexicon_service: LexiconPaletteService | None = None,
+    branch_input_reviewer: BranchInputReviewer | None = None,
 ) -> FastAPI:
     settings = settings or get_settings()
     idempotency_store = idempotency_store or MemoryIdempotencyStore(
@@ -78,6 +85,9 @@ def create_app(
     )
     lexicon_service = lexicon_service or LexiconPaletteService(
         settings.lexicon_database_path
+    )
+    branch_input_reviewer = branch_input_reviewer or _build_branch_input_reviewer(
+        settings
     )
 
     legacy_story_chapter_service = story_chapter_service
@@ -163,11 +173,13 @@ def create_app(
     app.state.story_image_service = story_image_service
     app.state.teacher_report_service = teacher_report_service
     app.state.lexicon_service = lexicon_service
+    app.state.branch_input_reviewer = branch_input_reviewer
     app.state.chapter_generation_comparison_service = (
         chapter_generation_comparison_service
     )
     install_error_handlers(app)
     app.include_router(legacy_story_router)
+    app.include_router(branch_input_review_router)
     app.include_router(story_chapter_router)
     app.include_router(story_image_router)
     app.include_router(teacher_report_router)
@@ -202,6 +214,18 @@ def _build_page_candidate_generator(
         base_url=settings.story_api_base_url,
         timeout_seconds=settings.model_timeout_seconds,
         max_output_tokens=settings.openai_max_output_tokens,
+    )
+
+
+def _build_branch_input_reviewer(settings: Settings) -> BranchInputReviewer:
+    if settings.story_provider == "mock":
+        return DeterministicBranchInputReviewer()
+    return OpenAICompatibleBranchInputReviewer(
+        api_key=settings.story_api_key,
+        model=settings.branch_review_model,
+        base_url=settings.story_api_base_url,
+        timeout_seconds=settings.branch_review_timeout_seconds,
+        max_output_tokens=settings.branch_review_max_output_tokens,
     )
 
 

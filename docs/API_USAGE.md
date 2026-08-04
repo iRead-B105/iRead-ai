@@ -11,6 +11,9 @@ APP_ENV=development
 AI_INTERNAL_API_KEY=팀내부통신용긴랜덤문자열
 STORY_PROVIDER=gms
 OPENAI_MODEL=gpt-5.4-mini
+AI_BRANCH_REVIEW_MODEL=gpt-5.4-mini
+AI_BRANCH_REVIEW_TIMEOUT_SECONDS=3
+AI_BRANCH_REVIEW_MAX_OUTPUT_TOKENS=80
 GMS_KEY=발급받은_GMS_키
 STORY_IMAGE_PROVIDER=gemini
 GMS_GEMINI_IMAGE_MODEL=gemini-2.5-flash-image
@@ -55,11 +58,12 @@ Body의 `requestId`와 같은 값을 쓰는 것을 권장하지만 둘이 반드
 
 ## 기존 Backend 이야기 나라 연결(v1)
 
-현재 Backend의 이야기 나라는 다음 두 경로를 호출합니다.
+현재 Backend의 이야기 나라는 다음 세 경로를 호출합니다.
 
 ```http
 POST /api/v1/story/generate
 POST /api/v1/story/continue
+POST /api/v1/story/branch-input/review
 ```
 
 `STORY_PROVIDER=gms` 또는 `openai`이면 이 경로도 결정적 mock이 아니라 v3
@@ -73,6 +77,8 @@ POST /api/v1/story/continue
 - 이어쓰기: 선택 결과를 반영한 일반 대사 5개
 - `Idempotency-Key`는 Body의 `requestId`와 정확히 같아야 함
 - 기존 v1 Body에는 읽기 프로필이 없으므로 현재는 임시 균형형 프로필 사용
+- 분기 검토는 현재 질문·선택지 3개·교정하지 않은 STT 원문만 받고 `ALLOW`, `CONFIRM`, `RETRY`, `BLOCK`과 제한된 사유 코드만 반환
+- 분기 검토 요청 본문과 STT 원문은 로그에 기록하지 않으며 `Idempotency-Key`는 Body의 `requestId`와 정확히 같아야 함
 
 첫 생성 Body 예제:
 

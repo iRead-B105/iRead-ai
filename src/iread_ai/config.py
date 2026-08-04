@@ -63,6 +63,22 @@ class Settings(BaseSettings):
         ge=512,
         le=16_384,
     )
+    branch_review_model: str = Field(
+        default="gpt-5.4-mini",
+        validation_alias="AI_BRANCH_REVIEW_MODEL",
+    )
+    branch_review_timeout_seconds: float = Field(
+        default=3.0,
+        gt=0,
+        le=10.0,
+        validation_alias="AI_BRANCH_REVIEW_TIMEOUT_SECONDS",
+    )
+    branch_review_max_output_tokens: int = Field(
+        default=80,
+        ge=32,
+        le=256,
+        validation_alias="AI_BRANCH_REVIEW_MAX_OUTPUT_TOKENS",
+    )
     visual_scene_timeout_seconds: float = Field(
         default=8.0,
         gt=0,
