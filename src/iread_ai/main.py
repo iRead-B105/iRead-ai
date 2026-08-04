@@ -9,11 +9,17 @@ from iread_ai.adapters.generation.gms_gemini_image import (
     GMSGeminiImageGenerator,
 )
 from iread_ai.adapters.idempotency.memory import MemoryIdempotencyStore
+from iread_ai.api.branch_input_review import router as branch_input_review_router
 from iread_ai.api.comparison import router as comparison_router
 from iread_ai.api.errors import install_error_handlers
 from iread_ai.api.legacy_story import router as legacy_story_router
 from iread_ai.api.story_chapter import router as story_chapter_router
 from iread_ai.api.story_image import router as story_image_router
+from iread_ai.application.branch_input_review import (
+    BranchInputReviewer,
+    DeterministicBranchInputReviewer,
+    OpenAICompatibleBranchInputReviewer,
+)
 from iread_ai.application.legacy_story_service import LegacyStoryGenerationService
 from iread_ai.application.personalized_chapter_service import (
     PersonalizedStoryChapterService,
@@ -53,12 +59,16 @@ def create_app(
     ) = None,
     story_chapter_service: PersonalizedStoryChapterService | None = None,
     story_image_service: StoryImageApplicationService | None = None,
+    branch_input_reviewer: BranchInputReviewer | None = None,
 ) -> FastAPI:
     settings = settings or get_settings()
     idempotency_store = idempotency_store or MemoryIdempotencyStore(
         ttl_seconds=settings.idempotency_ttl_seconds
     )
     story_image_service = story_image_service or _build_story_image_service(
+        settings
+    )
+    branch_input_reviewer = branch_input_reviewer or _build_branch_input_reviewer(
         settings
     )
 
@@ -140,11 +150,13 @@ def create_app(
     )
     app.state.story_chapter_analyzer = chapter_analyzer
     app.state.story_image_service = story_image_service
+    app.state.branch_input_reviewer = branch_input_reviewer
     app.state.chapter_generation_comparison_service = (
         chapter_generation_comparison_service
     )
     install_error_handlers(app)
     app.include_router(legacy_story_router)
+    app.include_router(branch_input_review_router)
     app.include_router(story_chapter_router)
     app.include_router(story_image_router)
     app.include_router(comparison_router)
@@ -172,6 +184,18 @@ def _build_page_candidate_generator(
         base_url=settings.story_api_base_url,
         timeout_seconds=settings.model_timeout_seconds,
         max_output_tokens=settings.openai_max_output_tokens,
+    )
+
+
+def _build_branch_input_reviewer(settings: Settings) -> BranchInputReviewer:
+    if settings.story_provider == "mock":
+        return DeterministicBranchInputReviewer()
+    return OpenAICompatibleBranchInputReviewer(
+        api_key=settings.story_api_key,
+        model=settings.branch_review_model,
+        base_url=settings.story_api_base_url,
+        timeout_seconds=settings.branch_review_timeout_seconds,
+        max_output_tokens=settings.branch_review_max_output_tokens,
     )
 
 

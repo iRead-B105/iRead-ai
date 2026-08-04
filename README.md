@@ -13,6 +13,7 @@ Azure Speech 기반 발음 평가·STT·TTS를 제공합니다.
 | `POST` | `/api/v1/trainings/evaluate` | 훈련 결과 정확도 평가 |
 | `POST` | `/api/v1/story/generate` | 1일차 첫 4페이지와 첫 분기 생성 |
 | `POST` | `/api/v1/story/continue` | 음성 선택을 반영해 당일 5페이지·마감 1페이지 또는 다음 날 첫 4페이지 생성 |
+| `POST` | `/api/v1/story/branch-input/review` | STT 원문의 아동 안전성과 현재 분기 관련성을 경량 판정 |
 | `POST` | `/api/v1/images/generate` | 훈련 장면·이야기 친구 이미지 URL 생성 |
 | `GET` | `/api/v1/images/mock/generated.png` | 레거시 호환용 안전한 mock PNG 조회 |
 | `POST` | `/api/v1/speech/pronunciation/analyze` | Azure 단어별 발음 평가 |
@@ -62,6 +63,7 @@ Backend의 `AI_API_KEY`와 AI 서버의 `AI_INTERNAL_API_KEY`는 같은 값을
 - 실제 이야기 생성: `STORY_PROVIDER=gms`
 - 실제 장면 이미지 생성: `STORY_IMAGE_PROVIDER=gemini`
 - 두 기능 모두 `GMS_KEY`를 공유하며 비밀값은 응답과 로그에 남기지 않음
+- 분기 입력 검토는 `AI_BRANCH_REVIEW_MODEL`, 3초 제한과 최대 80 출력 토큰을 사용하고 교정문 없이 판정 코드만 반환
 - 이야기 프롬프트는 `src/iread_ai/prompts/`에서 버전 관리
 - 레거시 `/story/generate`, `/story/continue`도 같은 개인화 장 생성기를 사용하며
   하루 `4페이지 → 선택 → 5페이지 → 선택 → 1페이지 마감` 계약으로 변환
