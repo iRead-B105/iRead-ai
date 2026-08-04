@@ -133,6 +133,10 @@ GMS_KEY=...
 OPENAI_MODEL=gpt-5.4-mini
 ```
 
+GMS 대신 OpenAI API를 직접 사용할 때는 `AI_GENERATION_PROVIDER=openai`와
+`OPENAI_API_KEY=...`를 설정한다. 응답의 `recommendationProvider`는 실제 호출
+경로에 따라 `openai` 또는 `gms`로 기록된다.
+
 - 화면의 `GMS LLM 재정렬 사용`을 켜고 `recommendationProvider=gms`이면 LLM 결과다.
 - GMS 설정이 없거나 응답 검증이 실패하면 `deterministic-fallback`이 표시된다.
 - 토글을 끄면 의도적으로 `deterministic` 추천만 실행한다.

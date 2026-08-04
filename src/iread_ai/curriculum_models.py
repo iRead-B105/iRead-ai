@@ -19,7 +19,12 @@ ReadingFeatureCategory = Literal[
     "SENTENCE",
 ]
 DataSufficiency = Literal["SUFFICIENT", "PARTIAL", "INSUFFICIENT"]
-RecommendationProvider = Literal["gms", "deterministic", "deterministic-fallback"]
+RecommendationProvider = Literal[
+    "openai",
+    "gms",
+    "deterministic",
+    "deterministic-fallback",
+]
 RecommendationRole = Literal["CORE", "REINFORCEMENT", "STRETCH"]
 CandidateStatus = Literal["ELIGIBLE", "BLOCKED"]
 RecommendationReasonCode = Literal[

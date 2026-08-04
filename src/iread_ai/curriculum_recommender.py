@@ -24,7 +24,7 @@ from iread_ai.providers import GenerationProviderError, GMSTextProvider
 
 logger = logging.getLogger(__name__)
 
-PROMPT_VERSION = "curriculum-rerank-v1"
+PROMPT_VERSION = "curriculum-rerank-v2"
 MIN_CONFIDENCE = 0.60
 MIN_EVIDENCE_COUNT = 5
 MASTERY_ACCURACY = 0.80
@@ -43,12 +43,23 @@ PROHIBITED_RATIONALE_WORDS = (
     "treatment",
 )
 
-_PROFILE_STAGE = {
+_CATEGORY_FALLBACK_STAGE = {
     "GRAPHEME": 1,
     "SYLLABLE": 3,
     "PHONOLOGY": 6,
     "WORD": 6,
     "SENTENCE": 7,
+}
+
+_AGGREGATE_FEATURE_CODES = {
+    "GRAPHEME",
+    "GRAPHEME.ONSET",
+    "GRAPHEME.VOWEL",
+    "GRAPHEME.CODA",
+    "SYLLABLE",
+    "PHONOLOGY",
+    "WORD",
+    "SENTENCE",
 }
 
 
@@ -143,7 +154,7 @@ def recommend_curriculum(
                     current_stage,
                     maximum_allowed_stage,
                 )
-                recommendation_provider = "gms"
+                recommendation_provider = getattr(provider, "provider_name", "gms")
             except (GenerationProviderError, ValidationError, ValueError) as exception:
                 recommendation_provider = "deterministic-fallback"
                 warnings.append("LLM 추천 검증에 실패하여 규칙 기반 추천을 사용했습니다.")
@@ -197,24 +208,82 @@ def _current_stage(request: CurriculumRecommendRequest) -> tuple[int, str]:
     if not sufficient:
         return 1, "신뢰할 수 있는 수행 근거가 부족하여 가장 기초적인 1단계로 시작합니다."
 
-    struggling = [
+    specific = [profile for profile in sufficient if _is_specific_feature(profile)]
+    stage_evidence = specific or sufficient
+    stable = [
         profile
-        for profile in sufficient
-        if profile.accuracy_rate < MASTERY_ACCURACY or profile.weakness_score >= WEAKNESS_THRESHOLD
+        for profile in stage_evidence
+        if profile.accuracy_rate >= MASTERY_ACCURACY
+        and profile.weakness_score <= WEAKNESS_THRESHOLD
     ]
-    if struggling:
-        stage = min(_profile_stage(profile) for profile in struggling)
-        feature = max(
-            (profile for profile in struggling if _profile_stage(profile) == stage),
-            key=_profile_priority,
+    unsettled = [
+        profile
+        for profile in stage_evidence
+        if profile not in stable
+    ]
+
+    if not stable:
+        stage = min((_profile_stage(profile) for profile in unsettled), default=1)
+        foundation_count = sum(
+            _profile_stage(profile) == stage for profile in unsettled
+        )
+        next_stage_count = sum(
+            _profile_stage(profile) > stage for profile in unsettled
+        )
+        next_stage_note = (
+            f" 상위 단계의 불안정 특징 {next_stage_count}개는 "
+            f"{min(8, stage + 1)}단계 도전 범위 안에서만 다룹니다."
+            if next_stage_count
+            else ""
         )
         return (
             stage,
-            f"{feature.feature_code}의 기초 수행 근거를 우선해 현재 단계를 {stage}로 판정했습니다.",
+            f"신뢰 가능한 세부 특징 {len(stage_evidence)}개를 종합했으며, "
+            f"{stage}단계 특징 {foundation_count}개가 아직 안정되지 않아 "
+            f"현재 단계를 {stage}로 유지합니다.{next_stage_note}",
         )
 
-    stage = min(8, max(_profile_stage(profile) for profile in sufficient) + 1)
-    return stage, f"관찰된 하위 특징이 안정적이어서 다음 학습 단계인 {stage}를 적용했습니다."
+    stable_frontier = max(_profile_stage(profile) for profile in stable)
+    observed_frontier = max(_profile_stage(profile) for profile in stage_evidence)
+    unsettled_at_frontier = any(
+        _profile_stage(profile) == stable_frontier for profile in unsettled
+    )
+    if observed_frontier > stable_frontier:
+        stage = min(observed_frontier, stable_frontier + 1)
+        progression = (
+            f"안정적으로 확인된 최고 수행은 {stable_frontier}단계이며, "
+            f"관찰된 상위 특징을 바로 따라가지 않고 {stage}단계까지만 확장합니다."
+        )
+    elif unsettled_at_frontier:
+        stage = stable_frontier
+        progression = (
+            f"{stable_frontier}단계에 안정 근거와 불안정 근거가 함께 있어 "
+            f"현재 단계를 {stage}로 유지합니다."
+        )
+    elif stable_frontier == 8:
+        stage = 8
+        progression = "8단계 수행 근거가 안정적으로 확인되어 현재 8단계를 유지합니다."
+    else:
+        stage = min(8, stable_frontier + 1)
+        progression = (
+            f"{stable_frontier}단계까지 수행이 안정적으로 확인되어 "
+            f"다음 학습 단계인 {stage}단계를 적용합니다."
+        )
+
+    reinforcement_count = sum(
+        _profile_stage(profile) < stage for profile in unsettled
+    )
+    reinforcement_note = (
+        f" 현재 단계보다 낮은 불안정 특징 {reinforcement_count}개는 "
+        "단계 하향 사유가 아니라 보강 훈련 근거로 유지합니다."
+        if reinforcement_count
+        else ""
+    )
+    return (
+        stage,
+        f"신뢰 가능한 세부 특징 {len(stage_evidence)}개를 종합했습니다. "
+        f"{progression}{reinforcement_note}",
+    )
 
 
 def _data_sufficiency(profiles: list[CurriculumFeatureProfile]) -> DataSufficiency:
@@ -245,15 +314,42 @@ def _actionable_profiles(
 
 
 def _profile_stage(profile: CurriculumFeatureProfile) -> int:
-    category = _profile_category(profile)
-    return _PROFILE_STAGE[category]
+    code = profile.feature_code.upper()
+    if code.startswith(("GRAPHEME.ONSET.BASIC", "GRAPHEME.VOWEL.BASIC")):
+        return 1
+    if code.startswith(
+        (
+            "GRAPHEME.ONSET.TENSE",
+            "GRAPHEME.ONSET.ASPIRATED",
+            "GRAPHEME.VOWEL.COMPOUND",
+            "GRAPHEME.CODA.SIMPLE",
+        )
+    ):
+        return 2
+    if code.startswith("GRAPHEME.CODA.COMPLEX"):
+        return 3
+    if code == "SYLLABLE.CV" or code.startswith("SYLLABLE.CV."):
+        return 2
+    if code.startswith("SYLLABLE."):
+        return 3
+    if code.startswith(("PHONOLOGY.", "WORD.")):
+        return 6
+    if code.startswith(("SENTENCE.PHRASE_BOUNDARY", "SENTENCE.FLUENCY")):
+        return 8
+    if code.startswith("SENTENCE."):
+        return 7
+    return _CATEGORY_FALLBACK_STAGE[_profile_category(profile)]
+
+
+def _is_specific_feature(profile: CurriculumFeatureProfile) -> bool:
+    return profile.feature_code.upper() not in _AGGREGATE_FEATURE_CODES
 
 
 def _profile_category(profile: CurriculumFeatureProfile) -> str:
     if profile.category is not None:
         return profile.category
     prefix = profile.feature_code.split(".", 1)[0].upper()
-    return prefix if prefix in _PROFILE_STAGE else "WORD"
+    return prefix if prefix in _CATEGORY_FALLBACK_STAGE else "WORD"
 
 
 def _score_candidate(
@@ -396,6 +492,13 @@ def _deterministic_plan(
     core = [item for item in ordered if minimum_core_stage <= item.spec.stage <= current_stage]
     take(core, 3, "CORE")
     take(ordered, 3, "CORE")
+
+    foundation_reinforcement = [
+        item
+        for item in ordered
+        if item.spec.stage < current_stage and item.spec.template_id not in selected_ids
+    ]
+    take(foundation_reinforcement, 1, "REINFORCEMENT")
 
     reinforcement = [
         item

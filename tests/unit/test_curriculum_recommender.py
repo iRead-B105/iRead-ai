@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+import pytest
+
 from iread_ai.application.reading_profile_request_adapter import (
     build_curriculum_recommend_request,
 )
@@ -14,8 +16,15 @@ from iread_ai.devtools.curriculum_samples import curriculum_sample
 
 
 class _FakeProvider:
-    def __init__(self, document: dict[str, Any]) -> None:
+    def __init__(
+        self,
+        document: dict[str, Any],
+        *,
+        provider_name: str = "gms",
+    ) -> None:
         self.document = document
+        self.provider_name = provider_name
+        self.model = "test-model"
         self.calls: list[dict[str, Any]] = []
 
     def generate_json(self, **kwargs: Any) -> dict[str, Any]:
@@ -103,7 +112,8 @@ def test_recent_templates_are_reused_when_fresh_candidates_cannot_fill_plan() ->
     assert all(item.curriculumStage <= 2 for item in response.recommendations)
 
 
-def test_valid_llm_reranking_is_used() -> None:
+@pytest.mark.parametrize("provider_name", ["gms", "openai"])
+def test_valid_llm_reranking_is_used(provider_name: str) -> None:
     provider = _FakeProvider(
         {
             "selections": [
@@ -138,7 +148,8 @@ def test_valid_llm_reranking_is_used() -> None:
                     "rationale": "허용된 다음 단계에서 끝소리 읽기를 확장하도록 배치했습니다.",
                 },
             ]
-        }
+        },
+        provider_name=provider_name,
     )
 
     response = recommend_curriculum(
@@ -146,7 +157,7 @@ def test_valid_llm_reranking_is_used() -> None:
         provider=provider,  # type: ignore[arg-type]
     )
 
-    assert response.recommendationProvider == "gms"
+    assert response.recommendationProvider == provider_name
     assert [item.trainingTemplateId for item in response.recommendations] == [2, 1, 3, 10, 11]
 
 
@@ -194,12 +205,13 @@ def _long_profile_request(*, use_llm: bool) -> CurriculumRecommendRequest:
     )
 
 
-def test_long_profile_prioritizes_reachable_foundation_over_larger_advanced_weakness() -> None:
+def test_long_profile_advances_one_stage_and_keeps_foundation_as_reinforcement() -> None:
     response = recommend_curriculum(_long_profile_request(use_llm=False), provider=None)
 
-    assert response.currentStage == 3
-    assert response.maximumAllowedStage == 4
-    assert "SYLLABLE.COMPLEX_CODA" in response.stageRationale
+    assert response.currentStage == 4
+    assert response.maximumAllowedStage == 5
+    assert "최고 수행은 3단계" in response.stageRationale
+    assert "보강 훈련 근거" in response.stageRationale
     target_codes = {
         code
         for recommendation in response.recommendations
@@ -235,7 +247,7 @@ def test_long_profile_sends_only_reachable_stage_evidence_to_llm() -> None:
     document = json.loads(provider.calls[0]["user_prompt"])
     evidence = document["studentEvidence"]
     assert len(evidence) <= 12
-    assert all(item["profileStage"] <= 4 for item in evidence)
+    assert all(item["profileStage"] <= 5 for item in evidence)
     assert "PHONOLOGY.LIAISON" not in {item["featureCode"] for item in evidence}
     assert "SENTENCE.FLUENCY" not in {item["featureCode"] for item in evidence}
 
@@ -268,3 +280,73 @@ def test_llm_cannot_replace_core_with_candidate_below_rule_baseline() -> None:
 
     assert response.recommendationProvider == "deterministic-fallback"
     assert 16 not in {item.trainingTemplateId for item in response.recommendations}
+
+
+def test_tense_onset_does_not_masquerade_as_basic_stage_one_evidence() -> None:
+    request = CurriculumRecommendRequest(
+        requestId="explicit-feature-stage",
+        schemaVersion=1,
+        useLlm=False,
+        featureProfiles=[
+            {
+                "featureCode": "GRAPHEME.VOWEL.BASIC.ㅓ",
+                "category": "GRAPHEME",
+                "accuracyRate": 0.66,
+                "weaknessScore": 0.53,
+                "confidence": 0.94,
+                "evidenceCount": 21,
+            },
+            {
+                "featureCode": "GRAPHEME.ONSET.TENSE.ㄲ",
+                "category": "GRAPHEME",
+                "accuracyRate": 0.525,
+                "weaknessScore": 0.61,
+                "confidence": 0.805,
+                "evidenceCount": 12,
+            },
+        ],
+    )
+
+    response = recommend_curriculum(request, provider=None)
+
+    assert response.currentStage == 1
+    assert response.maximumAllowedStage == 2
+    assert "세부 특징 2개를 종합" in response.stageRationale
+    assert "GRAPHEME.ONSET.TENSE.ㄲ" not in response.stageRationale
+    assert "상위 단계의 불안정 특징 1개" in response.stageRationale
+
+
+def test_stable_advanced_evidence_is_not_dragged_down_by_one_foundation_weakness() -> None:
+    request = CurriculumRecommendRequest(
+        requestId="advanced-with-foundation-debt",
+        schemaVersion=1,
+        useLlm=False,
+        featureProfiles=[
+            {
+                "featureCode": "SENTENCE.FLUENCY",
+                "category": "SENTENCE",
+                "accuracyRate": 0.84,
+                "weaknessScore": 0.35,
+                "confidence": 0.93,
+                "evidenceCount": 22,
+            },
+            {
+                "featureCode": "GRAPHEME.CODA.COMPLEX.ㄺ",
+                "category": "GRAPHEME",
+                "accuracyRate": 0.42,
+                "weaknessScore": 0.73,
+                "confidence": 0.91,
+                "evidenceCount": 20,
+            },
+        ],
+    )
+
+    response = recommend_curriculum(request, provider=None)
+
+    assert response.currentStage == 8
+    assert response.maximumAllowedStage == 8
+    assert "단계 하향 사유가 아니라 보강 훈련 근거" in response.stageRationale
+    reinforcement = next(
+        item for item in response.recommendations if item.role == "REINFORCEMENT"
+    )
+    assert reinforcement.curriculumStage < response.currentStage
