@@ -83,7 +83,7 @@ text_provider = (
         max_output_tokens=settings.text_max_output_tokens,
         provider_name=settings.generation_provider,
     )
-    if settings.generation_provider in {"gms", "openai"}
+    if settings.generation_provider in {"gms", "openai", "gemini"}
     else None
 )
 legacy_image_generator = None

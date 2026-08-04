@@ -48,7 +48,7 @@ class Settings(BaseSettings):
         default="mock",
         validation_alias=AliasChoices("STORY_TEXT_PROVIDER", "STORY_PROVIDER"),
     )
-    generation_provider: Literal["mock", "openai", "gms"] = Field(
+    generation_provider: Literal["mock", "openai", "gemini", "gms"] = Field(
         default="mock",
         validation_alias="AI_GENERATION_PROVIDER",
     )
@@ -194,6 +194,12 @@ class Settings(BaseSettings):
             raise ValueError(
                 "OPENAI_API_KEY is required when AI_GENERATION_PROVIDER=openai"
             )
+        if self.generation_provider == "gemini" and (
+            self.gemini_api_key is None or not self.gemini_api_key.get_secret_value()
+        ):
+            raise ValueError(
+                "GEMINI_API_KEY is required when AI_GENERATION_PROVIDER=gemini"
+            )
         if self.story_provider == "gms" and (
             self.gms_key is None or not self.gms_key.get_secret_value()
         ):
@@ -269,6 +275,9 @@ class Settings(BaseSettings):
         if self.generation_provider == "gms":
             assert self.gms_key is not None
             return self.gms_key.get_secret_value()
+        if self.generation_provider == "gemini":
+            assert self.gemini_api_key is not None
+            return self.gemini_api_key.get_secret_value()
         raise RuntimeError("mock text generation does not use an API key")
 
     @property
@@ -277,17 +286,19 @@ class Settings(BaseSettings):
             return self.openai_base_url.rstrip("/")
         if self.generation_provider == "gms":
             return self.gms_text_base_url
+        if self.generation_provider == "gemini":
+            return self.gemini_base_url.rstrip("/")
         raise RuntimeError("mock text generation does not use an API URL")
 
     @property
     def text_timeout_seconds(self) -> float:
-        if self.generation_provider == "openai":
+        if self.generation_provider in {"openai", "gemini"}:
             return self.model_timeout_seconds
         return self.gms_text_timeout_seconds
 
     @property
     def text_max_output_tokens(self) -> int:
-        if self.generation_provider == "openai":
+        if self.generation_provider in {"openai", "gemini"}:
             return self.openai_max_output_tokens
         return self.gms_max_output_tokens
 

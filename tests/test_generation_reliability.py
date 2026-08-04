@@ -227,6 +227,50 @@ def test_text_provider_identifies_direct_openai_requests() -> None:
     ) == {"ok": True}
 
 
+def test_text_provider_supports_direct_gemini_35_flash_lite() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith(
+            "/v1beta/models/gemini-3.5-flash-lite:generateContent"
+        )
+        assert request.headers["x-goog-api-key"] == "gemini-key"
+        payload = json.loads(request.content)
+        generation_config = payload["generationConfig"]
+        assert generation_config["responseMimeType"] == "application/json"
+        assert generation_config["responseJsonSchema"]["required"] == ["ok"]
+        assert not {"temperature", "topP", "topK"} & generation_config.keys()
+        return httpx.Response(
+            200,
+            json={
+                "candidates": [
+                    {"content": {"parts": [{"text": '{"ok":true}'}]}}
+                ]
+            },
+        )
+
+    provider = GMSTextProvider(
+        api_key="gemini-key",
+        model="gemini-3.5-flash-lite",
+        base_url="https://generativelanguage.googleapis.com",
+        timeout_seconds=1,
+        max_output_tokens=256,
+        provider_name="gemini",
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    assert provider.provider_name == "gemini"
+    assert provider.generate_json(
+        schema_name="test_schema",
+        schema={
+            "type": "object",
+            "properties": {"ok": {"type": "boolean"}},
+            "required": ["ok"],
+            "additionalProperties": False,
+        },
+        system_prompt="safe",
+        user_prompt="training",
+    ) == {"ok": True}
+
+
 def test_training_candidates_allow_generic_generation_without_weak_profiles(
     monkeypatch,
 ) -> None:

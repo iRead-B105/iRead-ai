@@ -26,11 +26,11 @@ class GMSTextProvider:
         base_url: str,
         timeout_seconds: float,
         max_output_tokens: int,
-        provider_name: Literal["gms", "openai"] = "gms",
+        provider_name: Literal["gms", "openai", "gemini"] = "gms",
         client: httpx.Client | None = None,
     ) -> None:
-        if provider_name not in {"gms", "openai"}:
-            raise ValueError("text provider name must be gms or openai")
+        if provider_name not in {"gms", "openai", "gemini"}:
+            raise ValueError("text provider name must be gms, openai, or gemini")
         if not api_key.strip() or not model.strip():
             raise ValueError("text credentials and model must not be empty")
         parsed = httpx.URL(base_url)
@@ -41,7 +41,11 @@ class GMSTextProvider:
         self._provider_name = provider_name
         self._api_key = api_key
         self._model = model
-        self._url = f"{base_url.rstrip('/')}/responses"
+        self._url = (
+            f"{base_url.rstrip('/')}/v1beta/models/{model}:generateContent"
+            if provider_name == "gemini"
+            else f"{base_url.rstrip('/')}/responses"
+        )
         self._timeout_seconds = timeout_seconds
         self._max_output_tokens = max_output_tokens
         self._client = client
@@ -51,7 +55,7 @@ class GMSTextProvider:
         return self._model
 
     @property
-    def provider_name(self) -> Literal["gms", "openai"]:
+    def provider_name(self) -> Literal["gms", "openai", "gemini"]:
         return self._provider_name
 
     def generate_json(
@@ -108,6 +112,8 @@ class GMSTextProvider:
             ) from exception
 
     def _post(self, payload: Mapping[str, Any]) -> httpx.Response:
+        if self._provider_name == "gemini":
+            return self._post_gemini(payload)
         headers = {
             "Authorization": f"Bearer {self._api_key}",
             "Content-Type": "application/json",
@@ -130,6 +136,98 @@ class GMSTextProvider:
             raise GenerationProviderError(
                 f"{self._provider_name} text endpoint is unavailable", retryable=True
             ) from exception
+
+    def _post_gemini(self, payload: Mapping[str, Any]) -> httpx.Response:
+        system_parts: list[dict[str, str]] = []
+        contents: list[dict[str, Any]] = []
+        for message in payload.get("input", []):
+            if not isinstance(message, Mapping):
+                continue
+            parts = [
+                {"text": str(part.get("text", ""))}
+                for part in message.get("content", [])
+                if isinstance(part, Mapping) and part.get("text")
+            ]
+            if message.get("role") == "system":
+                system_parts.extend(parts)
+            elif parts:
+                contents.append({"role": "user", "parts": parts})
+
+        generation_config: dict[str, Any] = {
+            "responseMimeType": "application/json",
+            "maxOutputTokens": payload.get("max_output_tokens", self._max_output_tokens),
+        }
+        text_config = payload.get("text")
+        if isinstance(text_config, Mapping):
+            output_format = text_config.get("format")
+            if isinstance(output_format, Mapping) and isinstance(
+                output_format.get("schema"), Mapping
+            ):
+                generation_config["responseJsonSchema"] = output_format["schema"]
+        gemini_payload: dict[str, Any] = {
+            "contents": contents,
+            "generationConfig": generation_config,
+        }
+        if system_parts:
+            gemini_payload["systemInstruction"] = {"parts": system_parts}
+
+        headers = {
+            "x-goog-api-key": self._api_key,
+            "Content-Type": "application/json",
+        }
+        try:
+            if self._client is not None:
+                response = self._client.post(
+                    self._url,
+                    headers=headers,
+                    json=gemini_payload,
+                    timeout=self._timeout_seconds,
+                )
+            else:
+                with httpx.Client(timeout=self._timeout_seconds) as client:
+                    response = client.post(
+                        self._url,
+                        headers=headers,
+                        json=gemini_payload,
+                    )
+        except (httpx.TimeoutException, TimeoutError) as exception:
+            raise GenerationProviderError(
+                "gemini text request timed out", retryable=True
+            ) from exception
+        except httpx.RequestError as exception:
+            raise GenerationProviderError(
+                "gemini text endpoint is unavailable", retryable=True
+            ) from exception
+        if response.status_code >= 400:
+            return response
+
+        document = response.json()
+        candidates = document.get("candidates", []) if isinstance(document, Mapping) else []
+        text = ""
+        if (
+            isinstance(candidates, Sequence)
+            and candidates
+            and isinstance(candidates[0], Mapping)
+        ):
+            content = candidates[0].get("content", {})
+            parts = content.get("parts", []) if isinstance(content, Mapping) else []
+            text = "".join(
+                str(part.get("text", ""))
+                for part in parts
+                if isinstance(part, Mapping)
+            )
+        return httpx.Response(
+            200,
+            json={
+                "status": "completed",
+                "output": [
+                    {
+                        "type": "message",
+                        "content": [{"type": "output_text", "text": text}],
+                    }
+                ],
+            },
+        )
 
 
 def _extract_output_text(document: Mapping[str, Any]) -> str:

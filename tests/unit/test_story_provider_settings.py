@@ -61,6 +61,23 @@ def test_direct_openai_story_provider_remains_supported() -> None:
     assert settings.story_api_base_url == "https://openai.example/v1"
 
 
+def test_gemini_35_flash_lite_story_provider_is_supported() -> None:
+    settings = Settings(
+        _env_file=None,
+        story_provider="gemini",
+        openai_model="gemini-3.5-flash-lite",
+        gemini_api_key="gemini-test-key",
+        gms_key=None,
+        openai_api_key=None,
+    )
+
+    assert settings.openai_model == "gemini-3.5-flash-lite"
+    assert settings.story_api_key == "gemini-test-key"
+    assert settings.story_api_base_url == (
+        "https://generativelanguage.googleapis.com/v1beta/openai"
+    )
+
+
 def test_story_image_generation_is_disabled_by_default_with_gms_key() -> None:
     settings = Settings(
         _env_file=None,
@@ -97,6 +114,36 @@ def test_direct_openai_training_provider_requires_openai_key() -> None:
             story_provider="mock",
             openai_api_key=None,
             gms_key=None,
+        )
+
+
+def test_direct_gemini_training_provider_uses_gemini_credentials() -> None:
+    settings = Settings(
+        _env_file=None,
+        generation_provider="gemini",
+        story_provider="mock",
+        openai_model="gemini-3.5-flash-lite",
+        gemini_api_key="gemini-test-key",
+        openai_api_key=None,
+        gms_key=None,
+    )
+
+    assert settings.text_api_key == "gemini-test-key"
+    assert settings.text_base_url == "https://generativelanguage.googleapis.com"
+    assert settings.text_timeout_seconds == settings.model_timeout_seconds
+    assert settings.text_max_output_tokens == settings.openai_max_output_tokens
+
+
+def test_direct_gemini_training_provider_requires_gemini_key() -> None:
+    with pytest.raises(
+        ValidationError,
+        match="GEMINI_API_KEY is required when AI_GENERATION_PROVIDER=gemini",
+    ):
+        Settings(
+            _env_file=None,
+            generation_provider="gemini",
+            story_provider="mock",
+            gemini_api_key=None,
         )
 
 
