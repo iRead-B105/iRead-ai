@@ -28,21 +28,21 @@ def test_analyzer_marks_high_accuracy_with_high_gaze_burden_as_effort() -> None:
     payload = teacher_report_request_payload()
     payload["featureProfiles"] = [
         {
-            "featureCode": "HAS_COMPOUND_VOWEL",
+            "featureCode": "SYLLABLE.COMPLEX_VOWEL",
             "featureLabel": "복합 모음 읽기",
             "accuracyRate": 0.90,
-            "avgPronunciationScore": 900,
+            "avgPronunciationScore": 90.0,
             "pronunciationErrorRate": 0.05,
             "avgFixationDurationMs": 1500,
             "avgFixationCount": 4.0,
             "avgRegressionCount": 2.0,
             "skipRate": 0.0,
             "avgReadingTimeMs": 2700,
-            "weaknessScore": 410,
+            "weaknessScore": 0.41,
             "confidence": 0.80,
             "evidenceCount": 10,
             "previousAccuracyRate": 0.86,
-            "previousWeaknessScore": 430,
+            "previousWeaknessScore": 0.43,
         }
     ]
 

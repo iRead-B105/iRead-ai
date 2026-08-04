@@ -16,38 +16,38 @@ def teacher_report_request_payload() -> dict[str, Any]:
         "profileAnalysisVersion": "WEAKNESS_V1",
         "featureProfiles": [
             {
-                "featureCode": "ONSET_GIYEOK",
+                "featureCode": "GRAPHEME.ONSET.BASIC.ㄱ",
                 "featureLabel": "초성 ㄱ 읽기",
                 "accuracyRate": 0.82,
-                "avgPronunciationScore": 840,
+                "avgPronunciationScore": 84.0,
                 "pronunciationErrorRate": 0.12,
                 "avgFixationDurationMs": 820,
                 "avgFixationCount": 2.0,
                 "avgRegressionCount": 0.8,
                 "skipRate": 0.05,
                 "avgReadingTimeMs": 1800,
-                "weaknessScore": 250,
+                "weaknessScore": 0.25,
                 "confidence": 0.85,
                 "evidenceCount": 12,
                 "previousAccuracyRate": 0.60,
-                "previousWeaknessScore": 500,
+                "previousWeaknessScore": 0.50,
             },
             {
-                "featureCode": "CODA_NIEUN",
+                "featureCode": "GRAPHEME.CODA.SIMPLE.ㄴ",
                 "featureLabel": "받침 ㄴ 읽기",
                 "accuracyRate": 0.45,
-                "avgPronunciationScore": 610,
+                "avgPronunciationScore": 61.0,
                 "pronunciationErrorRate": 0.38,
                 "avgFixationDurationMs": 1450,
                 "avgFixationCount": 4.0,
                 "avgRegressionCount": 2.5,
                 "skipRate": 0.20,
                 "avgReadingTimeMs": 3100,
-                "weaknessScore": 720,
+                "weaknessScore": 0.72,
                 "confidence": 0.90,
                 "evidenceCount": 15,
                 "previousAccuracyRate": 0.48,
-                "previousWeaknessScore": 700,
+                "previousWeaknessScore": 0.70,
             },
         ],
         "gazeTrend": {
@@ -95,6 +95,39 @@ def test_teacher_report_contract_rejects_duplicate_feature_codes() -> None:
     payload["featureProfiles"].append(deepcopy(payload["featureProfiles"][0]))
 
     with pytest.raises(ValidationError, match="featureCode values must be unique"):
+        TeacherReportAnalyzeRequest.model_validate(payload)
+
+
+def test_teacher_report_contract_uses_normalized_backend_score_ranges() -> None:
+    request = TeacherReportAnalyzeRequest.model_validate(teacher_report_request_payload())
+
+    assert request.feature_profiles[0].avg_pronunciation_score == 84.0
+    assert request.feature_profiles[1].weakness_score == 0.72
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("weaknessScore", 720),
+        ("avgPronunciationScore", 610),
+    ],
+)
+def test_teacher_report_contract_rejects_legacy_thousand_scale_scores(
+    field: str,
+    value: int,
+) -> None:
+    payload = teacher_report_request_payload()
+    payload["featureProfiles"][0][field] = value
+
+    with pytest.raises(ValidationError):
+        TeacherReportAnalyzeRequest.model_validate(payload)
+
+
+def test_teacher_report_contract_rejects_non_backend_feature_code() -> None:
+    payload = teacher_report_request_payload()
+    payload["featureProfiles"][0]["featureCode"] = "HAS_COMPOUND_VOWEL"
+
+    with pytest.raises(ValidationError, match="Backend reading feature namespace"):
         TeacherReportAnalyzeRequest.model_validate(payload)
 
 

@@ -25,9 +25,9 @@ FactDirection = Literal[
 MIN_EVIDENCE_COUNT = 3
 MIN_CONFIDENCE = 0.30
 IMPROVEMENT_ACCURACY_DELTA = 0.10
-IMPROVEMENT_WEAKNESS_DELTA = 100
+IMPROVEMENT_WEAKNESS_DELTA = 0.10
 PERSISTENT_ACCURACY_MAX = 0.60
-PERSISTENT_WEAKNESS_MIN = 600
+PERSISTENT_WEAKNESS_MIN = 0.60
 FIXATION_DURATION_THRESHOLD_MS = 1_200
 FIXATION_COUNT_THRESHOLD = 3.0
 REGRESSION_COUNT_THRESHOLD = 2.0
@@ -168,7 +168,7 @@ class TeacherReportAnalyzer:
                 subject=label,
                 text=(f"{label}의 종합 어려움 지표가 이전보다 낮아져 긍정적인 변화가 관찰됩니다."),
                 direction="improved",
-                priority=(weakness_delta / 1000) * profile.confidence,
+                priority=weakness_delta * profile.confidence,
             )
         return None
 
@@ -192,7 +192,7 @@ class TeacherReportAnalyzer:
                 "어려움이 반복되어, 다음 회기에서도 지속 관찰이 필요합니다."
             ),
             direction="persistent",
-            priority=(profile.weakness_score / 1000) * profile.confidence,
+            priority=profile.weakness_score * profile.confidence,
         )
 
     def _effort_fact(

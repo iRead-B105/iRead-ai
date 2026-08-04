@@ -60,6 +60,11 @@ def test_teacher_report_request_is_aggregate_only_and_strict() -> None:
         "avgRegressionCount",
         "skipRate",
     }.issubset(feature["properties"])
+    assert feature["properties"]["weaknessScore"]["maximum"] == 1
+    assert feature["properties"]["weaknessScore"]["minimum"] == 0
+    pronunciation = feature["properties"]["avgPronunciationScore"]["anyOf"][0]
+    assert pronunciation["maximum"] == 100
+    assert pronunciation["minimum"] == 0
 
 
 def test_teacher_report_response_maps_to_existing_snapshot_fields() -> None:

@@ -196,14 +196,14 @@ def _current_stage(request: CurriculumRecommendRequest) -> tuple[int, str]:
     struggling = [
         profile
         for profile in sufficient
-        if profile.accuracyRate < MASTERY_ACCURACY or profile.weaknessScore >= WEAKNESS_THRESHOLD
+        if profile.accuracy_rate < MASTERY_ACCURACY or profile.weakness_score >= WEAKNESS_THRESHOLD
     ]
     if struggling:
         stage = min(_profile_stage(profile) for profile in struggling)
         feature = min(struggling, key=_profile_stage)
         return (
             stage,
-            f"{feature.featureCode}의 기초 수행 근거를 우선해 현재 단계를 {stage}로 판정했습니다.",
+            f"{feature.feature_code}의 기초 수행 근거를 우선해 현재 단계를 {stage}로 판정했습니다.",
         )
 
     stage = min(8, max(_profile_stage(profile) for profile in sufficient) + 1)
@@ -222,7 +222,7 @@ def _data_sufficiency(profiles: list[CurriculumFeatureProfile]) -> DataSufficien
 
 
 def _has_sufficient_evidence(profile: CurriculumFeatureProfile) -> bool:
-    return profile.confidence >= MIN_CONFIDENCE and profile.evidenceCount >= MIN_EVIDENCE_COUNT
+    return profile.confidence >= MIN_CONFIDENCE and profile.evidence_count >= MIN_EVIDENCE_COUNT
 
 
 def _profile_stage(profile: CurriculumFeatureProfile) -> int:
@@ -233,7 +233,7 @@ def _profile_stage(profile: CurriculumFeatureProfile) -> int:
 def _profile_category(profile: CurriculumFeatureProfile) -> str:
     if profile.category is not None:
         return profile.category
-    prefix = profile.featureCode.split(".", 1)[0].upper()
+    prefix = profile.feature_code.split(".", 1)[0].upper()
     return prefix if prefix in _PROFILE_STAGE else "WORD"
 
 
@@ -256,9 +256,9 @@ def _score_candidate(
     score = max(0.0, min(1.0, strongest + second * 0.12 + stage_bonus - repeat_penalty))
 
     reasons: list[RecommendationReasonCode] = []
-    if matched and matched[0].weaknessScore >= 0.6:
+    if matched and matched[0].weakness_score >= 0.6:
         reasons.append("HIGH_WEAKNESS")
-    if matched and matched[0].accuracyRate < 0.7:
+    if matched and matched[0].accuracy_rate < 0.7:
         reasons.append("LOW_ACCURACY")
     if matched and _has_sufficient_evidence(matched[0]):
         reasons.append("RELIABLE_EVIDENCE")
@@ -278,29 +278,29 @@ def _score_candidate(
     return _ScoredCandidate(
         spec=spec,
         score=round(score, 4),
-        target_feature_codes=tuple(profile.featureCode for profile in matched[:3]),
+        target_feature_codes=tuple(profile.feature_code for profile in matched[:3]),
         reason_codes=tuple(dict.fromkeys(reasons)),
     )
 
 
 def _profile_priority(profile: CurriculumFeatureProfile) -> float:
-    evidence_weight = profile.confidence * min(1.0, profile.evidenceCount / 10)
+    evidence_weight = profile.confidence * min(1.0, profile.evidence_count / 10)
     return min(
         0.86,
-        profile.weaknessScore * 0.42
-        + (1 - profile.accuracyRate) * 0.24
+        profile.weakness_score * 0.42
+        + (1 - profile.accuracy_rate) * 0.24
         + evidence_weight * 0.10
-        + (profile.pronunciationErrorRate or 0.0) * 0.08
+        + (profile.pronunciation_error_rate or 0.0) * 0.08
         + _gaze_burden(profile) * 0.12,
     )
 
 
 def _gaze_burden(profile: CurriculumFeatureProfile) -> float:
     fixation = 0.0
-    if profile.avgFixationDurationMs is not None:
-        fixation = max(0.0, min(1.0, (profile.avgFixationDurationMs - 400) / 1100))
-    regression = min(1.0, (profile.avgRegressionCount or 0.0) / 5)
-    skip = profile.skipRate or 0.0
+    if profile.avg_fixation_duration_ms is not None:
+        fixation = max(0.0, min(1.0, (profile.avg_fixation_duration_ms - 400) / 1100))
+    regression = min(1.0, (profile.avg_regression_count or 0.0) / 5)
+    skip = profile.skip_rate or 0.0
     return (fixation + regression + skip) / 3
 
 
@@ -392,12 +392,12 @@ def _llm_plan(
         "deterministicBaselineIds": sorted(deterministic_ids),
         "studentEvidence": [
             {
-                "featureCode": profile.featureCode,
+                "featureCode": profile.feature_code,
                 "category": _profile_category(profile),
-                "accuracyRate": profile.accuracyRate,
-                "weaknessScore": profile.weaknessScore,
+                "accuracyRate": profile.accuracy_rate,
+                "weaknessScore": profile.weakness_score,
                 "confidence": profile.confidence,
-                "evidenceCount": profile.evidenceCount,
+                "evidenceCount": profile.evidence_count,
             }
             for profile in request.featureProfiles
         ],
@@ -493,9 +493,9 @@ def _recommended_difficulty(
     profiles: list[CurriculumFeatureProfile],
 ) -> int:
     targets = [
-        profile for profile in profiles if profile.featureCode in candidate.target_feature_codes
+        profile for profile in profiles if profile.feature_code in candidate.target_feature_codes
     ]
-    accuracy = sum(profile.accuracyRate for profile in targets) / len(targets) if targets else 0.5
+    accuracy = sum(profile.accuracy_rate for profile in targets) / len(targets) if targets else 0.5
     if accuracy < 0.60:
         difficulty = 1
     elif accuracy < 0.72:

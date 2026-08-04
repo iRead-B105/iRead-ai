@@ -27,6 +27,15 @@
 - 평균 읽기 시간, 약점 점수, 신뢰도, 근거 수
 - 선택적인 이전 정확도와 이전 약점 점수
 
+공통 프로필 계약의 단위는 다음과 같다.
+
+- `accuracyRate`, `pronunciationErrorRate`, `skipRate`, `weaknessScore`,
+  `confidence`: `0.0~1.0`
+- `avgPronunciationScore`: `0.0~100.0`
+- `evidenceCount`, 시간·횟수 지표: 0 이상의 수
+- `featureCode`: Backend `reading_features.feature_code` 형식
+  (`GRAPHEME.*`, `SYLLABLE.*`, `PHONOLOGY.*`, `WORD.*`, `SENTENCE.*`)
+
 `gazeTrend`는 보고서 스냅샷의 훈련·검사 시선 시계열과 대응한다. 원시 좌표, 원시
 시선 파일, 음성, 이름, 학생 ID는 계약에 포함하지 않는다.
 
@@ -44,8 +53,8 @@
 ## V1 판정 기준
 
 - 특성 근거 사용 최소 조건: 근거 3건 이상, 신뢰도 0.30 이상
-- 향상: 이전 정확도 대비 10%p 이상 상승 또는 약점 점수 100 이상 감소
-- 지속 관찰 필요: 정확도 60% 이하 또는 약점 점수 600 이상
+- 향상: 이전 정확도 대비 10%p 이상 상승 또는 약점 점수 0.10 이상 감소
+- 지속 관찰 필요: 정확도 60% 이하 또는 약점 점수 0.60 이상
 - 노력형 성공: 정확도 80% 이상이면서 다음 중 하나 이상
   - 평균 고정 시간 1200ms 이상
   - 평균 고정 횟수 3회 이상

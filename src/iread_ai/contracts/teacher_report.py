@@ -8,17 +8,18 @@ from pydantic import (
     ConfigDict,
     Field,
     StrictBool,
-    StrictFloat,
     StrictInt,
     StrictStr,
     StringConstraints,
     model_validator,
 )
 
+from iread_ai.contracts.reading_profile import (
+    ReadingFeatureProfile,
+    UnitRate,
+)
 from iread_ai.contracts.story_page import NonEmptyText, ShortIdentifier
 
-UnitRate = Annotated[StrictFloat, Field(ge=0, le=1)]
-NonNegativeFloat = Annotated[StrictFloat, Field(ge=0)]
 SummaryText = Annotated[
     StrictStr,
     StringConstraints(strip_whitespace=True, min_length=1, max_length=300),
@@ -41,22 +42,11 @@ class TeacherReportContractModel(BaseModel):
     )
 
 
-class TeacherReportFeatureProfile(TeacherReportContractModel):
-    feature_code: ShortIdentifier
+class TeacherReportFeatureProfile(ReadingFeatureProfile):
     feature_label: NonEmptyText = Field(max_length=120)
-    accuracy_rate: UnitRate
-    avg_pronunciation_score: StrictInt | None = Field(default=None, ge=0, le=1000)
-    pronunciation_error_rate: UnitRate | None = None
-    avg_fixation_duration_ms: StrictInt | None = Field(default=None, ge=0)
-    avg_fixation_count: NonNegativeFloat | None = None
-    avg_regression_count: NonNegativeFloat | None = None
     skip_rate: UnitRate
-    avg_reading_time_ms: StrictInt | None = Field(default=None, ge=0)
-    weakness_score: StrictInt = Field(ge=0, le=1000)
-    confidence: UnitRate
-    evidence_count: StrictInt = Field(ge=0)
     previous_accuracy_rate: UnitRate | None = None
-    previous_weakness_score: StrictInt | None = Field(default=None, ge=0, le=1000)
+    previous_weakness_score: UnitRate | None = None
 
 
 class TeacherReportGazePoint(TeacherReportContractModel):

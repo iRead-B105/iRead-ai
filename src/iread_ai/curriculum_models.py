@@ -4,6 +4,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from iread_ai.contracts.reading_profile import ReadingFeatureProfile
+
 
 class CurriculumContractModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -33,17 +35,15 @@ RecommendationReasonCode = Literal[
 ]
 
 
-class CurriculumFeatureProfile(CurriculumContractModel):
-    featureCode: str = Field(min_length=1, max_length=150)
+class CurriculumFeatureProfile(ReadingFeatureProfile):
     category: ReadingFeatureCategory | None = None
-    accuracyRate: float = Field(ge=0, le=1)
-    weaknessScore: float = Field(ge=0, le=1)
-    confidence: float = Field(ge=0, le=1)
-    evidenceCount: int = Field(ge=0)
-    pronunciationErrorRate: float | None = Field(default=None, ge=0, le=1)
-    avgFixationDurationMs: int | None = Field(default=None, ge=0, le=10_000)
-    avgRegressionCount: float | None = Field(default=None, ge=0, le=100)
-    skipRate: float | None = Field(default=None, ge=0, le=1)
+
+    @model_validator(mode="after")
+    def validate_category_matches_feature_code(self) -> CurriculumFeatureProfile:
+        code_category = self.feature_code.split(".", 1)[0]
+        if self.category is not None and self.category != code_category:
+            raise ValueError("category must match the featureCode namespace")
+        return self
 
 
 class RecentCurriculumTraining(CurriculumContractModel):
@@ -68,7 +68,7 @@ class CurriculumRecommendRequest(CurriculumContractModel):
 
     @model_validator(mode="after")
     def validate_unique_profiles(self) -> CurriculumRecommendRequest:
-        feature_codes = [profile.featureCode for profile in self.featureProfiles]
+        feature_codes = [profile.feature_code for profile in self.featureProfiles]
         if len(feature_codes) != len(set(feature_codes)):
             raise ValueError("featureProfiles must use unique featureCode values")
         return self
