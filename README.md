@@ -29,6 +29,7 @@ Detailed contracts and examples:
 - [Training evaluation](docs/TRAINING_EVALUATION.md)
 - [Lexicon database](docs/LEXICON_DATABASE.md)
 - [Teacher report analysis](docs/TEACHER_REPORT_ANALYSIS.md)
+- [Backend reading profile AI integration](docs/BACKEND_READING_PROFILE_AI_INTEGRATION.md)
 
 iRead의 FastAPI 기반 AI 서비스입니다. GMS 맞춤 훈련 생성, 10일 분기 이야기와
 Azure Speech 기반 발음 평가·STT·TTS를 제공합니다.
