@@ -160,3 +160,22 @@ DB 스키마 변경, AI 서버의 Backend DB 직접 접근, 원시 음성·원�
 
 테스트용 스냅샷은 `iread_ai.devtools.backend_profile_samples`, 변환기는
 `iread_ai.application.reading_profile_request_adapter`에 있다.
+
+## 로컬 검토 화면
+
+AI API를 8081 포트에서 실행한 뒤 별도 터미널에서 다음 명령을 실행한다.
+
+```powershell
+uv run --extra ui streamlit run backend_profile_review_app.py --server.port 8512
+```
+
+브라우저에서 `http://127.0.0.1:8512`를 열면 익명 Backend 프로필 샘플을 편집하고
+입력 검증, 교수자 분석, 커리큘럼 추천 또는 두 기능 동시 실행을 할 수 있다. API 키는
+화면의 비밀번호 입력과 요청 헤더에만 사용하며 요청·응답 JSON에는 표시하지 않는다.
+
+Docker로 UI만 실행하려면 다음 명령을 사용한다. AI API는 호스트 8081 포트에서 별도로
+실행되어 있어야 한다.
+
+```powershell
+docker compose -f compose.backend-profile-ui.yaml up --build
+```
