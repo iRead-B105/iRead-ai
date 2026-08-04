@@ -126,16 +126,16 @@ def test_valid_llm_reranking_is_used() -> None:
                     "rationale": "글자에서 음절로 연결되는 기초 연습으로 배치했습니다.",
                 },
                 {
-                    "trainingTemplateId": 4,
+                    "trainingTemplateId": 10,
                     "role": "REINFORCEMENT",
                     "reasonCodes": ["FOUNDATION_REVIEW"],
-                    "rationale": "자음 소리를 다시 확인하는 보강 활동으로 배치했습니다.",
+                    "rationale": "받침 소리를 다시 확인하는 보강 활동으로 배치했습니다.",
                 },
                 {
-                    "trainingTemplateId": 5,
+                    "trainingTemplateId": 11,
                     "role": "STRETCH",
                     "reasonCodes": ["NEXT_STAGE_SCAFFOLD"],
-                    "rationale": "허용된 다음 단계에서 모음 소리를 확장하도록 배치했습니다.",
+                    "rationale": "허용된 다음 단계에서 끝소리 읽기를 확장하도록 배치했습니다.",
                 },
             ]
         }
@@ -147,7 +147,7 @@ def test_valid_llm_reranking_is_used() -> None:
     )
 
     assert response.recommendationProvider == "gms"
-    assert [item.trainingTemplateId for item in response.recommendations] == [2, 1, 3, 4, 5]
+    assert [item.trainingTemplateId for item in response.recommendations] == [2, 1, 3, 10, 11]
 
 
 def test_invalid_llm_stage_jump_uses_deterministic_fallback() -> None:
@@ -238,3 +238,33 @@ def test_long_profile_sends_only_reachable_stage_evidence_to_llm() -> None:
     assert all(item["profileStage"] <= 4 for item in evidence)
     assert "PHONOLOGY.LIAISON" not in {item["featureCode"] for item in evidence}
     assert "SENTENCE.FLUENCY" not in {item["featureCode"] for item in evidence}
+
+
+def test_llm_cannot_replace_core_with_candidate_below_rule_baseline() -> None:
+    provider = _FakeProvider(
+        {
+            "selections": [
+                {
+                    "trainingTemplateId": template_id,
+                    "role": role,
+                    "reasonCodes": [reason],
+                    "rationale": "현재 단계와 입력 근거를 반영한 추천입니다.",
+                }
+                for template_id, role, reason in [
+                    (18, "CORE", "CURRENT_STAGE_MATCH"),
+                    (15, "CORE", "CURRENT_STAGE_MATCH"),
+                    (16, "CORE", "CURRENT_STAGE_MATCH"),
+                    (11, "REINFORCEMENT", "FOUNDATION_REVIEW"),
+                    (20, "STRETCH", "NEXT_STAGE_SCAFFOLD"),
+                ]
+            ]
+        }
+    )
+
+    response = recommend_curriculum(
+        _long_profile_request(use_llm=True),
+        provider=provider,  # type: ignore[arg-type]
+    )
+
+    assert response.recommendationProvider == "deterministic-fallback"
+    assert 16 not in {item.trainingTemplateId for item in response.recommendations}

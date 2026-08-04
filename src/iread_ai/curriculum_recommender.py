@@ -443,6 +443,31 @@ def _llm_plan(
     for item, _, _, _ in deterministic:
         shortlist_by_id[item.spec.template_id] = item
     shortlist = list(shortlist_by_id.values())
+    minimum_score_by_role = {
+        role: min(
+            item.score
+            for item, baseline_role, _, _ in deterministic
+            if baseline_role == role
+        )
+        for role in ("CORE", "REINFORCEMENT", "STRETCH")
+    }
+    allowed_roles_by_id = {
+        item.spec.template_id: _allowed_roles(
+            item,
+            current_stage=current_stage,
+            maximum_allowed_stage=maximum_allowed_stage,
+            minimum_score_by_role=minimum_score_by_role,
+        )
+        for item in shortlist
+    }
+    for item, role, _, _ in deterministic:
+        allowed_roles_by_id[item.spec.template_id] = tuple(
+            dict.fromkeys((*allowed_roles_by_id[item.spec.template_id], role))
+        )
+    shortlist = [
+        item for item in shortlist if allowed_roles_by_id[item.spec.template_id]
+    ]
+    shortlist_by_id = {item.spec.template_id: item for item in shortlist}
 
     document: dict[str, Any] = {
         "promptVersion": PROMPT_VERSION,
@@ -450,6 +475,7 @@ def _llm_plan(
         "maximumAllowedStage": maximum_allowed_stage,
         "requiredComposition": {"CORE": 3, "REINFORCEMENT": 1, "STRETCH": 1},
         "deterministicBaselineIds": sorted(deterministic_ids),
+        "minimumScoreByRole": minimum_score_by_role,
         "studentEvidence": [
             {
                 "featureCode": profile.feature_code,
@@ -472,6 +498,7 @@ def _llm_plan(
                 "trainingName": item.spec.name,
                 "curriculumStage": item.spec.stage,
                 "score": item.score,
+                "allowedRoles": list(allowed_roles_by_id[item.spec.template_id]),
                 "targetFeatureCodes": list(item.target_feature_codes),
                 "reasonCodes": list(item.reason_codes),
             }
@@ -485,13 +512,22 @@ def _llm_plan(
             "당신은 초등 읽기 훈련의 일일 커리큘럼 재정렬 도우미입니다. "
             "eligibleCandidates에 있는 훈련만 사용하고 정확히 CORE 3개, "
             "REINFORCEMENT 1개, STRETCH 1개를 서로 다른 ID로 선택하세요. "
+            "각 훈련에는 allowedRoles에 표시된 역할만 부여할 수 있습니다. "
+            "각 역할의 후보는 minimumScoreByRole에 표시된 기준 점수보다 낮으면 안 됩니다. "
             "maximumAllowedStage를 넘거나 선수 단계를 건너뛰면 안 됩니다. "
             "진단이나 치료 표현을 사용하지 말고, 입력 근거에 있는 사실만 간결하게 설명하세요."
         ),
         user_prompt=json.dumps(document, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
     )
     draft = LlmCurriculumDraft.model_validate(generated)
-    _validate_llm_draft(draft, shortlist_by_id, current_stage, maximum_allowed_stage)
+    _validate_llm_draft(
+        draft,
+        shortlist_by_id,
+        current_stage,
+        maximum_allowed_stage,
+        minimum_score_by_role,
+        allowed_roles_by_id,
+    )
     return [
         (
             shortlist_by_id[selection.trainingTemplateId],
@@ -528,6 +564,8 @@ def _validate_llm_draft(
     candidates: dict[int, _ScoredCandidate],
     current_stage: int,
     maximum_allowed_stage: int,
+    minimum_score_by_role: dict[str, float],
+    allowed_roles_by_id: dict[int, tuple[RecommendationRole, ...]],
 ) -> None:
     ids = [selection.trainingTemplateId for selection in draft.selections]
     if len(ids) != len(set(ids)) or any(template_id not in candidates for template_id in ids):
@@ -537,6 +575,10 @@ def _validate_llm_draft(
         raise ValueError("LLM did not preserve the 3+1+1 composition")
     for selection in draft.selections:
         candidate = candidates[selection.trainingTemplateId]
+        if selection.role not in allowed_roles_by_id[selection.trainingTemplateId]:
+            raise ValueError("LLM assigned a role that is not allowed for the candidate")
+        if candidate.score < minimum_score_by_role[selection.role]:
+            raise ValueError("LLM selected a candidate below the deterministic role baseline")
         if candidate.spec.stage > maximum_allowed_stage:
             raise ValueError("LLM crossed the prerequisite stage gate")
         if selection.role == "CORE" and not (
@@ -545,6 +587,33 @@ def _validate_llm_draft(
             raise ValueError("LLM used a distant or unmastered stage as a core training")
         if any(word in selection.rationale.casefold() for word in PROHIBITED_RATIONALE_WORDS):
             raise ValueError("LLM rationale contained a diagnostic expression")
+
+
+def _allowed_roles(
+    candidate: _ScoredCandidate,
+    *,
+    current_stage: int,
+    maximum_allowed_stage: int,
+    minimum_score_by_role: dict[str, float],
+) -> tuple[RecommendationRole, ...]:
+    roles: list[RecommendationRole] = []
+    minimum_core_stage = max(1, current_stage - 1)
+    if (
+        minimum_core_stage <= candidate.spec.stage <= current_stage
+        and candidate.score >= minimum_score_by_role["CORE"]
+    ):
+        roles.append("CORE")
+    if (
+        candidate.spec.stage <= current_stage
+        and candidate.score >= minimum_score_by_role["REINFORCEMENT"]
+    ):
+        roles.append("REINFORCEMENT")
+    if (
+        candidate.spec.stage == maximum_allowed_stage
+        and candidate.score >= minimum_score_by_role["STRETCH"]
+    ):
+        roles.append("STRETCH")
+    return tuple(roles)
 
 
 def _render_recommendation(
