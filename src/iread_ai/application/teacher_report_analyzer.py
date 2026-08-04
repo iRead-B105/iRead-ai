@@ -33,6 +33,13 @@ FIXATION_COUNT_THRESHOLD = 3.0
 REGRESSION_COUNT_THRESHOLD = 2.0
 READING_TIME_THRESHOLD_MS = 2_500
 MEANINGFUL_GAZE_CHANGE_RATE = 0.15
+_PROFILE_STAGE = {
+    "GRAPHEME": 1,
+    "SYLLABLE": 3,
+    "PHONOLOGY": 6,
+    "WORD": 6,
+    "SENTENCE": 7,
+}
 UNSAFE_SUBJECT_FRAGMENTS = (
     "난독증",
     "진단",
@@ -88,18 +95,15 @@ class TeacherReportAnalyzer:
             key=lambda fact: (-fact.priority, fact.evidence_id),
         )[:5]
 
-        persistent_candidates: list[TeacherReportFact] = []
+        persistent_candidates: list[tuple[int, TeacherReportFact]] = []
         for profile in eligible:
             persistent = self._persistent_fact(profile)
             if persistent is not None:
-                persistent_candidates.append(persistent)
+                persistent_candidates.append((_profile_stage(profile), persistent))
             effort = self._effort_fact(profile)
             if effort is not None:
-                persistent_candidates.append(effort)
-        persistent = sorted(
-            persistent_candidates,
-            key=lambda fact: (-fact.priority, fact.evidence_id),
-        )[:5]
+                persistent_candidates.append((_profile_stage(profile), effort))
+        persistent = _prioritize_persistent_facts(persistent_candidates)
 
         training_gaze = self._gaze_facts(
             request.gaze_trend.training,
@@ -189,7 +193,7 @@ class TeacherReportAnalyzer:
             category="persistent",
             subject=label,
             text=(
-                f"{label}은 정확도 {accuracy}%, 종합 어려움 지표 "
+                f"{label}에서 정확도 {accuracy}%, 종합 어려움 지표 "
                 f"{_percent(profile.weakness_score)}%이며 누적 근거 "
                 f"{profile.evidence_count}건에서 어려움이 반복되었습니다. "
                 f"{profile_observation} "
@@ -418,6 +422,44 @@ def _persistent_profile_observation(profile: TeacherReportFeatureProfile) -> str
     if not details:
         return "누적 프로필에는 추가 세부 지표가 제공되지 않았습니다."
     return f"누적 프로필에서는 {', '.join(details)}가 함께 관찰되었습니다."
+
+
+def _profile_stage(profile: TeacherReportFeatureProfile) -> int:
+    category = profile.feature_code.split(".", 1)[0].upper()
+    return _PROFILE_STAGE.get(category, 8)
+
+
+def _prioritize_persistent_facts(
+    candidates: list[tuple[int, TeacherReportFact]],
+) -> list[TeacherReportFact]:
+    ordered = sorted(
+        candidates,
+        key=lambda item: (-item[1].priority, item[1].evidence_id),
+    )
+    difficulty_candidates = [
+        item for item in candidates if item[1].direction == "persistent"
+    ]
+    if not difficulty_candidates:
+        return [fact for _, fact in ordered[:5]]
+
+    earliest_stage = min(stage for stage, _ in difficulty_candidates)
+    foundation = sorted(
+        (
+            fact
+            for stage, fact in difficulty_candidates
+            if stage == earliest_stage
+        ),
+        key=lambda fact: (-fact.priority, fact.evidence_id),
+    )[:2]
+    selected = list(foundation)
+    selected_ids = {fact.evidence_id for fact in selected}
+    for _, fact in ordered:
+        if len(selected) >= 5:
+            break
+        if fact.evidence_id not in selected_ids:
+            selected.append(fact)
+            selected_ids.add(fact.evidence_id)
+    return selected
 
 
 def _change_rate(first: int, latest: int) -> float:

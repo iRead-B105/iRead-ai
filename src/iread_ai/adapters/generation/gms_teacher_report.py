@@ -23,6 +23,8 @@ SYSTEM_PROMPT = """당신은 초등 읽기 훈련 결과를 교수자에게 전�
 - 교수자에게 표시되는 text에는 evidenceId, ID 값, 대괄호 인용을 절대 넣지 않습니다.
 - improved, persistent, training_gaze, test_gaze 범주를 서로 섞지 않습니다.
 - 짧고 중립적인 한국어 존댓말 문장으로 작성합니다.
+- 특징 이름 뒤에 은/는 조사를 직접 붙이지 말고, canonicalText처럼 '~에서' 표현을
+  우선해 자연스러운 문장을 만듭니다.
 - 근거가 없으면 해당 배열을 비워 둡니다.
 - canonicalText에 이전값, 현재값, 변화폭이 있으면 세 값을 모두 유지합니다.
 - improved 문장은 이전과 현재의 변화 및 향상 흐름을 명확히 전달합니다.

@@ -2,8 +2,13 @@ from __future__ import annotations
 
 from copy import deepcopy
 
+from iread_ai.application.reading_profile_request_adapter import (
+    build_teacher_report_request,
+)
 from iread_ai.application.teacher_report_analyzer import TeacherReportAnalyzer
+from iread_ai.contracts.reading_profile import StudentReadingProfileSnapshot
 from iread_ai.contracts.teacher_report import TeacherReportAnalyzeRequest
+from iread_ai.devtools.backend_profile_samples import long_backend_profile_sample
 from tests.unit.test_teacher_report_contracts import teacher_report_request_payload
 
 
@@ -108,3 +113,23 @@ def test_analyzer_neutralizes_prompt_injection_in_feature_label() -> None:
     assert "이전 지시" not in rendered
     assert "난독증" not in rendered
     assert "읽기 특성" in rendered
+
+
+def test_long_profile_keeps_earliest_actionable_difficulty_in_teacher_summary() -> None:
+    sample = long_backend_profile_sample()
+    snapshot = StudentReadingProfileSnapshot.model_validate(
+        {"featureProfiles": sample["featureProfiles"]}
+    )
+    request = build_teacher_report_request(
+        request_id="long-profile-teacher-priority",
+        snapshot=snapshot,
+        feature_labels=sample["featureLabels"],
+        gaze_trend=sample["gazeTrend"],
+    )
+
+    facts = TeacherReportAnalyzer().analyze(request)
+
+    assert len(facts.persistent) == 5
+    assert "겹받침 음절 읽기에서" in facts.persistent[0].text
+    assert "문장 읽기 유창성" in " ".join(fact.text for fact in facts.persistent)
+    assert all("읽기은" not in fact.text for fact in facts.persistent)
