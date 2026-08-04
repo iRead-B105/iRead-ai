@@ -1,17 +1,25 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
+from iread_ai.application.reading_profile_request_adapter import (
+    build_curriculum_recommend_request,
+)
+from iread_ai.contracts.reading_profile import StudentReadingProfileSnapshot
 from iread_ai.curriculum_models import CurriculumRecommendRequest, RecentCurriculumTraining
 from iread_ai.curriculum_recommender import recommend_curriculum
+from iread_ai.devtools.backend_profile_samples import long_backend_profile_sample
 from iread_ai.devtools.curriculum_samples import curriculum_sample
 
 
 class _FakeProvider:
     def __init__(self, document: dict[str, Any]) -> None:
         self.document = document
+        self.calls: list[dict[str, Any]] = []
 
-    def generate_json(self, **_: Any) -> dict[str, Any]:
+    def generate_json(self, **kwargs: Any) -> dict[str, Any]:
+        self.calls.append(kwargs)
         return self.document
 
 
@@ -171,3 +179,50 @@ def test_invalid_llm_stage_jump_uses_deterministic_fallback() -> None:
     assert response.recommendationProvider == "deterministic-fallback"
     assert 26 not in {item.trainingTemplateId for item in response.recommendations}
     assert response.warnings
+
+
+def _long_profile_request(*, use_llm: bool) -> CurriculumRecommendRequest:
+    sample = long_backend_profile_sample()
+    snapshot = StudentReadingProfileSnapshot.model_validate(
+        {"featureProfiles": sample["featureProfiles"]}
+    )
+    return build_curriculum_recommend_request(
+        request_id="long-profile-stage-gate",
+        snapshot=snapshot,
+        recent_trainings=sample["recentTrainings"],
+        use_llm=use_llm,
+    )
+
+
+def test_long_profile_prioritizes_reachable_foundation_over_larger_advanced_weakness() -> None:
+    response = recommend_curriculum(_long_profile_request(use_llm=False), provider=None)
+
+    assert response.currentStage == 3
+    assert response.maximumAllowedStage == 4
+    target_codes = {
+        code
+        for recommendation in response.recommendations
+        for code in recommendation.targetFeatureCodes
+    }
+    assert "SYLLABLE.COMPLEX_CODA" in target_codes
+    assert all(
+        not code.startswith(("PHONOLOGY.", "WORD.", "SENTENCE."))
+        for code in target_codes
+    )
+
+
+def test_long_profile_sends_only_reachable_stage_evidence_to_llm() -> None:
+    provider = _FakeProvider({"selections": []})
+
+    response = recommend_curriculum(
+        _long_profile_request(use_llm=True),
+        provider=provider,  # type: ignore[arg-type]
+    )
+
+    assert response.recommendationProvider == "deterministic-fallback"
+    document = json.loads(provider.calls[0]["user_prompt"])
+    evidence = document["studentEvidence"]
+    assert len(evidence) <= 12
+    assert all(item["profileStage"] <= 4 for item in evidence)
+    assert "PHONOLOGY.LIAISON" not in {item["featureCode"] for item in evidence}
+    assert "SENTENCE.FLUENCY" not in {item["featureCode"] for item in evidence}

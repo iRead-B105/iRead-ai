@@ -16,7 +16,10 @@ from iread_ai.application.reading_profile_request_adapter import (
     build_teacher_report_request,
 )
 from iread_ai.contracts.reading_profile import StudentReadingProfileSnapshot
-from iread_ai.devtools.backend_profile_samples import backend_profile_sample
+from iread_ai.devtools.backend_profile_samples import (
+    backend_profile_sample,
+    long_backend_profile_sample,
+)
 
 load_dotenv()
 
@@ -39,8 +42,12 @@ def _pretty_json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, indent=2)
 
 
-def _reset_inputs() -> None:
-    sample = backend_profile_sample()
+def _load_sample(sample_kind: str) -> None:
+    sample = (
+        long_backend_profile_sample()
+        if sample_kind == "long"
+        else backend_profile_sample()
+    )
     st.session_state.backend_profile_editor = _pretty_json(sample["featureProfiles"])
     st.session_state.backend_feature_labels_editor = _pretty_json(sample["featureLabels"])
     st.session_state.backend_gaze_trend_editor = _pretty_json(sample["gazeTrend"])
@@ -48,10 +55,11 @@ def _reset_inputs() -> None:
     st.session_state.backend_profile_validation = None
     st.session_state.backend_teacher_result = None
     st.session_state.backend_curriculum_result = None
+    st.session_state.backend_profile_sample_kind = sample_kind
 
 
 def _initialize_state() -> None:
-    sample = backend_profile_sample()
+    sample = long_backend_profile_sample()
     defaults = {
         "backend_profile_editor": _pretty_json(sample["featureProfiles"]),
         "backend_feature_labels_editor": _pretty_json(sample["featureLabels"]),
@@ -60,6 +68,7 @@ def _initialize_state() -> None:
         "backend_profile_validation": None,
         "backend_teacher_result": None,
         "backend_curriculum_result": None,
+        "backend_profile_sample_kind": "long",
     }
     for key, value in defaults.items():
         st.session_state.setdefault(key, value)
@@ -226,8 +235,18 @@ def _render_qa_flow(
     if not profiles or not recommendations:
         return
 
+    recommendation_target_codes = {
+        code
+        for item in recommendations
+        for code in item.get("targetFeatureCodes", [])
+    }
+    actionable_profiles = [
+        profile
+        for profile in profiles
+        if profile.get("featureCode") in recommendation_target_codes
+    ]
     weakest = max(
-        profiles,
+        actionable_profiles or profiles,
         key=lambda profile: (
             profile.get("weaknessScore", 0),
             -profile.get("accuracyRate", 0),
@@ -235,6 +254,18 @@ def _render_qa_flow(
     )
     weakest_code = weakest.get("featureCode", "-")
     weakest_label = feature_labels.get(weakest_code, weakest_code)
+    overall_weakest = max(
+        profiles,
+        key=lambda profile: (
+            profile.get("weaknessScore", 0),
+            -profile.get("accuracyRate", 0),
+        ),
+    )
+    overall_weakest_code = overall_weakest.get("featureCode", "-")
+    overall_weakest_label = feature_labels.get(
+        overall_weakest_code,
+        overall_weakest_code,
+    )
     targeted = [
         item
         for item in recommendations
@@ -272,12 +303,17 @@ def _render_qa_flow(
                 st.info("최근 훈련 이력이 없습니다.")
         with profile_step:
             st.markdown("**2. 아이 프로필 갱신**")
-            st.metric("가장 큰 약점", weakest_label)
+            st.metric("현재 단계 주요 약점", weakest_label)
             st.caption(
                 f"정확도 {weakest.get('accuracyRate', 0) * 100:.0f}% · "
                 f"약점 점수 {weakest.get('weaknessScore', 0) * 100:.0f}% · "
                 f"근거 {weakest.get('evidenceCount', 0)}건"
             )
+            if overall_weakest_code != weakest_code:
+                st.caption(
+                    f"전체 최대 약점 ‘{overall_weakest_label}’은 현재 선수 단계보다 "
+                    "앞서 있어 이후 단계 관찰 대상으로 보류합니다."
+                )
         with recommendation_step:
             st.markdown("**3. 다음 훈련에 반영**")
             st.metric(
@@ -338,12 +374,22 @@ with st.sidebar:
         value=True,
         key="backend_profile_use_llm",
     )
-    st.button(
-        "익명 샘플 복원",
-        icon=":material/refresh:",
-        on_click=_reset_inputs,
-        key="backend_profile_reset",
-    )
+    st.caption("QA 샘플")
+    with st.container(horizontal=True):
+        st.button(
+            "긴 프로필",
+            icon=":material/dataset:",
+            on_click=_load_sample,
+            args=("long",),
+            key="backend_profile_load_long",
+        )
+        st.button(
+            "최소 프로필",
+            icon=":material/filter_2:",
+            on_click=_load_sample,
+            args=("minimal",),
+            key="backend_profile_load_minimal",
+        )
     st.caption("API 키는 요청 헤더에만 사용하며 결과 화면에 표시하지 않습니다.")
 
 with st.form("backend_profile_review_form", border=False):

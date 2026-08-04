@@ -67,6 +67,10 @@ def recommend_curriculum(
     data_sufficiency = _data_sufficiency(request.featureProfiles)
     current_stage, stage_rationale = _current_stage(request)
     maximum_allowed_stage = min(8, current_stage + 1)
+    actionable_profiles = _actionable_profiles(
+        request.featureProfiles,
+        maximum_allowed_stage,
+    )
     recent_counts = Counter(
         item.trainingTemplateId
         for item in request.recentTrainings
@@ -89,7 +93,7 @@ def recommend_curriculum(
             continue
         candidate = _score_candidate(
             spec,
-            request.featureProfiles,
+            actionable_profiles,
             current_stage,
             recent_counts[spec.template_id],
         )
@@ -132,10 +136,10 @@ def recommend_curriculum(
         else:
             try:
                 selections = _llm_plan(
-                    request,
                     provider,
                     planning_candidates,
                     deterministic,
+                    actionable_profiles,
                     current_stage,
                     maximum_allowed_stage,
                 )
@@ -154,7 +158,7 @@ def recommend_curriculum(
             sequence=index,
             candidate=candidate,
             role=role,
-            profiles=request.featureProfiles,
+            profiles=actionable_profiles,
             rationale=rationale,
             reason_codes=reason_codes,
         )
@@ -223,6 +227,18 @@ def _data_sufficiency(profiles: list[CurriculumFeatureProfile]) -> DataSufficien
 
 def _has_sufficient_evidence(profile: CurriculumFeatureProfile) -> bool:
     return profile.confidence >= MIN_CONFIDENCE and profile.evidence_count >= MIN_EVIDENCE_COUNT
+
+
+def _actionable_profiles(
+    profiles: list[CurriculumFeatureProfile],
+    maximum_allowed_stage: int,
+) -> list[CurriculumFeatureProfile]:
+    return [
+        profile
+        for profile in profiles
+        if _has_sufficient_evidence(profile)
+        and _profile_stage(profile) <= maximum_allowed_stage
+    ]
 
 
 def _profile_stage(profile: CurriculumFeatureProfile) -> int:
@@ -368,12 +384,12 @@ def _deterministic_plan(
 
 
 def _llm_plan(
-    request: CurriculumRecommendRequest,
     provider: GMSTextProvider,
     scored: list[_ScoredCandidate],
     deterministic: list[
         tuple[_ScoredCandidate, RecommendationRole, str, tuple[RecommendationReasonCode, ...]]
     ],
+    actionable_profiles: list[CurriculumFeatureProfile],
     current_stage: int,
     maximum_allowed_stage: int,
 ) -> list[tuple[_ScoredCandidate, RecommendationRole, str, tuple[RecommendationReasonCode, ...]]]:
@@ -394,12 +410,16 @@ def _llm_plan(
             {
                 "featureCode": profile.feature_code,
                 "category": _profile_category(profile),
+                "profileStage": _profile_stage(profile),
                 "accuracyRate": profile.accuracy_rate,
                 "weaknessScore": profile.weakness_score,
                 "confidence": profile.confidence,
                 "evidenceCount": profile.evidence_count,
             }
-            for profile in request.featureProfiles
+            for profile in _select_llm_profiles(
+                actionable_profiles,
+                current_stage=current_stage,
+            )
         ],
         "eligibleCandidates": [
             {
@@ -437,6 +457,26 @@ def _llm_plan(
         )
         for selection in draft.selections
     ]
+
+
+def _select_llm_profiles(
+    profiles: list[CurriculumFeatureProfile],
+    *,
+    current_stage: int,
+    limit: int = 12,
+) -> list[CurriculumFeatureProfile]:
+    return sorted(
+        profiles,
+        key=lambda profile: (
+            _profile_stage(profile) == current_stage,
+            profile.accuracy_rate < MASTERY_ACCURACY
+            or profile.weakness_score >= WEAKNESS_THRESHOLD,
+            -abs(_profile_stage(profile) - current_stage),
+            _profile_priority(profile),
+            profile.feature_code,
+        ),
+        reverse=True,
+    )[:limit]
 
 
 def _validate_llm_draft(

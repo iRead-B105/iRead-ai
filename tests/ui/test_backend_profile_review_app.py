@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from streamlit.testing.v1 import AppTest
@@ -17,6 +18,12 @@ def test_backend_profile_review_app_renders_profile_and_two_api_actions() -> Non
     assert "교수자 분석" in labels
     assert "커리큘럼 추천" in labels
     assert "둘 다 실행" in labels
+    assert "긴 프로필" in labels
+    assert "최소 프로필" in labels
+    profile_editor = next(
+        area for area in app.text_area if area.label == "StudentFeatureProfileView 배열"
+    )
+    assert len(json.loads(profile_editor.value)) == 21
 
 
 def test_backend_profile_review_app_validates_anonymous_backend_sample() -> None:
