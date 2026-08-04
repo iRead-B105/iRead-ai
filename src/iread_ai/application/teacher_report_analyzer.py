@@ -183,13 +183,17 @@ class TeacherReportAnalyzer:
             return None
         label = _safe_subject(profile)
         accuracy = _percent(profile.accuracy_rate)
+        profile_observation = _persistent_profile_observation(profile)
         return TeacherReportFact(
             evidence_id=_fact_id("persistent", profile.feature_code),
             category="persistent",
             subject=label,
             text=(
-                f"{label}은 정확도 {accuracy}%이며 누적 근거 {profile.evidence_count}건에서 "
-                "어려움이 반복되어, 다음 회기에서도 지속 관찰이 필요합니다."
+                f"{label}은 정확도 {accuracy}%, 종합 어려움 지표 "
+                f"{_percent(profile.weakness_score)}%이며 누적 근거 "
+                f"{profile.evidence_count}건에서 어려움이 반복되었습니다. "
+                f"{profile_observation} "
+                "다음 회기에서도 지속 관찰이 필요합니다."
             ),
             direction="persistent",
             priority=profile.weakness_score * profile.confidence,
@@ -393,6 +397,27 @@ def _percent(value: float) -> int:
 
 def _number(value: float) -> str:
     return f"{value:.1f}".rstrip("0").rstrip(".")
+
+
+def _persistent_profile_observation(profile: TeacherReportFeatureProfile) -> str:
+    details: list[str] = []
+    if profile.avg_pronunciation_score is not None:
+        details.append(f"평균 발음 점수 {_number(profile.avg_pronunciation_score)}점")
+    if profile.pronunciation_error_rate is not None:
+        details.append(f"발음 오류율 {_percent(profile.pronunciation_error_rate)}%")
+    if profile.avg_fixation_duration_ms is not None:
+        details.append(f"평균 고정 시간 {profile.avg_fixation_duration_ms}ms")
+    if profile.avg_fixation_count is not None:
+        details.append(f"평균 고정 횟수 {_number(profile.avg_fixation_count)}회")
+    if profile.avg_regression_count is not None:
+        details.append(f"평균 회귀 {_number(profile.avg_regression_count)}회")
+    if profile.skip_rate is not None:
+        details.append(f"건너뜀 비율 {_percent(profile.skip_rate)}%")
+    if profile.avg_reading_time_ms is not None:
+        details.append(f"평균 읽기 시간 {profile.avg_reading_time_ms}ms")
+    if not details:
+        return "누적 프로필에는 추가 세부 지표가 제공되지 않았습니다."
+    return f"누적 프로필에서는 {', '.join(details)}가 함께 관찰되었습니다."
 
 
 def _change_rate(first: int, latest: int) -> float:

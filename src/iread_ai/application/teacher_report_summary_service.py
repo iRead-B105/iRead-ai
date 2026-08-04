@@ -228,6 +228,10 @@ def _validate_text(text: str, cited: Sequence[TeacherReportFact]) -> None:
         raise ValueError("narrative reversed an improvement fact")
     if directions == {"improved"} and not source_numbers.issubset(rendered_numbers):
         raise ValueError("narrative omitted an improvement comparison value")
+    if directions & {"persistent", "effort"} and not source_numbers.issubset(
+        rendered_numbers
+    ):
+        raise ValueError("narrative omitted a persistent observation value")
     if directions & {"persistent", "effort"} and not (
         "지속 관찰" in text or "지속해서 살펴" in text
     ):

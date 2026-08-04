@@ -28,3 +28,40 @@ def test_backend_profile_review_app_validates_anonymous_backend_sample() -> None
 
     assert not app.exception
     assert any("두 AI 요청 계약이 모두 유효" in message.value for message in app.success)
+
+
+def test_backend_profile_review_app_shows_profile_to_curriculum_qa_flow() -> None:
+    app_path = Path(__file__).resolve().parents[2] / "backend_profile_review_app.py"
+    app = AppTest.from_file(str(app_path), default_timeout=15).run()
+    app.session_state.backend_curriculum_result = {
+        "request": {
+            "featureProfiles": [
+                {
+                    "featureCode": "SYLLABLE.COMPLEX_CODA",
+                    "accuracyRate": 0.42,
+                    "weaknessScore": 0.73,
+                    "evidenceCount": 15,
+                }
+            ],
+            "recentTrainings": [
+                {"trainingTemplateId": 22, "accuracy": 0.58, "daysAgo": 1}
+            ],
+        },
+        "response": {
+            "recommendations": [
+                {
+                    "trainingName": "받침 글자 만들기",
+                    "targetFeatureCodes": ["SYLLABLE.COMPLEX_CODA"],
+                }
+            ]
+        },
+        "elapsedMs": 20.0,
+    }
+
+    app = app.run()
+
+    assert not app.exception
+    assert any(item.value == "QA 확인 흐름" for item in app.subheader)
+    assert any(
+        "다음 훈련 1개에 반영" in message.value for message in app.success
+    )

@@ -214,6 +214,92 @@ def _render_curriculum_result(result: dict[str, Any]) -> None:
         st.json(body)
 
 
+def _render_qa_flow(
+    result: dict[str, Any],
+    feature_labels: dict[str, str],
+) -> None:
+    request = result["request"]
+    response = result["response"]
+    profiles = request.get("featureProfiles", [])
+    recent_trainings = request.get("recentTrainings", [])
+    recommendations = response.get("recommendations", [])
+    if not profiles or not recommendations:
+        return
+
+    weakest = max(
+        profiles,
+        key=lambda profile: (
+            profile.get("weaknessScore", 0),
+            -profile.get("accuracyRate", 0),
+        ),
+    )
+    weakest_code = weakest.get("featureCode", "-")
+    weakest_label = feature_labels.get(weakest_code, weakest_code)
+    targeted = [
+        item
+        for item in recommendations
+        if weakest_code in item.get("targetFeatureCodes", [])
+    ]
+    latest_training = min(
+        recent_trainings,
+        key=lambda training: training.get("daysAgo", 10**9),
+        default=None,
+    )
+
+    with st.container(border=True):
+        st.subheader("QA 확인 흐름")
+        st.caption(
+            "실제 제품에서는 Backend가 훈련 결과를 저장하고 아이 프로필을 갱신합니다. "
+            "이 화면은 갱신된 프로필 스냅샷이 다음 훈련 추천에 반영되는지를 확인합니다."
+        )
+        training_step, profile_step, recommendation_step = st.columns(
+            3,
+            border=True,
+            vertical_alignment="top",
+        )
+        with training_step:
+            st.markdown("**1. 훈련 결과 저장**")
+            if latest_training:
+                st.metric(
+                    "최근 훈련 정확도",
+                    f"{latest_training.get('accuracy', 0) * 100:.0f}%",
+                )
+                st.caption(
+                    f"훈련 ID {latest_training.get('trainingTemplateId', '-')} · "
+                    f"{latest_training.get('daysAgo', '-')}일 전"
+                )
+            else:
+                st.info("최근 훈련 이력이 없습니다.")
+        with profile_step:
+            st.markdown("**2. 아이 프로필 갱신**")
+            st.metric("가장 큰 약점", weakest_label)
+            st.caption(
+                f"정확도 {weakest.get('accuracyRate', 0) * 100:.0f}% · "
+                f"약점 점수 {weakest.get('weaknessScore', 0) * 100:.0f}% · "
+                f"근거 {weakest.get('evidenceCount', 0)}건"
+            )
+        with recommendation_step:
+            st.markdown("**3. 다음 훈련에 반영**")
+            st.metric(
+                "주요 약점 대상 훈련",
+                f"{len(targeted)}/{len(recommendations)}개",
+            )
+            for item in recommendations:
+                marker = "✓" if item in targeted else "·"
+                st.caption(f"{marker} {item.get('trainingName', '-')}")
+
+        if targeted:
+            st.success(
+                f"갱신된 주요 약점 ‘{weakest_label}’이 다음 훈련 "
+                f"{len(targeted)}개에 반영되었습니다."
+            )
+        else:
+            st.warning(
+                f"갱신된 주요 약점 ‘{weakest_label}’을 직접 대상으로 한 다음 훈련이 "
+                "없습니다. 추천 규칙을 확인하세요."
+            )
+
+
 _initialize_state()
 
 st.title("백엔드 프로필 AI 연동 검토")
@@ -366,6 +452,20 @@ elif validation:
 
 teacher_result = st.session_state.backend_teacher_result
 curriculum_result = st.session_state.backend_curriculum_result
+if curriculum_result and "error" not in curriculum_result:
+    try:
+        qa_feature_labels = _parse_json(
+            st.session_state.backend_feature_labels_editor,
+            label="특징 이름",
+            expected_type=dict,
+        )
+    except ValueError:
+        qa_feature_labels = {}
+    _render_qa_flow(
+        curriculum_result,
+        {str(key): str(value) for key, value in qa_feature_labels.items()},
+    )
+
 teacher_tab, curriculum_tab = st.tabs(["교수자 분석 결과", "커리큘럼 추천 결과"])
 with teacher_tab:
     if teacher_result and "error" not in teacher_result:

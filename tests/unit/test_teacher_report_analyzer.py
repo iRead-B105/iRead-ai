@@ -18,7 +18,16 @@ def test_analyzer_finds_improvement_persistent_difficulty_and_gaze_changes() -> 
     assert len(facts.improved) == 1
     assert "초성 ㄱ 읽기" in facts.improved[0].text
     assert "이전 60%에서 현재 82%로 22%p 상승" in facts.improved[0].text
-    assert any("받침 ㄴ 읽기" in fact.text for fact in facts.persistent)
+    persistent = next(fact for fact in facts.persistent if "받침 ㄴ 읽기" in fact.text)
+    assert "정확도 45%, 종합 어려움 지표 72%" in persistent.text
+    assert "누적 근거 15건" in persistent.text
+    assert "평균 발음 점수 61점" in persistent.text
+    assert "발음 오류율 38%" in persistent.text
+    assert "평균 고정 시간 1450ms" in persistent.text
+    assert "평균 고정 횟수 4회" in persistent.text
+    assert "평균 회귀 2.5회" in persistent.text
+    assert "건너뜀 비율 20%" in persistent.text
+    assert "평균 읽기 시간 3100ms" in persistent.text
     assert any("총 체류 시간이 5000ms에서 7000ms" in fact.text for fact in facts.training_gaze)
     assert any("역행 읽기 횟수가 4회에서 2회" in fact.text for fact in facts.training_gaze)
     assert facts.test_gaze[0].direction == "unavailable"
