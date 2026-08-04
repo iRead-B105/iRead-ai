@@ -16,9 +16,8 @@ from .generation_models import (
     TrainingSetRequest,
     TrainingSetResponse,
 )
-from .generation_service import generate_training
-from .lexicon.contracts import LexiconPaletteRequest, LexiconTargetFeature
-from .lexicon.service import LexiconPaletteService, LexiconUnavailableError
+from .generation_service import enrich_training_request_with_lexicon, generate_training
+from .lexicon.service import LexiconPaletteService
 from .personalization.analyzer import KoreanReadingAnalyzer
 from .providers import GMSTextProvider
 from .training_personalization import candidate_fit_rank, select_training_candidate
@@ -254,20 +253,22 @@ def generate_training_activity(
     analyzer: KoreanReadingAnalyzer | None = None,
 ) -> TrainingActivityResponse:
     spec = _required_spec(request.trainingType)
-    recommended_words = _recommended_words(request, lexicon_service)
-    candidate_request = TrainingCandidateRequest(
-        requestId=request.requestId,
-        schemaVersion=request.schemaVersion,
-        trainingType=request.trainingType,
-        count=5,
-        difficulty=request.difficulty,
-        targetFeatures=request.targetFeatures,
-        excludedFeatures=request.excludedFeatures,
-        additionalPrompt=request.additionalPrompt,
-        outputTemplate=output_template(request.trainingType),
-        useLexicon=request.useLexicon,
-        recommendedWords=recommended_words,
+    candidate_request = enrich_training_request_with_lexicon(
+        TrainingCandidateRequest(
+            requestId=request.requestId,
+            schemaVersion=request.schemaVersion,
+            trainingType=request.trainingType,
+            count=5,
+            difficulty=request.difficulty,
+            targetFeatures=request.targetFeatures,
+            excludedFeatures=request.excludedFeatures,
+            additionalPrompt=request.additionalPrompt,
+            outputTemplate=output_template(request.trainingType),
+            useLexicon=request.useLexicon,
+        ),
+        lexicon_service,
     )
+    recommended_words = candidate_request.recommendedWords
     generated = generate_training(candidate_request, provider)
     item, personalization = select_training_candidate(
         list(generated.value.data),
@@ -430,62 +431,6 @@ def _rationale(spec: TrainingReviewSpec, target_codes: list[str]) -> str:
     if target_codes:
         return f"{', '.join(target_codes)} 목표를 {spec.name} 활동으로 연습합니다."
     return f"현재 읽기 수준에 맞춰 {spec.name} 활동을 연습합니다."
-
-
-def _recommended_words(
-    request: TrainingActivityRequest,
-    lexicon_service: LexiconPaletteService | None,
-) -> list[str]:
-    if (
-        not request.useLexicon
-        or lexicon_service is None
-        or request.trainingType not in {
-            "DIFFICULT_WORD_PREVIEW",
-            "SENTENCE_READING",
-            "SHORT_PASSAGE_READING",
-            "SENTENCE_ASSEMBLY",
-            "FILL_IN_THE_BLANK",
-            "IMAGE_SENTENCE_MATCH",
-            "SENTENCE_REPEAT",
-            "PHRASE_READING",
-            "REPEATED_SENTENCE_READING",
-            "SHORT_STORY_READING",
-        }
-    ):
-        return []
-    target_codes = [feature.featureCode for feature in request.targetFeatures]
-    max_batchim_ratio = _max_batchim_ratio(request.difficulty, target_codes)
-    try:
-        response = lexicon_service.build_palette(
-            LexiconPaletteRequest(
-                requestId=f"{request.requestId}-lexicon",
-                targetFeatures=[
-                    LexiconTargetFeature(
-                        featureCode=feature.featureCode,
-                        weaknessScore=feature.weaknessScore,
-                        confidence=feature.confidence,
-                    )
-                    for feature in request.targetFeatures
-                ],
-                excludedFeatures=request.excludedFeatures,
-                minSyllables=1,
-                maxSyllables=min(request.difficulty + 1, 5),
-                maxBatchimRatio=max_batchim_ratio,
-                strictPronunciation=True,
-                requireTarget=bool(request.targetFeatures),
-                includeInflections=False,
-                limit=12,
-            )
-        )
-    except LexiconUnavailableError:
-        return []
-    return [item.surface for item in response.items[:12]]
-
-
-def _max_batchim_ratio(difficulty: int, target_codes: list[str]) -> float:
-    if any("CODA" in code or "BATCHIM" in code for code in target_codes):
-        return 1.0
-    return {1: 0.0, 2: 0.34, 3: 0.5, 4: 0.67, 5: 1.0}[difficulty]
 
 
 __all__ = [

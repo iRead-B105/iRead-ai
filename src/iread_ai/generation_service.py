@@ -15,12 +15,18 @@ from pydantic import ValidationError
 from .generation_models import (
     TrainingCandidateRequest,
     TrainingCandidateResponse,
+    TrainingTargetFeature,
 )
 from .lexicon.contracts import LexiconPaletteRequest, LexiconTargetFeature
 from .lexicon.service import LexiconPaletteService, LexiconUnavailableError
 from .mock_generators import generate_training_candidates as mock_training_candidates
 from .providers import GenerationProviderError, GMSTextProvider
 from .training_bank import default_basic_training_generator
+from .training_feature_compatibility import compatible_features
+from .training_language_quality import (
+    validate_complete_korean_sentence,
+    validate_image_sentence_answer,
+)
 from .training_length_policy import training_length_policy
 
 logger = logging.getLogger(__name__)
@@ -40,6 +46,31 @@ HYBRID_LLM_TYPES = frozenset(
     }
 )
 
+SEMANTIC_REVIEW_TYPES = frozenset(
+    {
+        "SHORT_PASSAGE_READING",
+        "FILL_IN_THE_BLANK",
+        "IMAGE_SENTENCE_MATCH",
+        "SHORT_STORY_READING",
+    }
+)
+
+LEXICON_RULE_TYPES = frozenset(
+    {
+        "WORD_INITIAL_CHOICE",
+        "SAME_INITIAL_WORD_CHOICE",
+        "WORD_FINAL_SOUND_CHOICE",
+        "SYLLABLE_BLEND",
+        "SYLLABLE_DELETE",
+        "WORD_READING",
+        "NONWORD_READING",
+        "WORD_CHAIN_READING",
+    }
+)
+
+_DEFAULT_PALETTE_KEY = "__DEFAULT__"
+_TRAINING_WORD_BLOCKLIST = frozenset({"새끼"})
+
 _UNSAFE_TERMS = (
     "자살",
     "죽여",
@@ -54,7 +85,7 @@ _UNSAFE_TERMS = (
 _FEATURE_GUIDES = {
     "PHONOLOGY.NASALIZATION": (
         "비음화: 받침의 대표음 ㄱ·ㄷ·ㅂ 뒤에 초성 ㄴ·ㅁ이 와서 "
-        "각각 ㅇ·ㄴ·ㅁ으로 발음되는 배열. 예: 국물, 앞니, 밥 먹기, 읽는."
+        "각각 ㅇ·ㄴ·ㅁ으로 발음되는 배열. 한 낱말 예: 국물, 앞니, 막내, 읽는."
     ),
     "SYLLABLE.COMPLEX_CODA": (
         "겹받침: 표기에 ㄳ·ㄵ·ㄶ·ㄺ·ㄻ·ㄼ·ㄽ·ㄾ·ㄿ·ㅀ·ㅄ 중 하나가 "
@@ -65,7 +96,9 @@ _FEATURE_GUIDES = {
 _HYBRID_TYPE_GUIDES = {
     "DIFFICULT_WORD_PREVIEW": (
         "아이 수준에 맞는 자연스러운 한 문장을 만들고, 문장에 실제로 포함된 어려운 "
-        "낱말을 골라 한글 음절 단위로 정확히 분해하세요."
+        "낱말을 골라 한글 음절 단위로 정확히 분해하세요. difficultWords의 word에는 "
+        "공백이나 문장부호가 없는 한 개의 한국어 낱말만 넣으세요. '밥 먹기'처럼 "
+        "띄어 쓴 구는 금지하며, 비음화 목표라면 '국물' 또는 '앞니' 같은 한 낱말을 쓰세요."
     ),
     "SENTENCE_READING": (
         "한 가지 분명한 사건을 담은 자연스러운 문장을 만들고 tokens에는 문장을 읽는 "
@@ -73,7 +106,8 @@ _HYBRID_TYPE_GUIDES = {
     ),
     "SHORT_PASSAGE_READING": (
         "같은 사건이 인과관계로 이어지는 2~3문장의 짧은 글을 만드세요. 각 문장은 "
-        "초등학생이 소리 내어 읽기 자연스러워야 합니다."
+        "초등학생이 소리 내어 읽기 자연스러워야 합니다. 한 후보 안에서 주인공과 "
+        "핵심 사건을 바꾸지 말고, 추천 단어를 넣으려고 서로 무관한 문장을 나열하지 마세요."
     ),
     "SENTENCE_ASSEMBLY": (
         "자연스러운 완성 문장을 먼저 만든 뒤 어절 카드로 분해하세요. cards는 섞고, "
@@ -106,7 +140,9 @@ _HYBRID_TYPE_GUIDES = {
         "대사를 섞어 정확히 3~4문장으로 쓰세요. 각 문장의 speaker는 NARRATOR 또는 "
         "CHARACTER만 사용하고, "
         "emotion은 NEUTRAL, HAPPY, SAD, ANGRY, SURPRISED, EXCITED, CALM 중 하나만 "
-        "사용하세요. 한국어 설명이나 다른 값을 넣지 마세요."
+        "사용하세요. 한국어 설명이나 다른 값을 넣지 마세요. CHARACTER 문장은 반드시 "
+        "등장인물이 직접 말한 짧은 대사를 큰따옴표로 감싸고, 서술문을 CHARACTER로 "
+        "표시하지 마세요."
     ),
 }
 
@@ -124,12 +160,72 @@ def enrich_training_request_with_lexicon(
 ) -> TrainingCandidateRequest:
     if (
         not request.useLexicon
-        or request.recommendedWords
         or lexicon_service is None
-        or request.trainingType not in HYBRID_LLM_TYPES
+        or request.trainingType not in HYBRID_LLM_TYPES | LEXICON_RULE_TYPES
     ):
         return request
-    target_codes = [feature.featureCode for feature in request.targetFeatures]
+    if request.trainingType in LEXICON_RULE_TYPES:
+        palettes = _build_target_word_palettes(request, lexicon_service)
+        words = list(
+            dict.fromkeys(
+                word
+                for palette_words in palettes.values()
+                for word in palette_words
+            )
+        )[:40]
+        if not words:
+            return request
+        return request.model_copy(
+            update={
+                "recommendedWords": words,
+                "recommendedWordsByFeature": palettes,
+            }
+        )
+
+    if request.recommendedWords:
+        return request
+    palette = _build_word_palette(request, lexicon_service, request.targetFeatures, "lexicon")
+    if not palette:
+        return request
+    return request.model_copy(update={"recommendedWords": palette})
+
+
+def _build_target_word_palettes(
+    request: TrainingCandidateRequest,
+    lexicon_service: LexiconPaletteService,
+) -> dict[str, list[str]]:
+    targets = compatible_features(request.trainingType, request.targetFeatures)
+    if not targets:
+        words = _build_word_palette(request, lexicon_service, [], "lexicon-default")
+        return {_DEFAULT_PALETTE_KEY: words} if words else {}
+
+    result: dict[str, list[str]] = {}
+    for index, target in enumerate(targets):
+        words = _build_word_palette(
+            request,
+            lexicon_service,
+            [target],
+            f"lexicon-target-{index + 1}",
+        )
+        if words:
+            result[target.featureCode] = words
+    return result
+
+
+def _build_word_palette(
+    request: TrainingCandidateRequest,
+    lexicon_service: LexiconPaletteService,
+    targets: list[TrainingTargetFeature],
+    request_suffix: str,
+) -> list[str]:
+    target_codes = [feature.featureCode for feature in targets]
+    exact_syllable_count = _requested_word_syllable_count(target_codes)
+    lexicon_targets = [
+        feature
+        for feature in targets
+        if feature.featureCode.startswith(("GRAPHEME.", "PHONOLOGY.", "PHONO_"))
+        or feature.featureCode == "SYLLABLE.COMPLEX_CODA"
+    ]
     max_batchim_ratio = (
         1.0
         if any("CODA" in code or "BATCHIM" in code for code in target_codes)
@@ -138,31 +234,75 @@ def enrich_training_request_with_lexicon(
     try:
         palette = lexicon_service.build_palette(
             LexiconPaletteRequest(
-                requestId=f"{request.requestId}-lexicon",
+                requestId=f"{request.requestId}-{request_suffix}",
                 targetFeatures=[
                     LexiconTargetFeature(
                         featureCode=feature.featureCode,
                         weaknessScore=feature.weaknessScore,
                         confidence=feature.confidence,
                     )
-                    for feature in request.targetFeatures
+                    for feature in lexicon_targets
                 ],
                 excludedFeatures=request.excludedFeatures,
-                minSyllables=1,
-                maxSyllables=min(request.difficulty + 1, 5),
+                partsOfSpeech=["명사"] if request.trainingType in LEXICON_RULE_TYPES else [],
+                minSyllables=exact_syllable_count or 1,
+                maxSyllables=exact_syllable_count or min(request.difficulty + 1, 5),
                 maxBatchimRatio=max_batchim_ratio,
                 strictPronunciation=True,
-                requireTarget=bool(request.targetFeatures),
+                requireTarget=bool(lexicon_targets),
                 includeInflections=False,
-                limit=12,
+                limit=20,
             )
         )
     except LexiconUnavailableError:
-        return request
-    words = [item.surface for item in palette.items[:12]]
-    if not words:
-        return request
-    return request.model_copy(update={"recommendedWords": words})
+        return []
+    words: list[str] = []
+    for item in palette.items:
+        word = item.surface.strip()
+        if not re.fullmatch(r"[가-힣]+", word):
+            continue
+        if word in _TRAINING_WORD_BLOCKLIST:
+            continue
+        if not _word_matches_training_position(request.trainingType, word, target_codes):
+            continue
+        if request.trainingType == "WORD_FINAL_SOUND_CHOICE" and (
+            item.pronunciationStatus != "NO_CHANGE"
+        ):
+            continue
+        if word not in words:
+            words.append(word)
+        if len(words) == 20:
+            break
+    return words
+
+
+def _requested_word_syllable_count(target_codes: list[str]) -> int | None:
+    for code in target_codes:
+        match = re.fullmatch(r"WORD\.SYLLABLE_COUNT\.([1-5])", code)
+        if match:
+            return int(match.group(1))
+    return None
+
+
+def _word_matches_training_position(
+    training_type: str,
+    word: str,
+    target_codes: list[str],
+) -> bool:
+    from .personalization.hangul import decompose_text
+
+    syllables = decompose_text(word)
+    if not syllables:
+        return False
+    for code in target_codes:
+        expected = code.rsplit(".", 1)[-1]
+        if training_type in {"WORD_INITIAL_CHOICE", "SAME_INITIAL_WORD_CHOICE"}:
+            if code.startswith("GRAPHEME.ONSET.") and syllables[0].onset != expected:
+                return False
+        if training_type == "WORD_FINAL_SOUND_CHOICE":
+            if code.startswith("GRAPHEME.CODA.") and syllables[-1].coda != expected:
+                return False
+    return True
 
 
 def generate_training(
@@ -178,15 +318,28 @@ def generate_training(
         )
         rule_based = None
     if rule_based is not None:
-        return ProviderResult(rule_based, "rule-db", False)
+        return ProviderResult(
+            _validated_training_response(request, rule_based.model_dump(mode="json")),
+            "rule-db",
+            False,
+        )
     if provider is None:
         return ProviderResult(
-            mock_training_candidates(request),
+            _validated_training_response(
+                request,
+                mock_training_candidates(request).model_dump(mode="json"),
+            ),
             "curated-fallback",
             False,
         )
 
-    def generate() -> TrainingCandidateResponse:
+    def generate(validation_feedback: str | None = None) -> TrainingCandidateResponse:
+        prompt_document = _training_prompt_document(request)
+        if validation_feedback:
+            prompt_document["previousValidationFailure"] = validation_feedback
+            prompt_document["generationRules"].append(
+                "이전 응답의 검증 실패 원인을 고쳐 완전히 새로운 후보 5개를 만드세요."
+            )
         document = provider.generate_json(
             schema_name="iread_training_candidates",
             schema=_training_response_schema(request),
@@ -196,19 +349,11 @@ def generate_training(
                 "targetFeatures를 우선 연습하고 excludedFeatures는 포함하지 않습니다. "
                 "정답과 선택지는 서로 모순되거나 중복되면 안 됩니다."
             ),
-            user_prompt=json.dumps(
-                _training_prompt_document(request),
-                ensure_ascii=False,
-                sort_keys=True,
-            ),
+            user_prompt=json.dumps(prompt_document, ensure_ascii=False, sort_keys=True),
         )
-        result = TrainingCandidateResponse.model_validate(document)
-        if result.type != request.trainingType or len(result.data) != request.count:
-            raise ValueError("training response type or count did not match request")
-        _normalize_mechanical_fields(request, result)
-        _validate_output_template(request, result)
-        _validate_hybrid_semantics(request, result)
-        _reject_unsafe(result.model_dump_json())
+        result = _validated_training_response(request, document)
+        if request.trainingType in SEMANTIC_REVIEW_TYPES:
+            result = _review_training_response(request, result, provider)
         return result
 
     def generate_with_one_validation_retry() -> TrainingCandidateResponse:
@@ -220,13 +365,67 @@ def generate_training(
                 type(exception).__name__,
                 exception,
             )
-            return generate()
+            feedback = f"{type(exception).__name__}: {exception}"
+            return generate(feedback)
 
     return _with_fallback(
         generate_with_one_validation_retry,
-        lambda: mock_training_candidates(request),
+        lambda: _validated_training_response(
+            request,
+            mock_training_candidates(request).model_dump(mode="json"),
+        ),
         f"gms:{provider.model}",
     )
+
+
+def _validated_training_response(
+    request: TrainingCandidateRequest,
+    document: dict[str, Any],
+) -> TrainingCandidateResponse:
+    result = TrainingCandidateResponse.model_validate(document)
+    if result.type != request.trainingType or len(result.data) != request.count:
+        raise ValueError("training response type or count did not match request")
+    _normalize_mechanical_fields(request, result)
+    _validate_output_template(request, result)
+    _validate_hybrid_semantics(request, result)
+    _validate_candidate_uniqueness(result)
+    _reject_unsafe(result.model_dump_json())
+    return result
+
+
+def _review_training_response(
+    request: TrainingCandidateRequest,
+    draft: TrainingCandidateResponse,
+    provider: GMSTextProvider,
+) -> TrainingCandidateResponse:
+    review_document = {
+        "task": "아동용 훈련 문항의 한국어 문법과 의미 관계를 검토하고 최소한으로 고치기",
+        "rules": [
+            "JSON 구조, 문항 수, 목표 특징, 난이도와 정답 위치는 유지하세요.",
+            "어색한 조사, 잘못된 활용, 주어와 서술어 호응을 바로잡으세요.",
+            "짧은 글과 이야기의 문장들은 같은 사건의 원인, 행동, 결과 순서로 이어지게 하세요.",
+            "추천 단어를 모두 넣기 위해 주인공이나 소재를 바꾸지 말고, 문맥을 깨는 단어는 빼세요.",
+            "'수아는 국물이 먹고 싶었어요'처럼 목적어에 이/가를 붙이지 말고 "
+            "'수아는 국물을 먹고 싶었어요'처럼 조사와 서술어의 관계를 바로잡으세요.",
+            "SHORT_STORY_READING의 CHARACTER 문장은 큰따옴표 안의 직접 대사여야 합니다.",
+            "그림 문항은 imagePrompt와 정확히 일치하는 선택지가 answerIndex에 오게 하세요.",
+            "빈칸 문항은 정답만 문맥상 자연스럽고 오답은 분명히 틀리게 하세요.",
+            "원문에 없던 새 인물이나 새 사건을 불필요하게 추가하지 마세요.",
+            "설명 없이 수정된 JSON 객체만 출력하세요.",
+        ],
+        "requestPolicy": _training_prompt_document(request),
+        "draft": draft.model_dump(mode="json"),
+    }
+    document = provider.generate_json(
+        schema_name="iread_training_candidates_reviewed",
+        schema=_training_response_schema(request),
+        system_prompt=(
+            "당신은 초등 저학년 한국어 교재의 교정자입니다. 초안을 새로 창작하지 말고 "
+            "문법, 문맥, 정답 근거가 명확하도록 최소한으로 교정합니다."
+        ),
+        user_prompt=json.dumps(review_document, ensure_ascii=False, sort_keys=True),
+    )
+    return _validated_training_response(request, document)
 
 
 def _training_prompt_document(request: TrainingCandidateRequest) -> dict[str, Any]:
@@ -242,8 +441,19 @@ def _training_prompt_document(request: TrainingCandidateRequest) -> dict[str, An
         }
         for feature in request.targetFeatures
     ]
+    target_plan = _target_distribution(request)
+    document["targetDistribution"] = [
+        {
+            "dataIndex": index,
+            "featureCodes": [feature.featureCode for feature in features],
+        }
+        for index, features in enumerate(target_plan)
+    ]
     document["generationRules"] = [
-        "data의 모든 문항 각각에 모든 targetFeatures를 최소 한 번씩 포함하세요.",
+        "각 data 문항에는 targetDistribution의 같은 dataIndex에 배정된 목표만 "
+        "최소 한 번 포함하세요.",
+        "한 문항에 모든 targetFeatures를 억지로 동시에 넣지 마세요.",
+        "첫 번째 목표는 3문항, 두 번째 목표는 2문항에 분산하세요.",
         "featureCode 문자열을 문장에 그대로 쓰지 말고 실제 한국어 예시로 구현하세요.",
         "다섯 문항은 서로 다른 자연스러운 문장으로 만드세요.",
     ]
@@ -287,6 +497,14 @@ def _training_prompt_document(request: TrainingCandidateRequest) -> dict[str, An
             )
     if request.trainingType in _HYBRID_TYPE_GUIDES:
         document["trainingTypeGuide"] = _HYBRID_TYPE_GUIDES[request.trainingType]
+    if request.trainingType == "NONWORD_READING":
+        document["generationRules"].extend(
+            (
+                "비단어 읽기에서는 실제 낱말과 발음 가능한 무의미 낱말을 모두 포함하세요.",
+                "무의미 낱말은 한국어 초성·중성·종성 결합 규칙을 따르되 "
+                "사전에 있는 낱말을 그대로 쓰지 마세요.",
+            )
+        )
     if request.trainingType == "SHORT_STORY_READING":
         document["storyQualityRules"] = [
             "첫 문장에서 인물이 원하는 것 또는 작은 문제를 제시하세요.",
@@ -326,6 +544,19 @@ def _training_prompt_document(request: TrainingCandidateRequest) -> dict[str, An
             "completedSentence": "answerOrder 순서대로 cards를 이어 만든 자연스러운 완성 문장",
         }
     return document
+
+
+def _target_distribution(
+    request: TrainingCandidateRequest,
+) -> list[list[TrainingTargetFeature]]:
+    targets = request.targetFeatures
+    if len(targets) <= 1:
+        return [targets for _ in range(request.count)]
+    primary_count = (request.count + 1) // 2
+    return [
+        [targets[0] if index < primary_count else targets[1]]
+        for index in range(request.count)
+    ]
 
 
 def _training_response_schema(request: TrainingCandidateRequest) -> dict[str, Any]:
@@ -449,27 +680,47 @@ def _validate_hybrid_semantics(
             if not words or any(
                 str(entry.get("word", "")) not in sentence
                 or "".join(entry.get("syllables", [])) != entry.get("word")
+                or not re.fullmatch(r"[가-힣]+", str(entry.get("word", "")))
+                or any(
+                    not re.fullmatch(r"[가-힣]", str(syllable))
+                    for syllable in entry.get("syllables", [])
+                )
                 for entry in words
             ):
-                raise ValueError("difficult word preview was inconsistent")
+                raise ValueError(
+                    "difficultWords must contain one Korean word without spaces, "
+                    "must occur in the sentence, and syllables must reconstruct it"
+                )
+            validate_complete_korean_sentence(sentence)
         elif training_type == "SENTENCE_READING":
-            sentence = _compact(str(item.get("sentence", "")))
+            raw_sentence = str(item.get("sentence", ""))
+            sentence = _compact(raw_sentence)
             tokens = _compact("".join(item.get("tokens", [])))
             if sentence != tokens:
                 raise ValueError("sentence tokens did not reconstruct the sentence")
+            validate_complete_korean_sentence(raw_sentence)
         elif training_type == "SHORT_PASSAGE_READING":
-            if not 2 <= len(item.get("sentences", [])) <= 3:
+            sentences = item.get("sentences", [])
+            if not 2 <= len(sentences) <= 3:
                 raise ValueError("short passage must contain two or three sentences")
+            if len(set(sentences)) != len(sentences):
+                raise ValueError("short passage sentences must not be duplicated")
+            for sentence in sentences:
+                validate_complete_korean_sentence(str(sentence))
         elif training_type == "SENTENCE_ASSEMBLY":
             cards = item.get("cards", [])
             order = item.get("answerOrder", [])
+            if not 2 <= len(cards) <= 6 or any(not str(card).strip() for card in cards):
+                raise ValueError("sentence assembly must contain two to six non-empty cards")
             if sorted(order) != list(range(len(cards))):
                 raise ValueError("answerOrder was not a card permutation")
             if len(cards) > 1 and order == list(range(len(cards))):
                 raise ValueError("sentence cards were not shuffled")
             rebuilt = _compact(" ".join(cards[index] for index in order))
-            if rebuilt != _compact(str(item.get("completedSentence", ""))):
+            completed = str(item.get("completedSentence", ""))
+            if rebuilt != _compact(completed):
                 raise ValueError("sentence cards did not reconstruct the sentence")
+            validate_complete_korean_sentence(completed)
         elif training_type == "FILL_IN_THE_BLANK":
             sentence = str(item.get("sentence", ""))
             if sentence.count("{{blank}}") != 1:
@@ -480,6 +731,8 @@ def _validate_hybrid_semantics(
                 raise ValueError("fill-in blank must be followed by a Korean particle")
             choices = item.get("choices", [])
             answer_index = int(item.get("answerIndex", -1))
+            if len(choices) != 3 or len(set(choices)) != len(choices):
+                raise ValueError("fill-in choices must contain three unique answers")
             if choices and answer_index >= 0:
                 completed = sentence.replace("{{blank}}", str(choices[answer_index]))
                 if _compact(completed) != _compact(str(item.get("completedSentence", ""))):
@@ -487,20 +740,38 @@ def _validate_hybrid_semantics(
                 answers = [*choices, *item.get("acceptedAnswers", [])]
                 if any(not _particle_agrees(sentence, str(answer)) for answer in answers):
                     raise ValueError("blank answer did not agree with its Korean particle")
+                if str(choices[answer_index]) not in item.get("acceptedAnswers", []):
+                    raise ValueError("blank correct choice must be an accepted answer")
+                validate_complete_korean_sentence(completed)
         elif training_type == "IMAGE_SENTENCE_MATCH":
-            if len(item.get("choices", [])) != 3:
+            choices = item.get("choices", [])
+            if len(choices) != 3:
                 raise ValueError("image sentence match must contain three choices")
+            if len(set(choices)) != len(choices):
+                raise ValueError("image sentence choices must be unique")
+            for sentence in choices:
+                validate_complete_korean_sentence(str(sentence))
+            validate_image_sentence_answer(
+                str(item.get("imagePrompt", "")),
+                [str(choice) for choice in choices],
+                int(item.get("answerIndex", -1)),
+            )
         elif training_type == "SENTENCE_REPEAT":
             if item.get("emotion") not in {"NEUTRAL", "HAPPY", "SAD", "ANGRY", "EXCITED", "CALM"}:
                 raise ValueError("sentence emotion was invalid")
+            validate_complete_korean_sentence(str(item.get("sentence", "")))
         elif training_type == "PHRASE_READING":
-            if _compact("".join(item.get("phrases", []))) != _compact(
-                str(item.get("sentence", ""))
-            ):
+            sentence = str(item.get("sentence", ""))
+            phrases = item.get("phrases", [])
+            if not 2 <= len(phrases) <= 4 or any(not str(phrase).strip() for phrase in phrases):
+                raise ValueError("phrase reading must contain two to four non-empty phrases")
+            if _compact("".join(phrases)) != _compact(sentence):
                 raise ValueError("phrases did not reconstruct the sentence")
+            validate_complete_korean_sentence(sentence)
         elif training_type == "REPEATED_SENTENCE_READING":
             if not 2 <= int(item.get("repeatCount", 0)) <= 4:
                 raise ValueError("repeatCount was outside the supported range")
+            validate_complete_korean_sentence(str(item.get("sentence", "")))
         elif training_type == "SHORT_STORY_READING":
             lines = item.get("sentences", [])
             if not 3 <= len(lines) <= 4:
@@ -512,6 +783,32 @@ def _validate_hybrid_semantics(
                 for line in lines
             ):
                 raise ValueError("short story speaker or emotion was invalid")
+            texts = [str(line.get("text", "")) for line in lines]
+            if len(set(texts)) != len(texts):
+                raise ValueError("short story sentences must not be duplicated")
+            character_lines = [
+                str(line.get("text", ""))
+                for line in lines
+                if line.get("speaker") == "CHARACTER"
+            ]
+            if not character_lines or any(
+                re.search(r"[“\"][^”\"]+[.!?]s*[”\"]", text) is None
+                for text in character_lines
+            ):
+                raise ValueError(
+                    "short story must contain direct quoted dialogue for CHARACTER lines"
+                )
+            for text in texts:
+                validate_complete_korean_sentence(text)
+
+
+def _validate_candidate_uniqueness(response: TrainingCandidateResponse) -> None:
+    canonical_candidates = {
+        json.dumps(item, ensure_ascii=False, sort_keys=True)
+        for item in response.data
+    }
+    if len(canonical_candidates) != len(response.data):
+        raise ValueError("training candidates must not be duplicated")
 
 
 def _validate_answer_index(item: dict[str, Any]) -> None:

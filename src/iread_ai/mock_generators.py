@@ -346,7 +346,7 @@ def _candidate(training_type: str, index: int) -> dict[str, Any]:
                 },
                 {
                     "speaker": "CHARACTER",
-                    "text": "안에는 무엇이 있을까? 하고 물었어요.",
+                    "text": "“안에는 무엇이 있을까?”",
                     "emotion": "SURPRISED",
                 },
                 {

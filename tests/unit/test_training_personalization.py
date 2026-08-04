@@ -196,3 +196,33 @@ def test_length_pass_has_priority_over_a_higher_raw_score() -> None:
     assert evidence.candidates[0].lengthStatus == "TOO_LONG"
     assert evidence.candidates[1].lengthStatus == "PASS"
     assert selected["title"] == "읽기 좋은 글"
+
+
+def test_word_reading_prefers_balanced_multi_target_load() -> None:
+    overloaded = {
+        "readingOrder": "SEQUENTIAL",
+        "words": ["새끼", "꼬치", "어깨", "아까"],
+    }
+    balanced = {
+        "readingOrder": "SEQUENTIAL",
+        "words": ["꼬치", "토끼", "나무", "바다"],
+    }
+
+    selected, evidence = select_training_candidate(
+        [overloaded, balanced],
+        target_features=["GRAPHEME.ONSET.TENSE.ㄲ", "WORD.SYLLABLE_COUNT.2"],
+        excluded_features=[],
+        recommended_words=["새끼", "꼬치", "어깨", "아까", "토끼", "나무", "바다"],
+        analyzer=None,
+        lexicon_applied=True,
+        training_type="WORD_READING",
+        difficulty=2,
+    )
+
+    assert selected == balanced
+    assert evidence.candidates[0].targetLoadStatus == "EXCESSIVE"
+    assert evidence.candidates[1].targetLoadStatus == "PASS"
+    assert evidence.candidates[1].targetOccurrences == {
+        "GRAPHEME.ONSET.TENSE.ㄲ": 2,
+        "WORD.SYLLABLE_COUNT.2": 4,
+    }

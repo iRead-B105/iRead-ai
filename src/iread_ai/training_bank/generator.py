@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from collections.abc import Callable, Iterable
 
 from iread_ai.generation_models import TrainingCandidateRequest, TrainingCandidateResponse
 from iread_ai.personalization.hangul import COMPLEX_CODA_PARTS
+from iread_ai.training_feature_compatibility import compatible_features
 
 from .models import LearningUnit
 from .repository import SQLiteLearningUnitRepository
+from .seed import UnitSeed, unit_features, unit_parts
 
 RULE_BASED_TYPES = frozenset(
     {
@@ -147,24 +150,98 @@ class RuleBasedBasicTrainingGenerator:
     ) -> TrainingCandidateResponse | None:
         if request.trainingType not in RULE_BASED_TYPES:
             return None
-        units = self._repository.find_all_active()
+        units = (
+            *self._lexicon_word_units(request),
+            *self._repository.find_all_active(),
+        )
         variant = int.from_bytes(
             hashlib.sha256(request.requestId.encode("utf-8")).digest()[:2],
             "big",
         )
         candidates: list[dict[str, object]] = []
         canonical: set[str] = set()
-        for attempt in range(request.count * 80):
-            candidate = self._candidate(request, units, variant + attempt)
-            if candidate is None:
-                return None
-            signature = repr(candidate)
-            if signature not in canonical:
+        for slot in range(request.count):
+            slot_request = request.model_copy(
+                update={"targetFeatures": self._targets_for_slot(request, slot)}
+            )
+            for attempt in range(80):
+                candidate = self._candidate(
+                    slot_request,
+                    units,
+                    variant + (slot * 80) + attempt,
+                )
+                if candidate is None:
+                    return None
+                signature = repr(candidate)
+                if signature in canonical:
+                    continue
                 canonical.add(signature)
                 candidates.append(candidate)
-            if len(candidates) == request.count:
-                return TrainingCandidateResponse(type=request.trainingType, data=candidates)
-        return None
+                break
+            else:
+                return None
+        return TrainingCandidateResponse(type=request.trainingType, data=candidates)
+
+    @staticmethod
+    def _lexicon_word_units(
+        request: TrainingCandidateRequest,
+    ) -> tuple[LearningUnit, ...]:
+        features_by_surface: dict[str, set[str]] = {}
+        ordered_surfaces: list[str] = []
+        for feature_code, words in request.recommendedWordsByFeature.items():
+            for word in words:
+                surface = word.strip()
+                if re.fullmatch(r"[가-힣]+", surface) is None:
+                    continue
+                if surface not in features_by_surface:
+                    features_by_surface[surface] = set()
+                    ordered_surfaces.append(surface)
+                if feature_code != "__DEFAULT__":
+                    features_by_surface[surface].add(feature_code)
+
+        units: list[LearningUnit] = []
+        for surface in ordered_surfaces:
+            seed = UnitSeed(
+                unit_type="WORD",
+                surface=surface,
+                spoken_text=surface,
+                pronunciation=surface,
+                difficulty=request.difficulty,
+                familiarity=10,
+            )
+            onset, vowel, coda = unit_parts(seed)
+            features = set(unit_features(seed)) | features_by_surface[surface]
+            units.append(
+                LearningUnit(
+                    id=-(len(units) + 1),
+                    unit_type="WORD",
+                    surface=surface,
+                    spoken_text=surface,
+                    pronunciation=surface,
+                    onset=onset,
+                    vowel=vowel,
+                    coda=coda,
+                    difficulty=request.difficulty,
+                    familiarity=10,
+                    trace_asset_key=None,
+                    feature_codes=frozenset(features),
+                    confusion_ids=(),
+                )
+            )
+        return tuple(units)
+
+    @staticmethod
+    def _targets_for_slot(
+        request: TrainingCandidateRequest,
+        slot: int,
+    ) -> list:
+        targets = compatible_features(request.trainingType, request.targetFeatures)
+        if request.trainingType in {"WORD_READING", "WORD_CHAIN_READING"}:
+            return targets
+        if len(targets) <= 1:
+            return targets
+        primary_count = (request.count + 1) // 2
+        return [targets[0] if slot < primary_count else targets[1]]
 
     def _candidate(
         self,
@@ -173,6 +250,14 @@ class RuleBasedBasicTrainingGenerator:
         variant: int,
     ) -> dict[str, object] | None:
         training_type = request.trainingType
+        palette_candidate = self._word_palette_candidate(
+            request,
+            training_type,
+            variant,
+            units,
+        )
+        if palette_candidate is not None:
+            return palette_candidate
         eligible = self._eligible(request, units, training_type)
         if not eligible:
             return None
@@ -208,11 +293,12 @@ class RuleBasedBasicTrainingGenerator:
             )
         if training_type == "SAME_INITIAL_WORD_CHOICE":
             word_options = [unit for unit in units if unit.unit_type == "WORD"]
+            answer_options = [unit for unit in word_options if unit.id < 0] or word_options
             correct_word = next(
                 (
                     unit
-                    for unit in self._rotate(word_options, variant)
-                    if unit.onset == correct.onset
+                    for unit in self._rotate(answer_options, variant)
+                    if unit.onset == correct.onset and unit.surface != correct.surface
                 ),
                 None,
             )
@@ -337,7 +423,7 @@ class RuleBasedBasicTrainingGenerator:
                 correct,
                 [unit for unit in units if unit.unit_type == "WORD"],
                 variant,
-                3,
+                4,
             )
             return {"readingOrder": "SEQUENTIAL", "words": words}
         if training_type == "NONWORD_READING":
@@ -363,6 +449,124 @@ class RuleBasedBasicTrainingGenerator:
             )
             return {"words": words, "requiredOrder": "SEQUENTIAL"}
         return None
+
+    def _word_palette_candidate(
+        self,
+        request: TrainingCandidateRequest,
+        training_type: str,
+        variant: int,
+        units: tuple[LearningUnit, ...],
+    ) -> dict[str, object] | None:
+        if training_type not in {"WORD_READING", "WORD_CHAIN_READING"}:
+            return None
+        feature_codes = [feature.featureCode for feature in request.targetFeatures]
+        if not feature_codes:
+            feature_codes = ["__DEFAULT__"]
+        palettes = {
+            feature_code: list(
+                dict.fromkeys(
+                    word.strip()
+                    for word in request.recommendedWordsByFeature.get(feature_code, [])
+                    if re.fullmatch(r"[가-힣]+", word.strip())
+                )
+            )
+            for feature_code in feature_codes
+        }
+        syllable_count = next(
+            (
+                int(feature_code.rsplit(".", 1)[-1])
+                for feature_code in feature_codes
+                if feature_code.startswith("WORD.SYLLABLE_COUNT.")
+            ),
+            None,
+        )
+
+        def allowed(word: str) -> bool:
+            return syllable_count is None or len(word) == syllable_count
+
+        curated_units = [
+            unit
+            for unit in units
+            if unit.id > 0
+            and unit.unit_type == "WORD"
+            and unit.familiarity >= 4
+            and unit.difficulty <= request.difficulty
+            and allowed(unit.surface)
+            and not any(
+                unit.matches_feature(code) for code in request.excludedFeatures
+            )
+        ]
+        curated_surfaces = {unit.surface for unit in curated_units}
+
+        words = list(
+            dict.fromkeys(
+                [
+                    *(
+                        word
+                        for feature_words in palettes.values()
+                        for word in feature_words
+                        if allowed(word)
+                    ),
+                    *(
+                        word.strip()
+                        for word in request.recommendedWords
+                        if re.fullmatch(r"[가-힣]+", word.strip()) and allowed(word.strip())
+                    ),
+                ]
+            )
+        )
+        if len(words) < 4:
+            return None
+        selected: list[str] = []
+        practiced_features = [
+            feature_code
+            for feature_code in feature_codes
+            if feature_code != "__DEFAULT__"
+            and not feature_code.startswith("WORD.SYLLABLE_COUNT.")
+        ]
+        per_feature = 2 if len(practiced_features) == 1 and len(feature_codes) > 1 else 4
+        if len(practiced_features) > 1:
+            per_feature = 2
+        for feature_code in practiced_features:
+            feature_words = [word for word in palettes[feature_code] if allowed(word)]
+            if not feature_words:
+                return None
+            preferred_words = [word for word in feature_words if word in curated_surfaces]
+            fallback_words = [word for word in feature_words if word not in curated_surfaces]
+            ordered_feature_words = [
+                *self._rotate(preferred_words, variant),
+                *self._rotate(fallback_words, variant),
+            ]
+            for word in ordered_feature_words:
+                if word not in selected:
+                    selected.append(word)
+                if sum(candidate in feature_words for candidate in selected) >= per_feature:
+                    break
+        contrast_words = (
+            [
+                unit.surface
+                for unit in curated_units
+                if not any(unit.matches_feature(code) for code in practiced_features)
+            ]
+            if practiced_features
+            else []
+        )
+        for word in self._rotate(contrast_words, variant):
+            if word not in selected:
+                selected.append(word)
+            if len(selected) == 4:
+                break
+        for word in self._rotate(words, variant):
+            if word not in selected:
+                selected.append(word)
+            if len(selected) == 4:
+                break
+        selected = selected[:4]
+        if len(selected) < 4:
+            return None
+        if training_type == "WORD_READING":
+            return {"readingOrder": "SEQUENTIAL", "words": selected}
+        return {"words": selected, "requiredOrder": "SEQUENTIAL"}
 
     def _eligible(
         self,
@@ -408,12 +612,34 @@ class RuleBasedBasicTrainingGenerator:
             and unit.difficulty <= difficulty_limit
             and not any(unit.matches_feature(code) for code in request.excludedFeatures)
             and (not targets or all(unit.matches_feature(code) for code in targets))
+            and self._target_position_matches(training_type, unit, targets)
         ]
         result = [unit for unit in result if self._required_shape(training_type, unit)]
+        feature_code = targets[0] if targets else "__DEFAULT__"
+        if request.recommendedWordsByFeature.get(feature_code):
+            lexicon_result = [unit for unit in result if unit.id < 0]
+            if lexicon_result:
+                result = lexicon_result
         ordered = sorted(result, key=lambda unit: (-unit.familiarity, unit.difficulty, unit.id))
         if targets and not ordered:
             return []
         return ordered
+
+    @staticmethod
+    def _target_position_matches(
+        training_type: str,
+        unit: LearningUnit,
+        targets: list[str],
+    ) -> bool:
+        for target in targets:
+            expected = target.rsplit(".", 1)[-1]
+            if training_type in {"WORD_INITIAL_CHOICE", "SAME_INITIAL_WORD_CHOICE"}:
+                if target.startswith("GRAPHEME.ONSET.") and unit.onset != expected:
+                    return False
+            if training_type == "WORD_FINAL_SOUND_CHOICE":
+                if target.startswith("GRAPHEME.CODA.") and unit.coda != expected:
+                    return False
+        return True
 
     @staticmethod
     def _required_shape(training_type: str, unit: LearningUnit) -> bool:

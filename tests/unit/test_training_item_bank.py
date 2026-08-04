@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,7 @@ from iread_ai.training_bank import (
     RuleBasedBasicTrainingGenerator,
     SQLiteLearningUnitRepository,
 )
+from iread_ai.training_bank.seed import unit_seeds
 
 
 def _request(training_type: str, feature_code: str) -> TrainingCandidateRequest:
@@ -128,6 +130,18 @@ def test_keeps_the_requested_vowel_in_every_trace_candidate(tmp_path: Path) -> N
     assert len({candidate["soundText"] for candidate in response.data}) == 5
 
 
+def test_incompatible_profile_feature_never_delegates_a_trace_item_to_llm(
+    tmp_path: Path,
+) -> None:
+    response = _generator(tmp_path / "incompatible-vowel-trace.sqlite3").generate(
+        _request("VOWEL_TRACE", "GRAPHEME.ONSET.TENSE.ㄲ")
+    )
+
+    assert response is not None
+    assert len(response.data) == 5
+    assert all(candidate["target"] in {"ㅏ", "ㅓ", "ㅗ", "ㅜ", "ㅣ"} for candidate in response.data)
+
+
 def test_keeps_the_requested_grapheme_in_every_classification_candidate(
     tmp_path: Path,
 ) -> None:
@@ -140,6 +154,285 @@ def test_keeps_the_requested_grapheme_in_every_classification_candidate(
     for candidate in response.data:
         assert "ㄱ" in candidate["audioText"]
         assert candidate["choices"][candidate["answerIndex"]] == "CONSONANT"
+
+
+def test_distributes_two_targets_across_five_rule_based_questions(tmp_path: Path) -> None:
+    request = _request("CONSONANT_VOWEL_CLASSIFICATION", "GRAPHEME.ONSET.BASIC.ㄱ")
+    request = request.model_copy(
+        update={
+            "targetFeatures": [
+                *request.targetFeatures,
+                TrainingTargetFeature(
+                    featureCode="GRAPHEME.VOWEL.BASIC.ㅏ",
+                    weaknessScore=0.7,
+                    confidence=0.8,
+                    evidenceCount=8,
+                ),
+            ]
+        }
+    )
+
+    response = _generator(tmp_path / "multi-target.sqlite3").generate(request)
+
+    assert response is not None
+    assert len(response.data) == 5
+    assert all("ㄱ" in candidate["audioText"] for candidate in response.data[:3])
+    assert all("ㅏ" in candidate["audioText"] for candidate in response.data[3:])
+    assert all(
+        candidate["choices"][candidate["answerIndex"]] == "CONSONANT"
+        for candidate in response.data[:3]
+    )
+    assert all(
+        candidate["choices"][candidate["answerIndex"]] == "VOWEL"
+        for candidate in response.data[3:]
+    )
+
+
+def test_multi_target_nonword_training_keeps_real_and_meaningless_items(
+    tmp_path: Path,
+) -> None:
+    request = _request("NONWORD_READING", "GRAPHEME.ONSET.BASIC.ㄱ")
+    request = request.model_copy(
+        update={
+            "targetFeatures": [
+                *request.targetFeatures,
+                TrainingTargetFeature(
+                    featureCode="GRAPHEME.ONSET.BASIC.ㄴ",
+                    weaknessScore=0.7,
+                    confidence=0.8,
+                    evidenceCount=8,
+                ),
+            ],
+            "outputTemplate": {
+                "type": "NONWORD_READING",
+                "data": [{"words": [{"text": "<string>", "isNonword": "<boolean>"}]}],
+            },
+        }
+    )
+
+    response = _generator(tmp_path / "multi-target-nonword.sqlite3").generate(request)
+
+    assert response is not None
+    assert len(response.data) == 5
+    for candidate in response.data:
+        flags = {word["isNonword"] for word in candidate["words"]}
+        assert flags == {False, True}
+
+
+def test_word_reading_uses_target_specific_lexicon_words(tmp_path: Path) -> None:
+    request = _request("WORD_READING", "GRAPHEME.ONSET.TENSE.ㄲ")
+    request = request.model_copy(
+        update={
+            "targetFeatures": [
+                *request.targetFeatures,
+                TrainingTargetFeature(
+                    featureCode="PHONOLOGY.NASALIZATION",
+                    weaknessScore=0.7,
+                    confidence=0.8,
+                    evidenceCount=8,
+                ),
+            ],
+            "recommendedWordsByFeature": {
+                "GRAPHEME.ONSET.TENSE.ㄲ": ["꼬리", "까치", "끼니", "꾸러기", "깨소금"],
+                "PHONOLOGY.NASALIZATION": ["국물", "앞니", "꽃망울", "먹는", "막내"],
+            },
+        }
+    )
+
+    response = _generator(tmp_path / "lexicon-word-reading.sqlite3").generate(request)
+
+    assert response is not None
+    assert len(response.data) == 5
+    first_palette = set(request.recommendedWordsByFeature["GRAPHEME.ONSET.TENSE.ㄲ"])
+    second_palette = set(request.recommendedWordsByFeature["PHONOLOGY.NASALIZATION"])
+    for candidate in response.data:
+        assert len(candidate["words"]) == 4
+        assert len(set(candidate["words"]).intersection(first_palette)) == 2
+        assert len(set(candidate["words"]).intersection(second_palette)) == 2
+
+
+def test_word_reading_rejects_phrase_like_palette_entries(tmp_path: Path) -> None:
+    request = _request("WORD_READING", "WORD.SYLLABLE_COUNT.2").model_copy(
+        update={
+            "recommendedWordsByFeature": {
+                "WORD.SYLLABLE_COUNT.2": [
+                    "책 읽는 아이",
+                    "국물 맛",
+                    "밥 먹기",
+                    "읽는 책",
+                ]
+            }
+        }
+    )
+
+    response = _generator(tmp_path / "phrase-rejection.sqlite3").generate(request)
+
+    assert response is not None
+    for candidate in response.data:
+        assert all(" " not in word for word in candidate["words"])
+
+
+def test_sparse_target_palette_is_supplemented_without_losing_the_target(tmp_path: Path) -> None:
+    target_words = ["꼬리", "까치"]
+    request = _request("WORD_READING", "GRAPHEME.ONSET.TENSE.ㄲ").model_copy(
+        update={
+            "recommendedWords": [
+                *target_words,
+                "나무",
+                "바다",
+                "모자",
+                "기차",
+                "토끼",
+            ],
+            "recommendedWordsByFeature": {
+                "GRAPHEME.ONSET.TENSE.ㄲ": target_words,
+            },
+        }
+    )
+
+    response = _generator(tmp_path / "sparse-target-palette.sqlite3").generate(request)
+
+    assert response is not None
+    assert len(response.data) == 5
+    for candidate in response.data:
+        assert len(candidate["words"]) == 4
+        assert set(candidate["words"]).intersection(target_words)
+
+
+def test_word_length_target_is_applied_to_every_word_in_a_multi_target_item(
+    tmp_path: Path,
+) -> None:
+    request = _request("WORD_READING", "GRAPHEME.ONSET.TENSE.ㄲ").model_copy(
+        update={
+            "targetFeatures": [
+                *_request("WORD_READING", "GRAPHEME.ONSET.TENSE.ㄲ").targetFeatures,
+                TrainingTargetFeature(
+                    featureCode="WORD.SYLLABLE_COUNT.2",
+                    weaknessScore=0.7,
+                    confidence=0.8,
+                    evidenceCount=8,
+                ),
+            ],
+            "recommendedWords": [
+                "토끼",
+                "어깨",
+                "꼬리",
+                "새끼",
+                "나무",
+                "바다",
+                "꽃나무",
+            ],
+            "recommendedWordsByFeature": {
+                "GRAPHEME.ONSET.TENSE.ㄲ": [
+                    "토끼",
+                    "어깨",
+                    "꼬리",
+                    "새끼",
+                    "꽃나무",
+                ],
+                "WORD.SYLLABLE_COUNT.2": ["나무", "바다", "토끼", "어깨"],
+            },
+        }
+    )
+
+    response = _generator(tmp_path / "multi-target-word-length.sqlite3").generate(request)
+
+    assert response is not None
+    for candidate in response.data:
+        assert len(candidate["words"]) == 4
+        assert all(len(word) == 2 for word in candidate["words"])
+        tense_word_count = sum(
+            "ㄲ" in [syllable.onset for syllable in decompose_text(word)]
+            for word in candidate["words"]
+        )
+        assert tense_word_count == 2
+        contrast_words = [
+            word
+            for word in candidate["words"]
+            if "ㄲ" not in [syllable.onset for syllable in decompose_text(word)]
+        ]
+        curated_words = {
+            seed.surface
+            for seed in unit_seeds()
+            if seed.unit_type == "WORD"
+            and seed.familiarity >= 4
+            and seed.difficulty <= request.difficulty
+            and len(seed.surface) == 2
+        }
+        assert set(contrast_words).issubset(curated_words)
+
+
+@pytest.mark.parametrize(
+    ("training_type", "feature_code", "words"),
+    [
+        (
+            "WORD_INITIAL_CHOICE",
+            "GRAPHEME.ONSET.TENSE.ㄲ",
+            ["꼬리", "까치", "끼니", "꾸러기", "깨소금", "꼬마"],
+        ),
+        (
+            "SAME_INITIAL_WORD_CHOICE",
+            "GRAPHEME.ONSET.TENSE.ㄲ",
+            ["꼬리", "까치", "끼니", "꾸러기", "깨소금", "꼬마"],
+        ),
+        (
+            "WORD_FINAL_SOUND_CHOICE",
+            "GRAPHEME.CODA.SIMPLE.ㄴ",
+            ["산", "문", "손", "눈", "우산", "기린"],
+        ),
+        (
+            "SYLLABLE_BLEND",
+            "WORD.SYLLABLE_COUNT.2",
+            ["나무", "바다", "토끼", "모자", "사과", "나비"],
+        ),
+        (
+            "SYLLABLE_DELETE",
+            "WORD.SYLLABLE_COUNT.2",
+            ["나무", "바다", "토끼", "모자", "사과", "나비"],
+        ),
+        (
+            "NONWORD_READING",
+            "WORD.SYLLABLE_COUNT.2",
+            ["나무", "바다", "토끼", "모자", "사과", "나비"],
+        ),
+        (
+            "WORD_CHAIN_READING",
+            "WORD.SYLLABLE_COUNT.2",
+            ["나무", "바다", "토끼", "모자", "사과", "나비"],
+        ),
+    ],
+)
+def test_word_training_types_use_verified_lexicon_units(
+    tmp_path: Path,
+    training_type: str,
+    feature_code: str,
+    words: list[str],
+) -> None:
+    request = _request(training_type, feature_code).model_copy(
+        update={"recommendedWordsByFeature": {feature_code: words}}
+    )
+
+    response = _generator(tmp_path / f"lexicon-{training_type}.sqlite3").generate(request)
+
+    assert response is not None
+    assert len(response.data) == 5
+    palette = set(words)
+    for candidate in response.data:
+        if training_type in {"WORD_INITIAL_CHOICE", "WORD_FINAL_SOUND_CHOICE"}:
+            assert candidate["audioText"] in palette
+        elif training_type == "SAME_INITIAL_WORD_CHOICE":
+            assert candidate["targetAudioText"] in palette
+            selected = candidate["choices"][candidate["answerIndex"]]["text"]
+            assert selected in palette
+            assert selected != candidate["targetAudioText"]
+        elif training_type in {"SYLLABLE_BLEND", "SYLLABLE_DELETE"}:
+            key = "result" if training_type == "SYLLABLE_BLEND" else "source"
+            assert candidate[key] in palette
+        elif training_type == "NONWORD_READING":
+            real_words = [item["text"] for item in candidate["words"] if not item["isNonword"]]
+            assert set(real_words).issubset(palette)
+        elif training_type == "WORD_CHAIN_READING":
+            assert set(candidate["words"]).issubset(palette)
 
 
 def test_delegates_sentence_types_and_uncovered_targets(tmp_path: Path) -> None:
@@ -243,7 +536,8 @@ def _assert_candidate_semantics(training_type: str, candidate: dict) -> None:
         assert "".join(source) == candidate["result"]
     elif training_type == "WORD_READING":
         assert candidate["readingOrder"] == "SEQUENTIAL"
-        assert len(candidate["words"]) == 3
+        assert len(candidate["words"]) == 4
+        assert all(re.fullmatch(r"[가-힣]+", word) for word in candidate["words"])
     elif training_type == "NONWORD_READING":
         assert [item["isNonword"] for item in candidate["words"]] == [False, True]
         assert candidate["words"][0]["text"] != candidate["words"][1]["text"]

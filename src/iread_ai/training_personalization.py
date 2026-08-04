@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable
 from typing import Any
 
@@ -138,23 +139,30 @@ def _evaluate_candidate(
     )
 
     score = 100.0
-    target_max = 6 if training_type == "SHORT_STORY_READING" else 2
-    target_min = 2 if training_type == "SHORT_STORY_READING" else 1
+    target_bounds = {
+        target: _target_load_bounds(candidate, training_type, target, len(targets))
+        for target in targets
+    }
     target_total = sum(target_counts.values())
     if not targets:
         target_load_status = "NOT_APPLICABLE"
-    elif target_total < target_min:
+    elif any(
+        target_counts[target] < target_bounds[target][0]
+        for target in targets
+    ):
         target_load_status = "TOO_FEW"
-    elif target_total > target_max:
+    elif any(
+        target_counts[target] > target_bounds[target][1]
+        for target in targets
+    ):
         target_load_status = "EXCESSIVE"
     else:
         target_load_status = "PASS"
-    for count in target_counts.values():
-        if count == 0:
-            score -= 40
-        else:
-            score += min(count, target_max) * 15
-            score -= max(count - target_max, 0) * 18
+    for target, count in target_counts.items():
+        minimum, maximum = target_bounds[target]
+        score += min(count, maximum) * 15
+        score -= max(minimum - count, 0) * 40
+        score -= max(count - maximum, 0) * 18
     score -= sum(excluded_counts.values()) * 60
     score += length_adjustment
     if lexicon_applied:
@@ -183,14 +191,33 @@ def _evaluate_candidate(
     )
 
 
+def _target_load_bounds(
+    candidate: dict[str, Any],
+    training_type: str,
+    target: str,
+    target_count: int,
+) -> tuple[int, int]:
+    if training_type == "SHORT_STORY_READING":
+        return 2, 6
+    if training_type in {"WORD_READING", "WORD_CHAIN_READING"}:
+        unit_count = max(len(_structured_target_units(candidate, training_type)), 1)
+        if target.startswith("WORD.SYLLABLE_COUNT."):
+            return unit_count, unit_count
+        if target_count > 1:
+            balanced_count = min(2, unit_count)
+            return balanced_count, balanced_count
+        return 1, unit_count
+    return 1, 2
+
+
 def _palette_word_used(word: str, text: str) -> bool:
-    if word in text:
+    if re.search(rf"(?<![가-힣]){re.escape(word)}", text):
         return True
     stem = word[:-1]
     return (
         word.endswith("다")
         and sum("가" <= character <= "힣" for character in stem) >= 2
-        and stem in text
+        and re.search(rf"(?<![가-힣]){re.escape(stem)}", text) is not None
     )
 
 

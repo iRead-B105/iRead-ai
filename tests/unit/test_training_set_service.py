@@ -6,6 +6,7 @@ from iread_ai.generation_models import (
     TrainingSetRequest,
     TrainingTargetFeature,
 )
+from iread_ai.lexicon.contracts import LexiconItem, LexiconPaletteResponse
 from iread_ai.training_set_service import (
     AREA_POOLS,
     generate_training_activity,
@@ -21,6 +22,41 @@ def _target(feature_code: str) -> TrainingTargetFeature:
         confidence=0.9,
         evidenceCount=10,
     )
+
+
+class _WordPaletteService:
+    def build_palette(self, request):
+        feature_codes = {feature.featureCode for feature in request.targetFeatures}
+        surfaces = (
+            ["까치", "꼬리", "꾸미", "끼니", "깨비"]
+            if "GRAPHEME.ONSET.TENSE.ㄲ" in feature_codes
+            else ["나무", "바다", "모자", "기차", "토끼"]
+        )
+        return LexiconPaletteResponse(
+            requestId=request.requestId,
+            databaseVersion="test",
+            analyzerVersion="test",
+            items=[
+                LexiconItem(
+                    formId=index,
+                    headword=surface,
+                    surface=surface,
+                    pronunciation=surface,
+                    partOfSpeech="명사",
+                    definition="테스트 낱말",
+                    storyTier="CORE",
+                    semanticTags=[],
+                    syllableCount=len(surface),
+                    batchimCount=0,
+                    batchimRatio=0,
+                    pronunciationStatus="VERIFIED",
+                    features={},
+                    score=10,
+                    reasons=["test"],
+                )
+                for index, surface in enumerate(surfaces, start=1)
+            ],
+        )
 
 
 def test_curriculum_area_pools_cover_all_34_training_types() -> None:
@@ -100,3 +136,29 @@ def test_each_of_the_34_types_can_generate_one_reviewable_activity() -> None:
         assert response.activity.templateId == spec.template_id
         assert response.activity.item
         assert response.activity.provider in {"rule-db", "curated-fallback"}
+
+
+def test_multi_target_word_activity_uses_target_palettes_and_rule_database() -> None:
+    request = TrainingActivityRequest(
+        requestId="multi-target-word-reading",
+        schemaVersion=1,
+        sequence=1,
+        trainingType="WORD_READING",
+        difficulty=2,
+        targetFeatures=[
+            _target("GRAPHEME.ONSET.TENSE.ㄲ"),
+            _target("WORD.SYLLABLE_COUNT.2"),
+        ],
+        excludedFeatures=[],
+    )
+
+    response = generate_training_activity(
+        request,
+        provider=None,
+        lexicon_service=_WordPaletteService(),
+    )
+
+    assert response.activity.provider == "rule-db"
+    assert response.activity.item["readingOrder"] == "SEQUENTIAL"
+    assert len(response.activity.item["words"]) == 4
+    assert response.activity.personalization.lexiconApplied is True

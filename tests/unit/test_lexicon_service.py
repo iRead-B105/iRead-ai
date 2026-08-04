@@ -105,3 +105,26 @@ def test_status_reports_unavailable_database_without_crashing(tmp_path: Path) ->
 
     assert status.status == "UNAVAILABLE"
     assert status.lexemeCount == 0
+
+
+def test_palette_cache_reuses_the_same_policy_with_a_new_request_id(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "lexicon.sqlite3"
+    _create_database(database)
+    service = LexiconPaletteService(database)
+    first_request = LexiconPaletteRequest(
+        requestId="palette-first",
+        targetFeatures=[LexiconTargetFeature(featureCode="GRAPHEME.ONSET.TENSE.ㄲ")],
+        requireTarget=True,
+        strictPronunciation=True,
+        limit=10,
+    )
+
+    first = service.build_palette(first_request)
+    second = service.build_palette(first_request.model_copy(update={"requestId": "palette-second"}))
+
+    assert first.requestId == "palette-first"
+    assert second.requestId == "palette-second"
+    assert [item.surface for item in second.items] == [item.surface for item in first.items]
+    assert len(service._cache) == 1

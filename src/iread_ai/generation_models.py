@@ -28,6 +28,7 @@ class TrainingCandidateRequest(ContractModel):
     outputTemplate: dict[str, Any]
     useLexicon: bool = True
     recommendedWords: list[str] = Field(default_factory=list, max_length=40)
+    recommendedWordsByFeature: dict[str, list[str]] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_feature_policy(self) -> "TrainingCandidateRequest":
@@ -38,6 +39,18 @@ class TrainingCandidateRequest(ContractModel):
         overlap = target.intersection(excluded)
         if overlap:
             raise ValueError("targetFeatures and excludedFeatures must not overlap")
+        for feature_code, words in self.recommendedWordsByFeature.items():
+            if not feature_code.strip():
+                raise ValueError("recommendedWordsByFeature keys must be non-empty")
+            if not words or len(words) > 20:
+                raise ValueError(
+                    "recommendedWordsByFeature values must contain between 1 and 20 words"
+                )
+            normalized = [word.strip() for word in words]
+            if any(not word for word in normalized) or len(normalized) != len(set(normalized)):
+                raise ValueError(
+                    "recommendedWordsByFeature values must contain unique non-empty words"
+                )
         return self
 
 

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from collections import OrderedDict
 from pathlib import Path
+from threading import Lock
 
 from .contracts import (
     LexiconItem,
@@ -21,6 +23,8 @@ class LexiconPaletteService:
         self.database_path = Path(database_path)
         self._repository: LexiconRepository | None = None
         self._load_error: str | None = None
+        self._cache: OrderedDict[str, LexiconPaletteResponse] = OrderedDict()
+        self._cache_lock = Lock()
         try:
             self._repository = LexiconRepository(self.database_path)
         except (FileNotFoundError, RuntimeError, OSError) as exception:
@@ -53,6 +57,12 @@ class LexiconPaletteService:
     def build_palette(self, request: LexiconPaletteRequest) -> LexiconPaletteResponse:
         if self._repository is None:
             raise LexiconUnavailableError(self._load_error or "lexicon database is unavailable")
+        cache_key = request.model_dump_json(exclude={"requestId"})
+        with self._cache_lock:
+            cached = self._cache.get(cache_key)
+            if cached is not None:
+                self._cache.move_to_end(cache_key)
+                return cached.model_copy(update={"requestId": request.requestId})
         targets = tuple(canonical_feature_code(item.featureCode) for item in request.targetFeatures)
         excluded = tuple(canonical_feature_code(code) for code in request.excludedFeatures)
         mastered = tuple(canonical_feature_code(code) for code in request.masteredFeatures)
@@ -78,12 +88,18 @@ class LexiconPaletteService:
         ]
         items.sort(key=lambda item: (-item.score, item.syllableCount, item.surface, item.formId))
         metadata = self._repository.metadata()
-        return LexiconPaletteResponse(
+        response = LexiconPaletteResponse(
             requestId=request.requestId,
             databaseVersion=metadata.get("source_version", "unknown"),
             analyzerVersion=metadata.get("analyzer_version", "unknown"),
             items=items[: request.limit],
         )
+        with self._cache_lock:
+            self._cache[cache_key] = response
+            self._cache.move_to_end(cache_key)
+            while len(self._cache) > 128:
+                self._cache.popitem(last=False)
+        return response
 
     @staticmethod
     def _score_candidate(
