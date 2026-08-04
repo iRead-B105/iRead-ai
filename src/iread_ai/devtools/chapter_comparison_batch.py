@@ -35,16 +35,9 @@ from iread_ai.devtools.service_story_catalog import (
 
 PROFILE_KEYS = ("balanced", "beginner")
 STAGE_LABELS = ("opening", "early", "middle", "late", "ending")
-DEFAULT_OUTPUT_ROOT = (
-    Path("local-output") / "chapter-comparison-batch"
-)
-DEFAULT_GENERATE_ENDPOINT = (
-    "http://127.0.0.1:8081/api/v3/story/chapters/generate"
-)
-DEFAULT_COMPARISON_ENDPOINT = (
-    "http://127.0.0.1:8081/api/dev/story/"
-    "displayed-chapter-comparison"
-)
+DEFAULT_OUTPUT_ROOT = Path("local-output") / "chapter-comparison-batch"
+DEFAULT_GENERATE_ENDPOINT = "http://127.0.0.1:8081/api/v3/story/chapters/generate"
+DEFAULT_COMPARISON_ENDPOINT = "http://127.0.0.1:8081/api/dev/story/displayed-chapter-comparison"
 SCORE_EPSILON = 0.005
 
 _SLOT_ANSWERS: dict[str, str] = {
@@ -113,9 +106,7 @@ def normalized_chapter_indexes(
     last = story.total_chapters - 1
     indexes = tuple(round(last * fraction) for fraction in (0, 0.25, 0.5, 0.75, 1))
     if len(set(indexes)) != 5:
-        raise ValueError(
-            f"story {story.template_id} cannot provide five unique stages"
-        )
+        raise ValueError(f"story {story.template_id} cannot provide five unique stages")
     return indexes
 
 
@@ -174,27 +165,18 @@ def _synthetic_runtime(
     last_question = previous_beat.question_focus
     if not last_question:
         raise ValueError(
-            f"story {story.template_id} chapter {chapter_index + 1} "
-            "has no previous branch question"
+            f"story {story.template_id} chapter {chapter_index + 1} has no previous branch question"
         )
     state = runtime["storyState"]
-    state["rollingSummary"] = " ".join(
-        beat.goal for beat in prior_beats
-    )
-    state["resolvedFacts"] = [
-        beat.goal for beat in prior_beats
-    ]
+    state["rollingSummary"] = " ".join(beat.goal for beat in prior_beats)
+    state["resolvedFacts"] = [beat.goal for beat in prior_beats]
     state["unresolvedHooks"] = [last_question]
     state["lastQuestion"] = last_question
     state["recentPages"] = [
         {
             "pageNumber": page_number,
             "sentences": [page.locked_event],
-            "question": (
-                last_question
-                if page_number == len(previous_beat.pages)
-                else None
-            ),
+            "question": (last_question if page_number == len(previous_beat.pages) else None),
         }
         for page_number, page in enumerate(
             previous_beat.pages,
@@ -209,15 +191,14 @@ def build_cases(
     run_token: str = "fixture",
 ) -> list[dict[str, Any]]:
     cases: list[dict[str, Any]] = []
-    safe_token = "".join(
-        character
-        for character in run_token
-        if character.isalnum() or character in {"-", "_"}
-    )[:24] or "fixture"
+    safe_token = (
+        "".join(
+            character for character in run_token if character.isalnum() or character in {"-", "_"}
+        )[:24]
+        or "fixture"
+    )
     for story_index, story in enumerate(STORY_CATALOG):
-        for stage_index, chapter_index in enumerate(
-            normalized_chapter_indexes(story)
-        ):
+        for stage_index, chapter_index in enumerate(normalized_chapter_indexes(story)):
             branch_input, input_type = _input_for_stage(
                 story=story,
                 chapter_index=chapter_index,
@@ -225,14 +206,8 @@ def build_cases(
             )
             student_id = 10_000 + story_index * 10 + stage_index
             for profile_key in PROFILE_KEYS:
-                case_id = (
-                    f"{story.template_id}-{profile_key}-"
-                    f"{STAGE_LABELS[stage_index]}"
-                )
-                request_id = (
-                    f"cb-{safe_token}-{story.template_id}-"
-                    f"{profile_key}-{stage_index + 1}"
-                )
+                case_id = f"{story.template_id}-{profile_key}-{STAGE_LABELS[stage_index]}"
+                request_id = f"cb-{safe_token}-{story.template_id}-{profile_key}-{stage_index + 1}"
                 runtime = _synthetic_runtime(
                     story,
                     profile_key=profile_key,
@@ -258,26 +233,18 @@ def build_cases(
                         "chapterNumber": chapter_index + 1,
                         "totalChapters": story.total_chapters,
                         "inputType": input_type,
-                        "childInput": (
-                            branch_input["text"]
-                            if branch_input is not None
-                            else None
-                        ),
+                        "childInput": (branch_input["text"] if branch_input is not None else None),
                         "idempotencyKey": request_id,
                         "chapterRequest": request,
                     }
                 )
     if len(cases) != 100:
-        raise RuntimeError(
-            f"chapter comparison matrix must contain 100 cases, got {len(cases)}"
-        )
+        raise RuntimeError(f"chapter comparison matrix must contain 100 cases, got {len(cases)}")
     return cases
 
 
 def _atomic_json(path: Path, value: Any) -> None:
-    temporary = path.with_name(
-        f".{path.name}.{uuid.uuid4().hex}.tmp"
-    )
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
     temporary.write_text(
         json.dumps(value, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
@@ -323,10 +290,7 @@ async def _post_json(
             detail: Any = response.json()
         except ValueError:
             detail = response.text[:2000]
-        raise RuntimeError(
-            f"HTTP {response.status_code}: "
-            f"{json.dumps(detail, ensure_ascii=False)}"
-        )
+        raise RuntimeError(f"HTTP {response.status_code}: {json.dumps(detail, ensure_ascii=False)}")
     document = response.json()
     if not isinstance(document, dict):
         raise ValueError("API response must be a JSON object")
@@ -461,10 +425,7 @@ def _bootstrap_mean_interval(
     randomizer = random.Random(seed)
     sample_size = len(values)
     means = [
-        statistics.fmean(
-            values[randomizer.randrange(sample_size)]
-            for _ in range(sample_size)
-        )
+        statistics.fmean(values[randomizer.randrange(sample_size)] for _ in range(sample_size))
         for _ in range(iterations)
     ]
     return [
@@ -478,11 +439,7 @@ def _exact_two_sided_binomial(wins: int, losses: int) -> float | None:
     if trials == 0:
         return None
     tail = min(wins, losses)
-    probability = (
-        2.0
-        * sum(math.comb(trials, count) for count in range(tail + 1))
-        / (2**trials)
-    )
+    probability = 2.0 * sum(math.comb(trials, count) for count in range(tail + 1)) / (2**trials)
     return round(min(1.0, probability), 8)
 
 
@@ -491,11 +448,7 @@ def numeric_statistics(
     *,
     seed: int,
 ) -> dict[str, Any]:
-    finite = [
-        float(value)
-        for value in values
-        if math.isfinite(float(value))
-    ]
+    finite = [float(value) for value in values if math.isfinite(float(value))]
     if not finite:
         return {
             "n": 0,
@@ -532,11 +485,7 @@ def _flatten_page_text(outcome: Mapping[str, Any]) -> str:
             continue
         sentences = page.get("sentences")
         if isinstance(sentences, list):
-            lines.extend(
-                str(sentence)
-                for sentence in sentences
-                if isinstance(sentence, str)
-            )
+            lines.extend(str(sentence) for sentence in sentences if isinstance(sentence, str))
     return "\n".join(lines)
 
 
@@ -573,8 +522,7 @@ def _comparison_row(record: Mapping[str, Any]) -> dict[str, Any] | None:
     comparison = response.get("comparison")
     diagnostics = response.get("diagnostics")
     if not all(
-        isinstance(value, Mapping)
-        for value in (plain, personalized, comparison, diagnostics)
+        isinstance(value, Mapping) for value in (plain, personalized, comparison, diagnostics)
     ):
         return None
     plain = dict(plain)
@@ -594,17 +542,9 @@ def _comparison_row(record: Mapping[str, Any]) -> dict[str, Any] | None:
     if score_delta is None:
         return None
     score_basis = str(comparison.get("scoreBasis", "UNKNOWN"))
-    risk_key = (
-        "surfaceRiskPer10"
-        if score_basis == "COMMON_SURFACE_ONLY"
-        else "riskPer10"
-    )
-    plain_written_syllables = _number(
-        plain_fit.get("writtenSyllables")
-    )
-    personalized_written_syllables = _number(
-        personalized_fit.get("writtenSyllables")
-    )
+    risk_key = "surfaceRiskPer10" if score_basis == "COMMON_SURFACE_ONLY" else "riskPer10"
+    plain_written_syllables = _number(plain_fit.get("writtenSyllables"))
+    personalized_written_syllables = _number(personalized_fit.get("writtenSyllables"))
     return {
         "caseId": str(case["caseId"]),
         "storyId": int(case["storyId"]),
@@ -615,65 +555,35 @@ def _comparison_row(record: Mapping[str, Any]) -> dict[str, Any] | None:
         "inputType": str(case["inputType"]),
         "childInput": case.get("childInput"),
         "scoreBasis": score_basis,
-        "comparisonConfidence": str(
-            comparison.get("comparisonConfidence", "UNKNOWN")
-        ),
+        "comparisonConfidence": str(comparison.get("comparisonConfidence", "UNKNOWN")),
         "winner": str(comparison.get("winner", "UNVERIFIED")),
-        "plainProfileFitScore": _number(
-            comparison.get("plainProfileFitScore")
-        ),
-        "personalizedProfileFitScore": _number(
-            comparison.get("personalizedProfileFitScore")
-        ),
+        "plainProfileFitScore": _number(comparison.get("plainProfileFitScore")),
+        "personalizedProfileFitScore": _number(comparison.get("personalizedProfileFitScore")),
         "profileFitScoreDelta": score_delta,
         "plainComparedRiskPer10": _number(plain_fit.get(risk_key)),
-        "personalizedComparedRiskPer10": _number(
-            personalized_fit.get(risk_key)
-        ),
+        "personalizedComparedRiskPer10": _number(personalized_fit.get(risk_key)),
         "riskPer10Delta": _number(delta.get("riskPer10")),
         "plainWrittenSyllables": plain_written_syllables,
-        "personalizedWrittenSyllables": (
-            personalized_written_syllables
-        ),
+        "personalizedWrittenSyllables": (personalized_written_syllables),
         "writtenSyllableDelta": (
-            personalized_written_syllables
-            - plain_written_syllables
-            if (
-                personalized_written_syllables is not None
-                and plain_written_syllables is not None
-            )
+            personalized_written_syllables - plain_written_syllables
+            if (personalized_written_syllables is not None and plain_written_syllables is not None)
             else None
         ),
-        "plainExcludedOverage": _number(
-            plain_fit.get("excludedOverage")
-        ),
-        "personalizedExcludedOverage": _number(
-            personalized_fit.get("excludedOverage")
-        ),
+        "plainExcludedOverage": _number(plain_fit.get("excludedOverage")),
+        "personalizedExcludedOverage": _number(personalized_fit.get("excludedOverage")),
         "excludedOverageDelta": _number(delta.get("excludedOverage")),
-        "plainLimitedOverage": _number(
-            plain_fit.get("limitedOverage")
-        ),
-        "personalizedLimitedOverage": _number(
-            personalized_fit.get("limitedOverage")
-        ),
+        "plainLimitedOverage": _number(plain_fit.get("limitedOverage")),
+        "personalizedLimitedOverage": _number(personalized_fit.get("limitedOverage")),
         "limitedOverageDelta": _number(delta.get("limitedOverage")),
         "targetDistanceDelta": _number(delta.get("targetDistance")),
         "latencyDeltaMs": _number(delta.get("totalElapsedMs")),
         "plainContractPass": bool(plain_fit.get("contractPass")),
-        "plainContractFailures": list(
-            plain_fit.get("contractFailures", [])
-        ),
-        "personalizedContractPass": bool(
-            personalized_fit.get("contractPass")
-        ),
-        "personalizedContractFailures": list(
-            personalized_fit.get("contractFailures", [])
-        ),
+        "plainContractFailures": list(plain_fit.get("contractFailures", [])),
+        "personalizedContractPass": bool(personalized_fit.get("contractPass")),
+        "personalizedContractFailures": list(personalized_fit.get("contractFailures", [])),
         "plainAnalysisStatus": plain_fit.get("analysisStatus"),
-        "personalizedAnalysisStatus": personalized_fit.get(
-            "analysisStatus"
-        ),
+        "personalizedAnalysisStatus": personalized_fit.get("analysisStatus"),
         "plainUnverifiedSkills": plain_fit.get(
             "unverifiedSkillCodes",
             [],
@@ -685,27 +595,15 @@ def _comparison_row(record: Mapping[str, Any]) -> dict[str, Any] | None:
         "plainText": _flatten_page_text(plain),
         "personalizedText": _flatten_page_text(personalized),
         "plainTotalMs": _number(plain_timing.get("total")),
-        "personalizedTotalMs": _number(
-            personalized_timing.get("total")
-        ),
-        "plainModelCalls": int(
-            _number(plain_generation.get("apiCallCount")) or 0
-        ),
-        "personalizedModelCalls": int(
-            _number(personalized_generation.get("apiCallCount")) or 0
-        ),
+        "personalizedTotalMs": _number(personalized_timing.get("total")),
+        "plainModelCalls": int(_number(plain_generation.get("apiCallCount")) or 0),
+        "personalizedModelCalls": int(_number(personalized_generation.get("apiCallCount")) or 0),
         "personalizedCandidateCount": int(
             _number(personalized_generation.get("candidateCount")) or 0
         ),
-        "personalizedRepairAttempted": bool(
-            personalized_generation.get("repairAttempted")
-        ),
-        "personalizedRepairAccepted": bool(
-            personalized_generation.get("repairAccepted")
-        ),
-        "newComparisonModelCalls": int(
-            _number(diagnostics.get("newApiCallCount")) or 0
-        ),
+        "personalizedRepairAttempted": bool(personalized_generation.get("repairAttempted")),
+        "personalizedRepairAccepted": bool(personalized_generation.get("repairAccepted")),
+        "newComparisonModelCalls": int(_number(diagnostics.get("newApiCallCount")) or 0),
     }
 
 
@@ -752,39 +650,23 @@ def _aggregate_rows(
         rows,
         key=lambda row: float(row["profileFitScoreDelta"]),
     )
-    wins = sum(
-        float(row["profileFitScoreDelta"]) > SCORE_EPSILON
-        for row in rows
-    )
-    losses = sum(
-        float(row["profileFitScoreDelta"]) < -SCORE_EPSILON
-        for row in rows
-    )
+    wins = sum(float(row["profileFitScoreDelta"]) > SCORE_EPSILON for row in rows)
+    losses = sum(float(row["profileFitScoreDelta"]) < -SCORE_EPSILON for row in rows)
     ties = len(rows) - wins - losses
     return {
         "n": len(rows),
-        "scoreBasisCounts": dict(
-            Counter(str(row["scoreBasis"]) for row in rows)
-        ),
-        "confidenceCounts": dict(
-            Counter(
-                str(row["comparisonConfidence"])
-                for row in rows
-            )
-        ),
+        "scoreBasisCounts": dict(Counter(str(row["scoreBasis"]) for row in rows)),
+        "confidenceCounts": dict(Counter(str(row["comparisonConfidence"]) for row in rows)),
         "winTieLoss": {
             "personalizedWins": wins,
             "ties": ties,
             "plainWins": losses,
-            "personalizedWinRate": (
-                round(wins / len(rows), 4) if rows else 0.0
-            ),
+            "personalizedWinRate": (round(wins / len(rows), 4) if rows else 0.0),
             "exactSignP": _exact_two_sided_binomial(wins, losses),
         },
         "plainContractPassRate": (
             round(
-                sum(bool(row["plainContractPass"]) for row in rows)
-                / len(rows),
+                sum(bool(row["plainContractPass"]) for row in rows) / len(rows),
                 4,
             )
             if rows
@@ -792,48 +674,24 @@ def _aggregate_rows(
         ),
         "personalizedContractPassRate": (
             round(
-                sum(
-                    bool(row["personalizedContractPass"])
-                    for row in rows
-                )
-                / len(rows),
+                sum(bool(row["personalizedContractPass"]) for row in rows) / len(rows),
                 4,
             )
             if rows
             else 0.0
         ),
         "plainContractFailureCounts": dict(
-            Counter(
-                str(failure)
-                for row in rows
-                for failure in row["plainContractFailures"]
-            )
+            Counter(str(failure) for row in rows for failure in row["plainContractFailures"])
         ),
         "personalizedContractFailureCounts": dict(
-            Counter(
-                str(failure)
-                for row in rows
-                for failure in row[
-                    "personalizedContractFailures"
-                ]
-            )
+            Counter(str(failure) for row in rows for failure in row["personalizedContractFailures"])
         ),
         "repair": {
-            "attempted": sum(
-                bool(row["personalizedRepairAttempted"])
-                for row in rows
-            ),
-            "accepted": sum(
-                bool(row["personalizedRepairAccepted"])
-                for row in rows
-            ),
+            "attempted": sum(bool(row["personalizedRepairAttempted"]) for row in rows),
+            "accepted": sum(bool(row["personalizedRepairAccepted"]) for row in rows),
             "attemptRate": (
                 round(
-                    sum(
-                        bool(row["personalizedRepairAttempted"])
-                        for row in rows
-                    )
-                    / len(rows),
+                    sum(bool(row["personalizedRepairAttempted"]) for row in rows) / len(rows),
                     4,
                 )
                 if rows
@@ -841,30 +699,17 @@ def _aggregate_rows(
             ),
             "acceptRateAmongAttempts": (
                 round(
-                    sum(
-                        bool(row["personalizedRepairAccepted"])
-                        for row in rows
-                    )
-                    / sum(
-                        bool(row["personalizedRepairAttempted"])
-                        for row in rows
-                    ),
+                    sum(bool(row["personalizedRepairAccepted"]) for row in rows)
+                    / sum(bool(row["personalizedRepairAttempted"]) for row in rows),
                     4,
                 )
-                if any(
-                    bool(row["personalizedRepairAttempted"])
-                    for row in rows
-                )
+                if any(bool(row["personalizedRepairAttempted"]) for row in rows)
                 else 0.0
             ),
         },
         "conditionStatistics": {
             metric: numeric_statistics(
-                [
-                    float(row[metric])
-                    for row in rows
-                    if row.get(metric) is not None
-                ],
+                [float(row[metric]) for row in rows if row.get(metric) is not None],
                 seed=seed + sum(ord(character) for character in metric),
             )
             for metric in (
@@ -884,35 +729,18 @@ def _aggregate_rows(
         },
         "metrics": {
             metric: numeric_statistics(
-                [
-                    float(row[metric])
-                    for row in rows
-                    if row.get(metric) is not None
-                ],
+                [float(row[metric]) for row in rows if row.get(metric) is not None],
                 seed=seed + sum(ord(character) for character in metric),
             )
             for metric in metrics
         },
-        "highestCase": (
-            _case_excerpt(ordered[-1]) if ordered else None
-        ),
-        "lowestCase": (
-            _case_excerpt(ordered[0]) if ordered else None
-        ),
-        "topFive": [
-            _case_excerpt(row)
-            for row in reversed(ordered[-5:])
-        ],
-        "bottomFive": [
-            _case_excerpt(row)
-            for row in ordered[:5]
-        ],
+        "highestCase": (_case_excerpt(ordered[-1]) if ordered else None),
+        "lowestCase": (_case_excerpt(ordered[0]) if ordered else None),
+        "topFive": [_case_excerpt(row) for row in reversed(ordered[-5:])],
+        "bottomFive": [_case_excerpt(row) for row in ordered[:5]],
         "topFiveMeanDelta": (
             round(
-                statistics.fmean(
-                    float(row["profileFitScoreDelta"])
-                    for row in ordered[-5:]
-                ),
+                statistics.fmean(float(row["profileFitScoreDelta"]) for row in ordered[-5:]),
                 4,
             )
             if ordered
@@ -920,10 +748,7 @@ def _aggregate_rows(
         ),
         "bottomFiveMeanDelta": (
             round(
-                statistics.fmean(
-                    float(row["profileFitScoreDelta"])
-                    for row in ordered[:5]
-                ),
+                statistics.fmean(float(row["profileFitScoreDelta"]) for row in ordered[:5]),
                 4,
             )
             if ordered
@@ -938,37 +763,25 @@ def aggregate_records(
     seed: int,
     elapsed_seconds: float,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    rows = [
-        row
-        for record in records
-        if (row := _comparison_row(record)) is not None
-    ]
+    rows = [row for record in records if (row := _comparison_row(record)) is not None]
 
     def grouped(field: str) -> dict[str, Any]:
         keys = sorted({str(row[field]) for row in rows})
         return {
             key: _aggregate_rows(
-                [
-                    row
-                    for row in rows
-                    if str(row[field]) == key
-                ],
+                [row for row in rows if str(row[field]) == key],
                 seed=seed + sum(ord(character) for character in key),
             )
             for key in keys
         }
 
     model_calls = sum(
-        int(row["personalizedModelCalls"])
-        + int(row["newComparisonModelCalls"])
-        for row in rows
+        int(row["personalizedModelCalls"]) + int(row["newComparisonModelCalls"]) for row in rows
     )
     successful = sum(record.get("status") == "SUCCESS" for record in records)
     overall = _aggregate_rows(rows, seed=seed)
     rows_by_basis = {
-        basis: [
-            row for row in rows if str(row["scoreBasis"]) == basis
-        ]
+        basis: [row for row in rows if str(row["scoreBasis"]) == basis]
         for basis in ("FULL_POLICY", "COMMON_SURFACE_ONLY")
     }
     by_score_basis = {
@@ -981,63 +794,43 @@ def aggregate_records(
     summary = {
         "schemaVersion": 1,
         "experiment": "paired-v3-chapter-personalization-100-v1",
-        "generatedAt": datetime.now().astimezone().isoformat(
-            timespec="seconds"
-        ),
+        "generatedAt": datetime.now().astimezone().isoformat(timespec="seconds"),
         "requestedCaseCount": len(records),
         "successfulCaseCount": successful,
         "comparableCaseCount": len(rows),
         "failedCaseCount": len(records) - successful,
         "comparisonUnavailableCount": successful - len(rows),
-        "successRate": (
-            round(successful / len(records), 4) if records else 0.0
-        ),
+        "successRate": (round(successful / len(records), 4) if records else 0.0),
         "elapsedSeconds": round(elapsed_seconds, 3),
         "imageApiCallCount": 0,
         "visualSceneJsonIncluded": True,
         "modelCallCount": model_calls,
         "reliability": {
             "fullPolicyCount": len(rows_by_basis["FULL_POLICY"]),
-            "commonSurfaceOnlyCount": len(
-                rows_by_basis["COMMON_SURFACE_ONLY"]
-            ),
+            "commonSurfaceOnlyCount": len(rows_by_basis["COMMON_SURFACE_ONLY"]),
             "unavailableCount": successful - len(rows),
         },
         "primaryEffect": {
             "basis": "FULL_POLICY",
             "n": by_score_basis["FULL_POLICY"]["n"],
-            "riskPer10Delta": by_score_basis["FULL_POLICY"][
-                "metrics"
-            ]["riskPer10Delta"],
-            "profileFitScoreDelta": by_score_basis["FULL_POLICY"][
-                "metrics"
-            ]["profileFitScoreDelta"],
+            "riskPer10Delta": by_score_basis["FULL_POLICY"]["metrics"]["riskPer10Delta"],
+            "profileFitScoreDelta": by_score_basis["FULL_POLICY"]["metrics"][
+                "profileFitScoreDelta"
+            ],
             "winTieLoss": by_score_basis["FULL_POLICY"]["winTieLoss"],
-            "highestCase": by_score_basis["FULL_POLICY"][
-                "highestCase"
-            ],
-            "lowestCase": by_score_basis["FULL_POLICY"][
-                "lowestCase"
-            ],
+            "highestCase": by_score_basis["FULL_POLICY"]["highestCase"],
+            "lowestCase": by_score_basis["FULL_POLICY"]["lowestCase"],
         },
         "partialSurfaceEffect": {
             "basis": "COMMON_SURFACE_ONLY",
             "n": by_score_basis["COMMON_SURFACE_ONLY"]["n"],
-            "riskPer10Delta": by_score_basis[
-                "COMMON_SURFACE_ONLY"
-            ]["metrics"]["riskPer10Delta"],
-            "profileFitScoreDelta": by_score_basis[
-                "COMMON_SURFACE_ONLY"
-            ]["metrics"]["profileFitScoreDelta"],
-            "winTieLoss": by_score_basis[
-                "COMMON_SURFACE_ONLY"
-            ]["winTieLoss"],
-            "highestCase": by_score_basis[
-                "COMMON_SURFACE_ONLY"
-            ]["highestCase"],
-            "lowestCase": by_score_basis[
-                "COMMON_SURFACE_ONLY"
-            ]["lowestCase"],
+            "riskPer10Delta": by_score_basis["COMMON_SURFACE_ONLY"]["metrics"]["riskPer10Delta"],
+            "profileFitScoreDelta": by_score_basis["COMMON_SURFACE_ONLY"]["metrics"][
+                "profileFitScoreDelta"
+            ],
+            "winTieLoss": by_score_basis["COMMON_SURFACE_ONLY"]["winTieLoss"],
+            "highestCase": by_score_basis["COMMON_SURFACE_ONLY"]["highestCase"],
+            "lowestCase": by_score_basis["COMMON_SURFACE_ONLY"]["lowestCase"],
         },
         "overall": overall,
         "byProfile": grouped("profileKey"),
@@ -1094,10 +887,7 @@ def _write_markdown(path: Path, summary: Mapping[str, Any]) -> None:
     lines = [
         "# v3 장 생성 개인화 100건 비교",
         "",
-        (
-            f"- 성공: {summary['successfulCaseCount']}/"
-            f"{summary['requestedCaseCount']}"
-        ),
+        (f"- 성공: {summary['successfulCaseCount']}/{summary['requestedCaseCount']}"),
         f"- 비교 가능: {summary['comparableCaseCount']}건",
         f"- 모델 호출: {summary['modelCallCount']}회",
         "- 이미지 API 호출: 0회",
@@ -1222,13 +1012,9 @@ def _load_existing_records(
 def _parse_args() -> argparse.Namespace:
     configured_api_key = os.getenv("INTERNAL_API_KEY")
     if not configured_api_key:
-        configured_api_key = (
-            Settings().internal_api_key.get_secret_value()
-        )
+        configured_api_key = Settings().internal_api_key.get_secret_value()
     parser = argparse.ArgumentParser(
-        description=(
-            "Run 100 paired current-v3 chapter personalization comparisons."
-        )
+        description=("Run 100 paired current-v3 chapter personalization comparisons.")
     )
     parser.add_argument(
         "--generate-endpoint",
@@ -1263,9 +1049,7 @@ def _parse_args() -> argparse.Namespace:
 
 def _validate_args(args: argparse.Namespace) -> None:
     if not args.confirm_real_api:
-        raise ValueError(
-            "real API execution requires --confirm-real-api"
-        )
+        raise ValueError("real API execution requires --confirm-real-api")
     if not 1 <= args.case_limit <= 100:
         raise ValueError("case-limit must be between 1 and 100")
     if not 1 <= args.concurrency <= 2:
@@ -1277,29 +1061,19 @@ def _validate_args(args: argparse.Namespace) -> None:
 
 
 def _validate_real_provider_health(health: object) -> str:
-    provider = (
-        health.get("storyProvider")
-        if isinstance(health, Mapping)
-        else None
-    )
+    provider = health.get("storyProvider") if isinstance(health, Mapping) else None
     if (
         not isinstance(health, Mapping)
         or health.get("status") not in {"UP", "ok"}
         or provider not in {"gms", "openai"}
     ):
-        raise RuntimeError(
-            "preflight requires a healthy API with "
-            "storyProvider=gms or openai"
-        )
+        raise RuntimeError("preflight requires a healthy API with storyProvider=gms or openai")
     return str(provider)
 
 
 async def _run(args: argparse.Namespace) -> Path:
     _validate_args(args)
-    health_endpoint = (
-        args.generate_endpoint.partition("/api/")[0].rstrip("/")
-        + "/health"
-    )
+    health_endpoint = args.generate_endpoint.partition("/api/")[0].rstrip("/") + "/health"
     async with httpx.AsyncClient(timeout=10.0) as health_client:
         health_response = await health_client.get(health_endpoint)
         health_response.raise_for_status()
@@ -1308,16 +1082,10 @@ async def _run(args: argparse.Namespace) -> Path:
 
     if args.resume_dir is not None:
         run_dir = args.resume_dir.resolve()
-        cases_document = json.loads(
-            (run_dir / "cases.json").read_text(encoding="utf-8")
-        )
+        cases_document = json.loads((run_dir / "cases.json").read_text(encoding="utf-8"))
         if not isinstance(cases_document, list):
             raise ValueError("cases.json must contain an array")
-        cases = [
-            dict(case)
-            for case in cases_document
-            if isinstance(case, Mapping)
-        ]
+        cases = [dict(case) for case in cases_document if isinstance(case, Mapping)]
         raw_dir = run_dir / "raw"
         raw_dir.mkdir(parents=True, exist_ok=True)
     else:
@@ -1325,20 +1093,14 @@ async def _run(args: argparse.Namespace) -> Path:
         cases = build_cases(run_token=run_token)
         random.Random(args.seed).shuffle(cases)
         cases = cases[: args.case_limit]
-        run_dir = (
-            args.output_root.resolve()
-            / f"{run_token}_{len(cases)}cases"
-        )
+        run_dir = args.output_root.resolve() / f"{run_token}_{len(cases)}cases"
         raw_dir = run_dir / "raw"
         raw_dir.mkdir(parents=True, exist_ok=False)
         _atomic_json(run_dir / "cases.json", cases)
 
     existing = _load_existing_records(raw_dir)
     pending = [
-        case
-        for case in cases
-        if existing.get(str(case["caseId"]), {}).get("status")
-        != "SUCCESS"
+        case for case in cases if existing.get(str(case["caseId"]), {}).get("status") != "SUCCESS"
     ]
     metadata = {
         "schemaVersion": 1,
@@ -1352,9 +1114,7 @@ async def _run(args: argparse.Namespace) -> Path:
         "maxMinutes": args.max_minutes,
         "seed": args.seed,
         "resumed": args.resume_dir is not None,
-        "startedAt": datetime.now().astimezone().isoformat(
-            timespec="seconds"
-        ),
+        "startedAt": datetime.now().astimezone().isoformat(timespec="seconds"),
     }
     _atomic_json(run_dir / "run.json", metadata)
 
@@ -1423,9 +1183,7 @@ async def _run(args: argparse.Namespace) -> Path:
     _write_markdown(run_dir / "SUMMARY.md", summary)
     metadata.update(
         {
-            "finishedAt": datetime.now().astimezone().isoformat(
-                timespec="seconds"
-            ),
+            "finishedAt": datetime.now().astimezone().isoformat(timespec="seconds"),
             "elapsedSeconds": round(elapsed_seconds, 3),
             "successfulCaseCount": summary["successfulCaseCount"],
             "comparableCaseCount": summary["comparableCaseCount"],

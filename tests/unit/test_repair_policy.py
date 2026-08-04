@@ -108,9 +108,7 @@ def _evaluation(
             status=status,
             surface_counts=occurrences,
             phonological_counts={
-                code: count
-                for code, count in occurrences.items()
-                if code.startswith("PHONO_")
+                code: count for code, count in occurrences.items() if code.startswith("PHONO_")
             },
             written_syllables=written_syllables,
             dialogue_sentence_count=dialogue_sentence_count,
@@ -403,10 +401,7 @@ def test_child_reference_is_allowed_when_child_is_an_actual_story_character() ->
 
     assert has_hard_repair_trigger(plan) is False
     assert "STORY:META_CHILD_REFERENCE" not in plan["trigger_reasons"]
-    assert all(
-        violation["code"] != "META_CHILD_REFERENCE"
-        for violation in plan["violations"]
-    )
+    assert all(violation["code"] != "META_CHILD_REFERENCE" for violation in plan["violations"])
 
 
 def test_apply_repair_preserves_question_choices_and_changes_only_two_sentences() -> None:
@@ -458,9 +453,7 @@ def test_low_semantic_overlap_repair_is_rejected() -> None:
         candidate_id="proposal",
         sentences=tuple(sentences),  # type: ignore[arg-type]
     )
-    profile = GenerationProfile(
-        skills=(SkillPolicy("CODA_ㅆ", "EXCLUDED", max_occurrences=0),)
-    )
+    profile = GenerationProfile(skills=(SkillPolicy("CODA_ㅆ", "EXCLUDED", max_occurrences=0),))
 
     decision = _decision(
         source_candidate=source,
@@ -483,9 +476,7 @@ def test_dialogue_speaker_change_is_rejected_even_when_names_are_preserved() -> 
         candidate_id="proposal",
         sentences=tuple(sentences),  # type: ignore[arg-type]
     )
-    profile = GenerationProfile(
-        skills=(SkillPolicy("CODA_ㅆ", "EXCLUDED", max_occurrences=0),)
-    )
+    profile = GenerationProfile(skills=(SkillPolicy("CODA_ㅆ", "EXCLUDED", max_occurrences=0),))
 
     decision = _decision(
         source_candidate=source,
@@ -542,9 +533,7 @@ def test_character_change_is_rejected() -> None:
         candidate_id="proposal",
         sentences=tuple(sentences),  # type: ignore[arg-type]
     )
-    profile = GenerationProfile(
-        skills=(SkillPolicy("CODA_ㅆ", "EXCLUDED", max_occurrences=0),)
-    )
+    profile = GenerationProfile(skills=(SkillPolicy("CODA_ㅆ", "EXCLUDED", max_occurrences=0),))
 
     decision = _decision(
         source_candidate=source,
@@ -570,9 +559,7 @@ def test_negation_polarity_change_is_rejected() -> None:
         candidate_id="proposal",
         sentences=tuple(proposal_sentences),  # type: ignore[arg-type]
     )
-    profile = GenerationProfile(
-        skills=(SkillPolicy("CODA_ㅆ", "EXCLUDED", max_occurrences=0),)
-    )
+    profile = GenerationProfile(skills=(SkillPolicy("CODA_ㅆ", "EXCLUDED", max_occurrences=0),))
 
     decision = _decision(
         source_candidate=source,
@@ -589,9 +576,7 @@ def test_negation_polarity_change_is_rejected() -> None:
 
 def test_child_input_signal_loss_is_rejected() -> None:
     source_sentences = list(_candidate().sentences)
-    source_sentences[0] = (
-        "거북이는 아이가 천천히 가도 괜찮다고 응원하자 웃었어요."
-    )
+    source_sentences[0] = "거북이는 아이가 천천히 가도 괜찮다고 응원하자 웃었어요."
     source = _candidate(sentences=tuple(source_sentences))  # type: ignore[arg-type]
     sentences = list(source.sentences)
     sentences[0] = "거북이는 아이가 힘내라고 응원하자 웃었어요."
@@ -599,9 +584,7 @@ def test_child_input_signal_loss_is_rejected() -> None:
         candidate_id="proposal",
         sentences=tuple(sentences),  # type: ignore[arg-type]
     )
-    profile = GenerationProfile(
-        skills=(SkillPolicy("CODA_ㅆ", "EXCLUDED", max_occurrences=0),)
-    )
+    profile = GenerationProfile(skills=(SkillPolicy("CODA_ㅆ", "EXCLUDED", max_occurrences=0),))
 
     decision = _decision(
         source_candidate=source,
@@ -748,9 +731,7 @@ def test_limited_skill_increase_within_allowance_is_not_skill_worsening() -> Non
         sentences=tuple(sentences),  # type: ignore[arg-type]
     )
     profile = GenerationProfile(
-        skills=(
-            SkillPolicy("HAS_TENSE_ONSET", "LIMITED", max_occurrences=1),
-        )
+        skills=(SkillPolicy("HAS_TENSE_ONSET", "LIMITED", max_occurrences=1),)
     )
 
     decision = _decision(
@@ -777,9 +758,7 @@ def test_limited_skill_overage_worsening_is_rejected() -> None:
         sentences=tuple(sentences),  # type: ignore[arg-type]
     )
     profile = GenerationProfile(
-        skills=(
-            SkillPolicy("HAS_TENSE_ONSET", "LIMITED", max_occurrences=1),
-        )
+        skills=(SkillPolicy("HAS_TENSE_ONSET", "LIMITED", max_occurrences=1),)
     )
 
     decision = _decision(
@@ -806,9 +785,7 @@ def test_real_feature_improvement_with_preserved_meaning_is_accepted() -> None:
         candidate_id="proposal",
         sentences=tuple(sentences),  # type: ignore[arg-type]
     )
-    profile = GenerationProfile(
-        skills=(SkillPolicy("CODA_ㅆ", "EXCLUDED", max_occurrences=0),)
-    )
+    profile = GenerationProfile(skills=(SkillPolicy("CODA_ㅆ", "EXCLUDED", max_occurrences=0),))
 
     decision = _decision(
         source_candidate=source,

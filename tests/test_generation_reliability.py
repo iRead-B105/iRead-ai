@@ -108,15 +108,21 @@ def test_training_generation_requires_both_internal_headers() -> None:
     client = TestClient(app_module.app)
     request = _training_request("auth-training")
 
-    assert client.post(
-        "/api/v1/trainings/candidates",
-        json=request,
-    ).status_code == 401
-    assert client.post(
-        "/api/v1/trainings/candidates",
-        headers={"X-API-Key": "local-development-key"},
-        json=request,
-    ).status_code == 400
+    assert (
+        client.post(
+            "/api/v1/trainings/candidates",
+            json=request,
+        ).status_code
+        == 401
+    )
+    assert (
+        client.post(
+            "/api/v1/trainings/candidates",
+            headers={"X-API-Key": "local-development-key"},
+            json=request,
+        ).status_code
+        == 400
+    )
 
     too_long = client.post(
         "/api/v1/trainings/candidates",

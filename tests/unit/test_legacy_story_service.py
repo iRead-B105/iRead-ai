@@ -8,11 +8,25 @@ import pytest
 
 from iread_ai.application.legacy_story_service import (
     LegacyStoryGenerationService,
+    _story_characters,
     _validate_branch_question,
     _validate_page_sentences,
 )
 from iread_ai.contracts.story_chapter import StoryChapterGenerateRequest
 from iread_ai.generation_models import ContinueStoryRequest, GenerateStoryRequest
+
+
+def test_story_characters_use_template_names_instead_of_generic_fallback() -> None:
+    characters = _story_characters(
+        "노인과 바다",
+        "노인은 소년과 작별하고 청새치를 찾아 바다로 나가요.",
+    )
+
+    assert [character["name"] for character in characters] == [
+        "노인",
+        "소년",
+        "청새치",
+    ]
 
 
 @dataclass
@@ -215,9 +229,7 @@ async def test_continue_preserves_full_history_and_confirmed_branch_input() -> N
     assert response.completed is False
     assert response.nextProgress == 9
     assert len(response.lines) == 5
-    assert response.lines[0].content.startswith(
-        "거북이는 큰 응원을 듣고 힘차게 발을 내디뎠어요."
-    )
+    assert response.lines[0].content.startswith("거북이는 큰 응원을 듣고 힘차게 발을 내디뎠어요.")
     assert "선택으로 새 길이" not in response.lines[0].content
     assert " ".join(line.content for line in response.lines[:4]).endswith(sentences[-1])
     assert response.lines[-1].branchPrompt is not None
@@ -249,9 +261,7 @@ async def test_continue_integrates_confirmed_branch_as_a_natural_event() -> None
             ),
         ]
     )
-    service = LegacyStoryGenerationService(
-        chapter_service=_RecordingChapterService(chapter)
-    )
+    service = LegacyStoryGenerationService(chapter_service=_RecordingChapterService(chapter))
     intent = "다친 새와 함께 별빛 다리를 건널래"
     request = ContinueStoryRequest.model_validate(
         {
@@ -273,9 +283,7 @@ async def test_continue_integrates_confirmed_branch_as_a_natural_event() -> None
 
     response = await service.continue_story(request)
 
-    assert response.lines[0].content.startswith(
-        "거북이는 다친 새와 별빛 다리를 함께 건넜어요."
-    )
+    assert response.lines[0].content.startswith("거북이는 다친 새와 별빛 다리를 함께 건넜어요.")
     assert not response.lines[0].content.startswith(f"{intent}.")
 
 
@@ -336,13 +344,9 @@ async def test_success_logs_quality_without_story_or_branch_text() -> None:
             ),
         ]
     )
-    service = LegacyStoryGenerationService(
-        chapter_service=_RecordingChapterService(chapter)
-    )
+    service = LegacyStoryGenerationService(chapter_service=_RecordingChapterService(chapter))
 
-    with patch(
-        "iread_ai.application.legacy_story_service.quality_logger.info"
-    ) as log_info:
+    with patch("iread_ai.application.legacy_story_service.quality_logger.info") as log_info:
         await service.generate(_opening_request())
 
     event = json.loads(log_info.call_args.args[1])

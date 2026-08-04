@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
+import logging
 import re
 import time
 import uuid
@@ -23,6 +25,7 @@ from iread_ai.personalization.analyzer import (
 from iread_ai.personalization.chapter_generator import (
     ChapterCandidate,
     ChapterCandidateGenerator,
+    ChapterGenerationBatch,
     ChapterGenerationContext,
     ChapterGenerationError,
     ChapterPromptMode,
@@ -70,6 +73,8 @@ from iread_ai.personalization.visual_scene import (
     load_visual_scene_prompt,
 )
 
+logger = logging.getLogger(__name__)
+
 _DIALOGUE_PATTERN = re.compile(r'("[^"\n]+"|“[^”\n]+”|‘[^’\n]+’)')
 _HANGUL_PATTERN = re.compile(r"[가-힣]+")
 _QUESTION_REWIND_MARKERS = (
@@ -110,21 +115,13 @@ _CHILD_CALLBACK_MARKERS = (
     "그 때문에",
     "그 바람에",
 )
-_RHYTHM_QUESTION_PATTERN = re.compile(
-    r"(?:리듬|박자|흥얼|구호|노래|외칠 말)"
-)
-_RHYTHM_BODY_PATTERN = re.compile(
-    r"(?:하나|둘|셋|넷|으쌰|영차|짝짝|쿵짝|리듬|박자)"
-)
-_DIALOGUE_FOCUS_PATTERN = re.compile(
-    r"(?:말의 내용|첫마디|한마디|구호|인사|대답|외칠|흥얼|노래)"
-)
+_RHYTHM_QUESTION_PATTERN = re.compile(r"(?:리듬|박자|흥얼|구호|노래|외칠 말)")
+_RHYTHM_BODY_PATTERN = re.compile(r"(?:하나|둘|셋|넷|으쌰|영차|짝짝|쿵짝|리듬|박자)")
+_DIALOGUE_FOCUS_PATTERN = re.compile(r"(?:말의 내용|첫마디|한마디|구호|인사|대답|외칠|흥얼|노래)")
 _DIALOGUE_QUESTION_PATTERN = re.compile(
     r"(?:뭐라고|무슨 말|어떤.{0,8}말|구호|인사|대답|외칠|흥얼|노래)"
 )
-_MIXED_ACTION_FOCUS_PATTERN = re.compile(
-    r"(?:행동|방법|작전|길|도구|장소|걸음 모양|고칠 일)"
-)
+_MIXED_ACTION_FOCUS_PATTERN = re.compile(r"(?:행동|방법|작전|길|도구|장소|걸음 모양|고칠 일)")
 _GENERIC_CHILD_SIGNAL_WORDS = frozenset(
     {
         "가요",
@@ -172,27 +169,21 @@ _ONE_TIME_EVENT_FAMILIES = (
         re.compile(r"(?:시작|출발)"),
     ),
     (
-        re.compile(
-            r"(?:문|상자|뚜껑|봉투).{0,8}(?:열어|열었|열리|닫아|닫았|닫히)"
-        ),
+        re.compile(r"(?:문|상자|뚜껑|봉투).{0,8}(?:열어|열었|열리|닫아|닫았|닫히)"),
         re.compile(
             r"(?:문|상자|뚜껑|봉투).{0,8}(?:열|닫)"
             r"|(?:무엇|뭐|어떤).{0,8}(?:열|닫)"
         ),
     ),
     (
-        re.compile(
-            r"(?:길|도구|물건|방법).{0,8}(?:골라|고르|정해|정했|선택)"
-        ),
+        re.compile(r"(?:길|도구|물건|방법).{0,8}(?:골라|고르|정해|정했|선택)"),
         re.compile(
             r"(?:길|도구|물건|방법).{0,8}(?:고르|정하|선택)"
             r"|(?:무엇|뭐|어떤|어느).{0,8}(?:고르|정하|선택)"
         ),
     ),
     (
-        re.compile(
-            r"(?:결승선|목적지|집|마을).{0,8}(?:도착|닿아|들어가|통과)"
-        ),
+        re.compile(r"(?:결승선|목적지|집|마을).{0,8}(?:도착|닿아|들어가|통과)"),
         re.compile(
             r"(?:결승선|목적지|집|마을).{0,8}(?:도착|닿|들어가|통과)"
             r"|(?:어디|어느 곳).{0,8}(?:도착|닿)"
@@ -249,11 +240,7 @@ class _PageAssessment:
     def quality_status(self) -> str:
         if self.analysis_status is not AnalysisStatus.FULL:
             return "ANALYSIS_DEGRADED"
-        if (
-            not self.contract_pass
-            or self.excluded_overage_count
-            or self.limited_overage_count
-        ):
+        if not self.contract_pass or self.excluded_overage_count or self.limited_overage_count:
             return "BEST_EFFORT"
         return "PASS"
 
@@ -283,8 +270,7 @@ class _EvaluatedChapter:
     def risk_per_10(self) -> float:
         syllables = sum(page.written_syllable_count for page in self.pages)
         weighted_risk = sum(
-            page.risk_per_10 * page.written_syllable_count / 10
-            for page in self.pages
+            page.risk_per_10 * page.written_syllable_count / 10 for page in self.pages
         )
         return 10 * weighted_risk / max(1, syllables)
 
@@ -309,6 +295,9 @@ class PersonalizedStoryChapterService:
         repairer: PageCandidateRepairer | None = None,
         repair_timeout_seconds: float = 6.0,
         candidate_count: int = 3,
+        quality_retry_count: int = 0,
+        require_contract_pass: bool = False,
+        provider_name: str = "mock",
         prompt_mode: ChapterPromptMode = PERSONALIZED_PROMPT_MODE,
         visual_scene_planner: VisualScenePlanner | None = None,
     ) -> None:
@@ -316,22 +305,25 @@ class PersonalizedStoryChapterService:
             raise ValueError("repair_timeout_seconds must be positive")
         if candidate_count < 1 or candidate_count > 8:
             raise ValueError("candidate_count must be between 1 and 8")
+        if quality_retry_count < 0 or quality_retry_count > 2:
+            raise ValueError("quality_retry_count must be between 0 and 2")
+        if not provider_name.strip():
+            raise ValueError("provider_name must not be blank")
         if prompt_mode not in {
             BASELINE_PROMPT_MODE,
             PERSONALIZED_PROMPT_MODE,
         }:
-            raise ValueError(
-                f"unsupported chapter prompt mode: {prompt_mode}"
-            )
+            raise ValueError(f"unsupported chapter prompt mode: {prompt_mode}")
         self._generator = generator
         self._analyzer = analyzer
         self._repairer = repairer
         self._repair_timeout_seconds = repair_timeout_seconds
         self._candidate_count = candidate_count
+        self._quality_retry_count = quality_retry_count
+        self._require_contract_pass = require_contract_pass
+        self._provider_name = provider_name.strip()
         self._prompt_mode = prompt_mode
-        self._visual_scene_planner = (
-            visual_scene_planner or MockVisualScenePlanner()
-        )
+        self._visual_scene_planner = visual_scene_planner or MockVisualScenePlanner()
 
     async def generate(
         self,
@@ -341,105 +333,147 @@ class PersonalizedStoryChapterService:
         context = build_chapter_generation_context(request)
         profile = build_chapter_generation_profile(request)
 
-        try:
-            generation_options: dict[str, Any] = {
-                "candidate_count": self._candidate_count,
-            }
-            generation_profile: GenerationProfile | None = profile
-            if self._prompt_mode == BASELINE_PROMPT_MODE:
-                generation_options["prompt_mode"] = self._prompt_mode
-                generation_profile = None
-            batch = await self._generator.generate(
-                context,
-                generation_profile,
-                **generation_options,
-            )
-        except ChapterGenerationError as exc:
-            raise _provider_error(exc) from exc
-        except (TypeError, ValueError) as exc:
-            raise StoryChapterUseCaseError(
-                status_code=502,
-                code="MODEL_OUTPUT_INVALID",
-                message="모델이 장 생성 계약에 맞는 결과를 만들지 못했습니다.",
-                retryable=False,
-            ) from exc
+        generation_options: dict[str, Any] = {
+            "candidate_count": self._candidate_count,
+        }
+        generation_profile: GenerationProfile | None = profile
+        if self._prompt_mode == BASELINE_PROMPT_MODE:
+            generation_options["prompt_mode"] = self._prompt_mode
+            generation_profile = None
 
-        pagination_started = time.perf_counter()
-        partitioned: list[tuple[ChapterCandidate, ChapterPartition]] = []
-        partition_errors: list[str] = []
-        for candidate in batch.candidates:
+        generation_ms = 0.0
+        pagination_ms = 0.0
+        analysis_ms = 0.0
+        generation_api_call_count = 0
+        best_result: (
+            tuple[
+                ChapterGenerationBatch,
+                _EvaluatedChapter,
+                _ChapterRepairResult,
+            ]
+            | None
+        ) = None
+        for _attempt in range(self._quality_retry_count + 1):
             try:
-                partition = _partition_candidate(
-                    candidate,
-                    request,
-                    profile,
+                batch = await self._generator.generate(
                     context,
+                    generation_profile,
+                    **generation_options,
                 )
-            except PagePartitionError as exc:
-                partition_errors.append(
-                    f"{candidate.candidate_id}:{type(exc).__name__}"
-                )
+            except ChapterGenerationError as exc:
+                raise _provider_error(exc) from exc
+            except (TypeError, ValueError) as exc:
+                raise StoryChapterUseCaseError(
+                    status_code=502,
+                    code="MODEL_OUTPUT_INVALID",
+                    message="모델이 장 생성 계약에 맞는 결과를 만들지 못했습니다.",
+                    retryable=False,
+                ) from exc
+            generation_ms += float(batch.elapsed_ms)
+            generation_api_call_count += 1
+
+            pagination_started = time.perf_counter()
+            partitioned: list[tuple[ChapterCandidate, ChapterPartition]] = []
+            for candidate in batch.candidates:
+                try:
+                    partition = _partition_candidate(
+                        candidate,
+                        request,
+                        profile,
+                        context,
+                    )
+                except PagePartitionError:
+                    continue
+                partitioned.append((candidate, partition))
+            pagination_ms += (time.perf_counter() - pagination_started) * 1000
+            if not partitioned:
                 continue
-            partitioned.append((candidate, partition))
-        pagination_ms = (time.perf_counter() - pagination_started) * 1000
-        if not partitioned:
+
+            analysis_started = time.perf_counter()
+            evaluated = await asyncio.to_thread(
+                _evaluate_chapters,
+                tuple(partitioned),
+                context,
+                profile,
+                self._analyzer,
+            )
+            analysis_ms += (time.perf_counter() - analysis_started) * 1000
+            selected = min(evaluated, key=_chapter_rank)
+            repair_result = await _repair_selected_chapter(
+                selected=selected,
+                request=request,
+                context=context,
+                profile=profile,
+                analyzer=self._analyzer,
+                repairer=self._repairer,
+                timeout_seconds=self._repair_timeout_seconds,
+            )
+            selected = repair_result.selected
+            current_result = (batch, selected, repair_result)
+            if best_result is None or _chapter_rank(selected) < _chapter_rank(best_result[1]):
+                best_result = current_result
+            if all(page.contract_pass for page in selected.pages):
+                best_result = current_result
+                break
+
+        if best_result is None:
             raise StoryChapterUseCaseError(
                 status_code=502,
                 code="MODEL_OUTPUT_INVALID",
+                message=("생성된 장을 읽기 분량에 맞는 2~4페이지로 나누지 못했습니다."),
+                retryable=False,
+            )
+        batch, selected, repair_result = best_result
+        if self._require_contract_pass and not all(page.contract_pass for page in selected.pages):
+            logger.warning(
+                json.dumps(
+                    {
+                        "event": "story_quality_gate_failed",
+                        "storyId": request.story_id,
+                        "chapterNumber": request.chapter_number,
+                        "provider": self._provider_name,
+                        "model": batch.model or "unknown",
+                        "generationAttemptCount": generation_api_call_count,
+                        "quality": _chapter_quality_document(selected.pages),
+                    },
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+            )
+            raise StoryChapterUseCaseError(
+                status_code=502,
+                code="STORY_QUALITY_CONTRACT_FAILED",
                 message=(
-                    "생성된 장을 읽기 분량에 맞는 2~4페이지로 나누지 "
-                    "못했습니다."
+                    "읽기 품질 기준을 통과하는 이야기를 만들지 "
+                    "못했습니다. 잠시 후 다시 시도해 주세요."
                 ),
                 retryable=False,
             )
-
-        analysis_started = time.perf_counter()
-        evaluated = await asyncio.to_thread(
-            _evaluate_chapters,
-            tuple(partitioned),
-            context,
-            profile,
-            self._analyzer,
-        )
-        analysis_ms = (time.perf_counter() - analysis_started) * 1000
-        selected = min(evaluated, key=_chapter_rank)
-        repair_result = await _repair_selected_chapter(
-            selected=selected,
+        scene_batch, scene_status, scene_fallback_reason = await _generate_visual_scenes(
+            planner=self._visual_scene_planner,
             request=request,
-            context=context,
-            profile=profile,
-            analyzer=self._analyzer,
-            repairer=self._repairer,
-            timeout_seconds=self._repair_timeout_seconds,
-        )
-        selected = repair_result.selected
-        scene_batch, scene_status, scene_fallback_reason = (
-            await _generate_visual_scenes(
-                planner=self._visual_scene_planner,
-                request=request,
-                selected=selected,
-            )
+            selected=selected,
         )
         total_ms = max(
             (time.perf_counter() - started) * 1000,
-            float(batch.elapsed_ms),
+            generation_ms,
             analysis_ms,
             pagination_ms,
             repair_result.elapsed_ms,
             scene_batch.elapsed_ms,
         )
-        prompt_hash = hashlib.sha256(
-            batch.system_prompt.encode("utf-8")
-        ).hexdigest()[:12]
+        prompt_hash = hashlib.sha256(batch.system_prompt.encode("utf-8")).hexdigest()[:12]
         document = _response_document(
             request=request,
             context=context,
             profile=profile,
             selected=selected,
             model=batch.model or "unknown",
+            provider=self._provider_name,
             prompt_hash=prompt_hash,
             candidate_count=len(batch.candidates),
-            generation_ms=float(batch.elapsed_ms),
+            generation_api_call_count=generation_api_call_count,
+            generation_ms=generation_ms,
             analysis_ms=analysis_ms,
             pagination_ms=pagination_ms,
             repair_result=repair_result,
@@ -457,11 +491,7 @@ def build_chapter_generation_context(
 ) -> ChapterGenerationContext:
     state = request.story_state
     beat = request.story_template.current_beat
-    child_input = (
-        request.branch_input.text
-        if request.branch_input is not None
-        else ""
-    )
+    child_input = request.branch_input.text if request.branch_input is not None else ""
 
     def chapter_instruction(text: str) -> str:
         return _materialize_branch_reference(
@@ -478,45 +508,30 @@ def build_chapter_generation_context(
         ),
     ]
     if beat.allowed_branch_slots:
-        context_parts.append(
-            "허용된 분기 유형: " + ", ".join(beat.allowed_branch_slots)
-        )
+        context_parts.append("허용된 분기 유형: " + ", ".join(beat.allowed_branch_slots))
     if state.rolling_summary.strip():
         context_parts.append(
-            "지금까지의 이야기: "
-            + _story_world_text(state.rolling_summary.strip())
+            "지금까지의 이야기: " + _story_world_text(state.rolling_summary.strip())
         )
     if state.resolved_facts:
         context_parts.append(
             "이미 일어난 사실: "
-            + " / ".join(
-                _story_world_text(fact) for fact in state.resolved_facts
-            )
+            + " / ".join(_story_world_text(fact) for fact in state.resolved_facts)
         )
     if state.unresolved_hooks:
         context_parts.append(
             "이어갈 궁금증: "
-            + " / ".join(
-                _story_world_text(hook) for hook in state.unresolved_hooks
-            )
+            + " / ".join(_story_world_text(hook) for hook in state.unresolved_hooks)
         )
     if state.last_question:
-        context_parts.append(
-            "직전 질문: " + _story_world_text(state.last_question)
-        )
+        context_parts.append("직전 질문: " + _story_world_text(state.last_question))
 
-    character_by_id = {
-        character.character_id: character
-        for character in state.characters
-    }
+    character_by_id = {character.character_id: character for character in state.characters}
     if character_by_id:
         context_parts.append(
             "등장인물 설정: "
             + " / ".join(
-                (
-                    f"{character.name}({character.role}; "
-                    f"{', '.join(character.immutable_traits)})"
-                )
+                (f"{character.name}({character.role}; {', '.join(character.immutable_traits)})")
                 for character in character_by_id.values()
             )
         )
@@ -532,17 +547,11 @@ def build_chapter_generation_context(
             )
         )
     )
-    characters = tuple(
-        character_by_id[character_id].name
-        for character_id in required_ids
-    )
+    characters = tuple(character_by_id[character_id].name for character_id in required_ids)
     if not characters:
-        characters = tuple(
-            character.name for character in state.characters
-        )
+        characters = tuple(character.name for character in state.characters)
     previous_context = tuple(
-        _story_world_text(" ".join(page.sentences))
-        for page in state.recent_pages[-2:]
+        _story_world_text(" ".join(page.sentences)) for page in state.recent_pages[-2:]
     )
     ordered_events = tuple(
         (
@@ -550,10 +559,7 @@ def build_chapter_generation_context(
             + chapter_instruction(event.locked_event)
             + (
                 ". 반드시 포함할 개념: "
-                + ", ".join(
-                    chapter_instruction(concept)
-                    for concept in event.required_concepts
-                )
+                + ", ".join(chapter_instruction(concept) for concept in event.required_concepts)
                 if event.required_concepts
                 else ""
             )
@@ -577,9 +583,7 @@ def build_chapter_generation_context(
         ),
         conclude=request.conclude,
         expected_page_count=request.chapter_plan.max_pages,
-        expected_sentences_per_page=(
-            request.generation_profile.content_contract.sentence_count
-        ),
+        expected_sentences_per_page=(request.generation_profile.content_contract.sentence_count),
     )
 
 
@@ -612,18 +616,10 @@ def build_chapter_generation_profile(
         ),
         content_contract=ContentContract(
             sentence_count=contract.sentence_count,
-            preferred_min_syllables=(
-                contract.preferred_written_syllables.min
-            ),
-            preferred_max_syllables=(
-                contract.preferred_written_syllables.max
-            ),
-            accepted_min_syllables=(
-                contract.accepted_written_syllables.min
-            ),
-            accepted_max_syllables=(
-                contract.accepted_written_syllables.max
-            ),
+            preferred_min_syllables=(contract.preferred_written_syllables.min),
+            preferred_max_syllables=(contract.preferred_written_syllables.max),
+            accepted_min_syllables=(contract.accepted_written_syllables.min),
+            accepted_max_syllables=(contract.accepted_written_syllables.max),
             direct_dialogue=contract.direct_dialogue_count,
         ),
         protected_terms=protected_terms,
@@ -641,27 +637,13 @@ def _partition_candidate(
         "max_pages": request.chapter_plan.max_pages,
         "min_sentences_per_page": 3,
         "max_sentences_per_page": 4,
-        "preferred_min_syllables": (
-            profile.content_contract.preferred_min_syllables
-        ),
-        "preferred_max_syllables": (
-            profile.content_contract.preferred_max_syllables
-        ),
-        "accepted_min_syllables": (
-            profile.content_contract.accepted_min_syllables
-        ),
-        "accepted_max_syllables": (
-            profile.content_contract.accepted_max_syllables
-        ),
-        "direct_dialogue_per_page": (
-            profile.content_contract.direct_dialogue
-        ),
+        "preferred_min_syllables": (profile.content_contract.preferred_min_syllables),
+        "preferred_max_syllables": (profile.content_contract.preferred_max_syllables),
+        "accepted_min_syllables": (profile.content_contract.accepted_min_syllables),
+        "accepted_max_syllables": (profile.content_contract.accepted_max_syllables),
+        "direct_dialogue_per_page": (profile.content_contract.direct_dialogue),
     }
-    forced_first_break = (
-        candidate.child_detour_end_sentence_index
-        if context.child_input
-        else None
-    )
+    forced_first_break = candidate.child_detour_end_sentence_index if context.child_input else None
     try:
         return partition_chapter_sentences(
             candidate.sentences,
@@ -696,21 +678,21 @@ async def _repair_selected_chapter(
         "META_CHILD_REFERENCE",
         "CHILD_INPUT_NOT_REFLECTED",
     }
-    repair_target: tuple[
-        DynamicStoryPage,
-        PageCandidate,
-        PageGenerationContext,
-        GenerationProfile,
-        Any,
-        dict[str, Any],
-    ] | None = None
+    repair_target: (
+        tuple[
+            DynamicStoryPage,
+            PageCandidate,
+            PageGenerationContext,
+            GenerationProfile,
+            Any,
+            dict[str, Any],
+        ]
+        | None
+    ) = None
     ranked_pages = sorted(
         zip(selected.partition.pages, selected.pages, strict=True),
         key=lambda row: (
-            -sum(
-                failure in hard_failures
-                for failure in row[1].contract_failures
-            ),
+            -sum(failure in hard_failures for failure in row[1].contract_failures),
             -row[1].excluded_overage_count,
             -row[1].limited_overage_count,
             row[0].page_number,
@@ -724,10 +706,7 @@ async def _repair_selected_chapter(
         ):
             continue
         page_candidate = PageCandidate(
-            candidate_id=(
-                f"{selected.candidate.candidate_id}-"
-                f"page-{dynamic_page.page_number}"
-            ),
+            candidate_id=(f"{selected.candidate.candidate_id}-page-{dynamic_page.page_number}"),
             sentences=tuple(dynamic_page.sentences),
         )
         page_profile = replace(
@@ -747,11 +726,7 @@ async def _repair_selected_chapter(
                 )
             ],
             page_number=dynamic_page.page_number,
-            child_input=(
-                context.child_input
-                if dynamic_page.page_number == 1
-                else ""
-            ),
+            child_input=(context.child_input if dynamic_page.page_number == 1 else ""),
             previous_pages=tuple(
                 " ".join(page.sentences)
                 for page in selected.partition.pages
@@ -761,8 +736,7 @@ async def _repair_selected_chapter(
             required_concepts=(),
             question_focus=(
                 context.question_focus
-                if dynamic_page.page_number
-                == selected.partition.page_count
+                if dynamic_page.page_number == selected.partition.page_count
                 else None
             ),
             conclude=context.conclude,
@@ -785,10 +759,7 @@ async def _repair_selected_chapter(
             )
         except (TypeError, ValueError):
             continue
-        if (
-            has_hard_repair_trigger(repair_plan)
-            and repair_plan["editable_sentence_indexes"]
-        ):
+        if has_hard_repair_trigger(repair_plan) and repair_plan["editable_sentence_indexes"]:
             repair_target = (
                 dynamic_page,
                 page_candidate,
@@ -855,8 +826,7 @@ async def _repair_selected_chapter(
             context=page_context,
             profile=page_profile,
             editable_indexes=tuple(
-                int(index)
-                for index in repair_plan["editable_sentence_indexes"]
+                int(index) for index in repair_plan["editable_sentence_indexes"]
             ),
             changed_sentence_numbers=changed,
         )
@@ -872,15 +842,11 @@ async def _repair_selected_chapter(
         sentences = list(selected.candidate.sentences)
         global_start = target_page.start_sentence_index - 1
         for local_number in changed:
-            sentences[global_start + local_number - 1] = (
-                proposal_page.sentences[local_number - 1]
-            )
+            sentences[global_start + local_number - 1] = proposal_page.sentences[local_number - 1]
         proposal_candidate = ChapterCandidate(
             candidate_id=selected.candidate.candidate_id,
             sentences=tuple(sentences),
-            child_detour_end_sentence_index=(
-                selected.candidate.child_detour_end_sentence_index
-            ),
+            child_detour_end_sentence_index=(selected.candidate.child_detour_end_sentence_index),
             question=selected.candidate.question,
             subtitle=selected.candidate.subtitle,
             choices=selected.candidate.choices,
@@ -926,15 +892,11 @@ async def _repair_selected_chapter(
         for local_number in changed
     )
     remaining_issue_count = sum(
-        len(page.contract_failures)
-        + page.excluded_overage_count
-        + page.limited_overage_count
+        len(page.contract_failures) + page.excluded_overage_count + page.limited_overage_count
         for page in proposal_chapter.pages
     )
     decision_reasons = (
-        (f"PARTIAL_REPAIR_REMAINING:{remaining_issue_count}",)
-        if remaining_issue_count
-        else ()
+        (f"PARTIAL_REPAIR_REMAINING:{remaining_issue_count}",) if remaining_issue_count else ()
     )
     return _ChapterRepairResult(
         selected=proposal_chapter,
@@ -958,9 +920,7 @@ def _evaluate_chapters(
         page_rows: list[_PageAssessment] = []
         final_page_number = partition.page_count
         chapter_sentences = tuple(
-            sentence
-            for page in partition.pages
-            for sentence in page.sentences
+            sentence for page in partition.pages for sentence in page.sentences
         )
         question_temporal_penalty = _question_temporal_penalty(
             candidate.question,
@@ -986,24 +946,13 @@ def _evaluate_chapters(
             child_input_callback_score,
         ) = _child_input_causality_scores(context, partition)
         first_page_text = " ".join(partition.pages[0].sentences)
-        child_reflected = (
-            not context.child_input
-            or _literal_child_input_preserved(
-                first_page_text,
-                context.child_input,
-            )
+        child_reflected = not context.child_input or _literal_child_input_preserved(
+            first_page_text,
+            context.child_input,
         )
         for page in partition.pages:
-            question = (
-                candidate.question
-                if page.page_number == final_page_number
-                else None
-            )
-            choices = (
-                candidate.choices
-                if page.page_number == final_page_number
-                else ()
-            )
+            question = candidate.question if page.page_number == final_page_number else None
+            choices = candidate.choices if page.page_number == final_page_number else ()
             page_rows.append(
                 _assess_page(
                     page_number=page.page_number,
@@ -1014,20 +963,14 @@ def _evaluate_chapters(
                     analyzer=analyzer,
                     characters=context.characters,
                     question_time_reversal=(
-                        page.page_number == final_page_number
-                        and question_temporal_penalty > 0
+                        page.page_number == final_page_number and question_temporal_penalty > 0
                     ),
                     question_answer_leak=(
-                        page.page_number == final_page_number
-                        and question_answer_leak_penalty > 0
+                        page.page_number == final_page_number and question_answer_leak_penalty > 0
                     ),
-                    child_input_missing=(
-                        page.page_number == 1
-                        and not child_reflected
-                    ),
+                    child_input_missing=(page.page_number == 1 and not child_reflected),
                     question_focus_mismatch=(
-                        page.page_number == final_page_number
-                        and question_focus_penalty > 0
+                        page.page_number == final_page_number and question_focus_penalty > 0
                     ),
                 )
             )
@@ -1039,15 +982,12 @@ def _evaluate_chapters(
                 child_input_reflected=child_reflected,
                 child_detour_preserved=(
                     not context.child_input
-                    or partition.forced_first_break
-                    == candidate.child_detour_end_sentence_index
+                    or partition.forced_first_break == candidate.child_detour_end_sentence_index
                 ),
                 child_input_owner_score=child_input_owner_score,
                 child_input_callback_score=child_input_callback_score,
                 question_temporal_penalty=question_temporal_penalty,
-                question_answer_leak_penalty=(
-                    question_answer_leak_penalty
-                ),
+                question_answer_leak_penalty=(question_answer_leak_penalty),
                 question_focus_penalty=question_focus_penalty,
                 return_score=_return_score(
                     partition.pages[0].sentences[-1],
@@ -1105,17 +1045,12 @@ def _assess_page(
     if not 3 <= len(sentences) <= 4:
         failures.append("SENTENCE_COUNT")
     if not (
-        contract.accepted_min_syllables
-        <= body.written_syllables
-        <= contract.accepted_max_syllables
+        contract.accepted_min_syllables <= body.written_syllables <= contract.accepted_max_syllables
     ):
         failures.append("WRITTEN_SYLLABLE_RANGE")
     if body.dialogue_sentence_count > contract.direct_dialogue:
         failures.append("DIRECT_DIALOGUE_COUNT")
-    if (
-        body.dialogue_sentence_count > 0
-        and not has_exact_spoken_dialogue(sentences, characters)
-    ):
+    if body.dialogue_sentence_count > 0 and not has_exact_spoken_dialogue(sentences, characters):
         failures.append("CURLY_DIALOGUE_FORMAT")
     if has_meta_child_reference(sentences, characters):
         failures.append("META_CHILD_REFERENCE")
@@ -1135,19 +1070,12 @@ def _assess_page(
     total_risk = 0.0
     for skill in profile.skills:
         scope_counts = tuple(
-            (_analysis_occurrences(analysis, skill.code), weight)
-            for analysis, weight in scopes
+            (_analysis_occurrences(analysis, skill.code), weight) for analysis, weight in scopes
         )
         raw_count = sum(count for count, _ in scope_counts)
-        weighted_count = sum(
-            count * weight for count, weight in scope_counts
-        )
-        unverified = (
-            skill.code.startswith("PHONO_")
-            and any(
-                analysis.status is not AnalysisStatus.FULL
-                for analysis, _ in scopes
-            )
+        weighted_count = sum(count * weight for count, weight in scope_counts)
+        unverified = skill.code.startswith("PHONO_") and any(
+            analysis.status is not AnalysisStatus.FULL for analysis, _ in scopes
         )
         occurrences = None if unverified else raw_count
         status = "UNVERIFIED" if unverified else "PASS"
@@ -1167,16 +1095,8 @@ def _assess_page(
             if overage:
                 status = "OVER_LIMIT"
         elif occurrences is not None and skill.role == "TARGET":
-            minimum = (
-                skill.target_min
-                if skill.target_min is not None
-                else occurrences
-            )
-            maximum = (
-                skill.target_max
-                if skill.target_max is not None
-                else occurrences
-            )
+            minimum = skill.target_min if skill.target_min is not None else occurrences
+            maximum = skill.target_max if skill.target_max is not None else occurrences
             target_distance = _range_distance(
                 occurrences,
                 minimum,
@@ -1202,10 +1122,7 @@ def _assess_page(
             )
         )
 
-    weighted_syllables = sum(
-        analysis.written_syllables * weight
-        for analysis, weight in scopes
-    )
+    weighted_syllables = sum(analysis.written_syllables * weight for analysis, weight in scopes)
     analysis_status = max(
         (analysis.status for analysis, _ in scopes),
         key=_analysis_status_rank,
@@ -1245,9 +1162,7 @@ def _surface_only_analysis(
 ) -> CandidateAnalysis:
     joined = " ".join(texts)
     surface = count_surface_features(joined)
-    controllable = count_surface_features(
-        mask_protected_terms(joined, protected_terms)
-    )
+    controllable = count_surface_features(mask_protected_terms(joined, protected_terms))
     protected = {
         code: count - controllable.get(code, 0)
         for code, count in surface.items()
@@ -1261,8 +1176,7 @@ def _surface_only_analysis(
         phonological_rule_counts={},
         written_syllables=written_syllable_count(joined),
         dialogue_sentence_count=sum(
-            _DIALOGUE_PATTERN.search(sentence) is not None
-            for sentence in texts
+            _DIALOGUE_PATTERN.search(sentence) is not None for sentence in texts
         ),
         pronunciations=(),
         kiwi_token_count=0,
@@ -1278,9 +1192,7 @@ def _analysis_occurrences(
 ) -> int:
     if code.startswith("PHONO_"):
         return int(analysis.phonological_rule_counts.get(code, 0))
-    return int(
-        analysis.controllable_surface_feature_counts.get(code, 0)
-    )
+    return int(analysis.controllable_surface_feature_counts.get(code, 0))
 
 
 def _chapter_rank(row: _EvaluatedChapter) -> tuple[Any, ...]:
@@ -1324,8 +1236,7 @@ def _child_input_causality_scores(
     target_characters = tuple(
         character
         for character in context.characters
-        if context.last_question is not None
-        and character in context.last_question
+        if context.last_question is not None and character in context.last_question
     )
     if not signal_indices:
         owner_score = 0
@@ -1337,10 +1248,7 @@ def _child_input_causality_scores(
     ):
         owner_score = 2
     elif any(
-        any(
-            character in first_page[nearby_index]
-            for character in target_characters
-        )
+        any(character in first_page[nearby_index] for character in target_characters)
         for index in signal_indices
         for nearby_index in range(
             max(0, index - 1),
@@ -1351,11 +1259,7 @@ def _child_input_causality_scores(
     else:
         owner_score = 0
 
-    later_text = " ".join(
-        sentence
-        for page in partition.pages[1:]
-        for sentence in page.sentences
-    )
+    later_text = " ".join(sentence for page in partition.pages[1:] for sentence in page.sentences)
     if _literal_child_input_preserved(later_text, child_input):
         callback_score = 2
     elif any(marker in later_text for marker in _CHILD_CALLBACK_MARKERS):
@@ -1401,8 +1305,7 @@ def _question_answer_leak_penalty(
             continue
         coverage = max(
             (
-                len(choice_bigrams & _hangul_bigrams(sentence))
-                / len(choice_bigrams)
+                len(choice_bigrams & _hangul_bigrams(sentence)) / len(choice_bigrams)
                 for sentence in completed_sentences
             ),
             default=0.0,
@@ -1411,18 +1314,13 @@ def _question_answer_leak_penalty(
             penalty += 1
 
     if _RHYTHM_QUESTION_PATTERN.search(question) is not None:
-        target_characters = tuple(
-            character for character in characters if character in question
-        )
+        target_characters = tuple(character for character in characters if character in question)
         if any(
             _DIALOGUE_PATTERN.search(sentence) is not None
             and _RHYTHM_BODY_PATTERN.search(sentence) is not None
             and (
                 not target_characters
-                or any(
-                    character in sentence
-                    for character in target_characters
-                )
+                or any(character in sentence for character in target_characters)
             )
             for sentence in completed_sentences
         ):
@@ -1440,10 +1338,7 @@ def _question_focus_penalty(
         _DIALOGUE_FOCUS_PATTERN.search(question_focus) is not None
         and _MIXED_ACTION_FOCUS_PATTERN.search(question_focus) is None
     )
-    if (
-        dialogue_only
-        and _DIALOGUE_QUESTION_PATTERN.search(question) is None
-    ):
+    if dialogue_only and _DIALOGUE_QUESTION_PATTERN.search(question) is None:
         return 2
     return 0
 
@@ -1463,36 +1358,24 @@ def _question_temporal_penalty(
             "",
             previous_question,
         )
-        if re.sub(r"[\s.?!。？！]+", "", normalized_question) == (
-            normalized_previous
-        ):
+        if re.sub(r"[\s.?!。？！]+", "", normalized_question) == (normalized_previous):
             return 3
     completed_text = " ".join(completed_texts)
     completed_families = {
         index
-        for index, (completed_pattern, _) in enumerate(
-            _ONE_TIME_EVENT_FAMILIES
-        )
+        for index, (completed_pattern, _) in enumerate(_ONE_TIME_EVENT_FAMILIES)
         if completed_pattern.search(completed_text)
     }
     repeated_families = {
         index
-        for index, (_, question_pattern) in enumerate(
-            _ONE_TIME_EVENT_FAMILIES
-        )
+        for index, (_, question_pattern) in enumerate(_ONE_TIME_EVENT_FAMILIES)
         if question_pattern.search(normalized_question)
     }
     if not completed_families.intersection(repeated_families):
         return 0
-    if any(
-        marker in normalized_question
-        for marker in _QUESTION_REWIND_MARKERS
-    ):
+    if any(marker in normalized_question for marker in _QUESTION_REWIND_MARKERS):
         return 2
-    if any(
-        marker in normalized_question
-        for marker in _QUESTION_FORWARD_MARKERS
-    ):
+    if any(marker in normalized_question for marker in _QUESTION_FORWARD_MARKERS):
         return 0
     return 1
 
@@ -1503,16 +1386,8 @@ async def _generate_visual_scenes(
     request: StoryChapterGenerateRequest,
     selected: _EvaluatedChapter,
 ) -> tuple[VisualSceneGenerationBatch, str, str | None]:
-    question = (
-        selected.candidate.question
-        if not request.conclude
-        else None
-    )
-    choices = (
-        selected.candidate.choices
-        if not request.conclude
-        else ()
-    )
+    question = selected.candidate.question if not request.conclude else None
+    choices = selected.candidate.choices if not request.conclude else ()
     started = time.perf_counter()
     try:
         batch = await planner.generate(
@@ -1546,11 +1421,7 @@ async def _generate_visual_scenes(
             "DETERMINISTIC_FALLBACK",
             reason,
         )
-    status = (
-        "LLM_GENERATED"
-        if batch.api_call_count > 0
-        else "MOCK"
-    )
+    status = "LLM_GENERATED" if batch.api_call_count > 0 else "MOCK"
     return batch, status, None
 
 
@@ -1561,8 +1432,10 @@ def _response_document(
     profile: GenerationProfile,
     selected: _EvaluatedChapter,
     model: str,
+    provider: str,
     prompt_hash: str,
     candidate_count: int,
+    generation_api_call_count: int,
     generation_ms: float,
     analysis_ms: float,
     pagination_ms: float,
@@ -1590,21 +1463,9 @@ def _response_document(
                 "pageNumber": dynamic_page.page_number,
                 "sentences": list(dynamic_page.sentences),
                 "visualScene": visual_scene,
-                "question": (
-                    selected.candidate.question
-                    if branch_required
-                    else None
-                ),
-                "subtitle": (
-                    _candidate_subtitle(selected.candidate)
-                    if branch_required
-                    else None
-                ),
-                "choices": (
-                    list(selected.candidate.choices)
-                    if branch_required
-                    else []
-                ),
+                "question": (selected.candidate.question if branch_required else None),
+                "subtitle": (_candidate_subtitle(selected.candidate) if branch_required else None),
+                "choices": (list(selected.candidate.choices) if branch_required else []),
                 "requiresBranchInput": branch_required,
             }
         )
@@ -1615,15 +1476,9 @@ def _response_document(
             }
         )
 
-    final_question = (
-        selected.candidate.question
-        if not request.conclude
-        else None
-    )
+    final_question = selected.candidate.question if not request.conclude else None
     page_text = " ".join(
-        sentence
-        for page in selected.partition.pages
-        for sentence in page.sentences
+        sentence for page in selected.partition.pages for sentence in page.sentences
     )
     rolling_summary = " ".join(
         part
@@ -1639,8 +1494,7 @@ def _response_document(
     ).hexdigest()[:12]
     removed_hooks = (
         [request.story_state.last_question]
-        if request.branch_input is not None
-        and request.story_state.last_question is not None
+        if request.branch_input is not None and request.story_state.last_question is not None
         else []
     )
     return {
@@ -1656,18 +1510,16 @@ def _response_document(
             "pages": quality_pages,
         },
         "generation": {
-            "provider": "mock" if model == "mock" else "openai",
+            "provider": provider,
             "model": model,
             "promptVersion": f"chapter-{prompt_mode}-{prompt_hash}",
-            "generationProfileVersion": (
-                request.generation_profile.generation_profile_version
-            ),
+            "generationProfileVersion": (request.generation_profile.generation_profile_version),
             "policyHash": request.generation_profile.policy_hash,
             "candidateCount": candidate_count,
             "selectedCandidateId": selected.candidate.candidate_id,
             "pageCount": final_page_number,
             "apiCallCount": (
-                1
+                generation_api_call_count
                 + repair_result.api_call_count
                 + visual_scene_batch.api_call_count
             ),
@@ -1677,9 +1529,7 @@ def _response_document(
             "repairDecisionReasons": list(repair_result.reasons),
             "visualSceneStatus": visual_scene_status,
             "visualSceneModel": visual_scene_batch.model,
-            "visualScenePromptVersion": (
-                f"visual-scene-{visual_scene_prompt_hash}"
-            ),
+            "visualScenePromptVersion": (f"visual-scene-{visual_scene_prompt_hash}"),
             "visualSceneFallbackReason": visual_scene_fallback_reason,
         },
         "timingMs": {
@@ -1694,12 +1544,9 @@ def _response_document(
             "expectedBaseRevision": request.story_revision,
             "rollingSummary": rolling_summary,
             "resolvedFactsAdded": [
-                event.locked_event
-                for event in request.chapter_plan.ordered_events
+                event.locked_event for event in request.chapter_plan.ordered_events
             ],
-            "unresolvedHooksAdded": (
-                [final_question] if final_question is not None else []
-            ),
+            "unresolvedHooksAdded": ([final_question] if final_question is not None else []),
             "unresolvedHooksRemoved": removed_hooks,
             "charactersUpserted": [],
             "lastQuestion": final_question,
@@ -1751,24 +1598,12 @@ def _page_quality_document(
 def _chapter_quality_document(
     pages: tuple[_PageAssessment, ...],
 ) -> dict[str, Any]:
-    written_syllables = sum(
-        page.written_syllable_count for page in pages
-    )
-    direct_dialogue = sum(
-        page.direct_dialogue_count for page in pages
-    )
-    excluded_overage = sum(
-        page.excluded_overage_count for page in pages
-    )
-    limited_overage = sum(
-        page.limited_overage_count for page in pages
-    )
-    risk_per_10 = (
-        sum(
-            page.risk_per_10 * page.written_syllable_count
-            for page in pages
-        )
-        / max(1, written_syllables)
+    written_syllables = sum(page.written_syllable_count for page in pages)
+    direct_dialogue = sum(page.direct_dialogue_count for page in pages)
+    excluded_overage = sum(page.excluded_overage_count for page in pages)
+    limited_overage = sum(page.limited_overage_count for page in pages)
+    risk_per_10 = sum(page.risk_per_10 * page.written_syllable_count for page in pages) / max(
+        1, written_syllables
     )
     analysis_status = max(
         (page.analysis_status for page in pages),
@@ -1782,9 +1617,7 @@ def _chapter_quality_document(
         else "PASS"
     )
     failures = [
-        f"P{page.page_number}_{failure}"
-        for page in pages
-        for failure in page.contract_failures
+        f"P{page.page_number}_{failure}" for page in pages for failure in page.contract_failures
     ][:20]
     return {
         "status": status,
@@ -1807,29 +1640,13 @@ def _aggregate_skill_quality(
         return []
     rows: list[dict[str, Any]] = []
     for skill_index in range(len(pages[0].per_skill)):
-        skills = [
-            page.per_skill[skill_index]
-            for page in pages
-        ]
+        skills = [page.per_skill[skill_index] for page in pages]
         first = skills[0]
         unverified = any(skill.occurrences is None for skill in skills)
-        occurrences = (
-            None
-            if unverified
-            else sum(int(skill.occurrences or 0) for skill in skills)
-        )
-        overage = (
-            None
-            if unverified
-            else sum(int(skill.overage or 0) for skill in skills)
-        )
+        occurrences = None if unverified else sum(int(skill.occurrences or 0) for skill in skills)
+        overage = None if unverified else sum(int(skill.overage or 0) for skill in skills)
         target_distance = (
-            None
-            if unverified
-            else sum(
-                int(skill.target_distance or 0)
-                for skill in skills
-            )
+            None if unverified else sum(int(skill.target_distance or 0) for skill in skills)
         )
         status = "UNVERIFIED" if unverified else "PASS"
         if not unverified and overage:
@@ -1847,9 +1664,7 @@ def _aggregate_skill_quality(
                 "targetMax": first.target_max,
                 "overage": overage,
                 "targetDistance": target_distance,
-                "weightedRisk": float(
-                    sum(skill.weighted_risk for skill in skills)
-                ),
+                "weightedRisk": float(sum(skill.weighted_risk for skill in skills)),
             }
         )
     return rows
@@ -1944,10 +1759,7 @@ def _hangul_bigrams(text: str) -> set[str]:
     hangul = "".join(_HANGUL_PATTERN.findall(text))
     if len(hangul) < 2:
         return {hangul} if hangul else set()
-    return {
-        hangul[index : index + 2]
-        for index in range(len(hangul) - 1)
-    }
+    return {hangul[index : index + 2] for index in range(len(hangul) - 1)}
 
 
 __all__ = [

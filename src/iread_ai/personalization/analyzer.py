@@ -78,12 +78,8 @@ class CandidateAnalysis:
         return {
             "status": self.status.value,
             "surface_feature_counts": dict(self.surface_feature_counts),
-            "controllable_surface_feature_counts": dict(
-                self.controllable_surface_feature_counts
-            ),
-            "protected_surface_feature_counts": dict(
-                self.protected_surface_feature_counts
-            ),
+            "controllable_surface_feature_counts": dict(self.controllable_surface_feature_counts),
+            "protected_surface_feature_counts": dict(self.protected_surface_feature_counts),
             "phonological_rule_counts": dict(self.phonological_rule_counts),
             "written_syllables": self.written_syllables,
             "dialogue_sentence_count": self.dialogue_sentence_count,
@@ -139,7 +135,8 @@ def _detect_phonological_rules(written_text: str, pronunciation: str) -> tuple[C
         if (
             written_syllable.coda in COMPLEX_CODA_PARTS
             and written_syllable.coda != pronounced_syllable.coda
-            and pronounced_syllable.coda in {
+            and pronounced_syllable.coda
+            in {
                 "",
                 *COMPLEX_CODA_PARTS[written_syllable.coda],
                 "ㄱ",
@@ -197,20 +194,16 @@ def _detect_phonological_rules(written_text: str, pronunciation: str) -> tuple[C
                 and moved in {parts[1], TENSE_MAP.get(parts[1])}
             )
             h_cluster_liaison = (
-                len(parts) == 2
-                and parts[1] == "ㅎ"
-                and not left_p.coda
-                and moved == parts[0]
+                len(parts) == 2 and parts[1] == "ㅎ" and not left_p.coda and moved == parts[0]
             )
             if simple_liaison or complex_liaison or h_cluster_liaison:
                 counts["PHONO_LIAISON"] += 1
                 explained.update({left_coda_slot, right_onset_slot})
                 if h_cluster_liaison:
                     counts["PHONO_H_DELETION"] += 1
-                if (
-                    (complex_liaison or h_cluster_liaison)
-                    and counts["PHONO_CLUSTER_SIMPLIFICATION"]
-                ):
+                if (complex_liaison or h_cluster_liaison) and counts[
+                    "PHONO_CLUSTER_SIMPLIFICATION"
+                ]:
                     counts["PHONO_CLUSTER_SIMPLIFICATION"] -= 1
                     if not counts["PHONO_CLUSTER_SIMPLIFICATION"]:
                         del counts["PHONO_CLUSTER_SIMPLIFICATION"]
@@ -256,10 +249,7 @@ def _detect_phonological_rules(written_text: str, pronunciation: str) -> tuple[C
             counts["PHONO_LIQUIDIZATION"] += 1
             explained.update({left_coda_slot, right_onset_slot})
 
-        if (
-            right_w.onset in TENSE_MAP
-            and right_p.onset == TENSE_MAP[right_w.onset]
-        ):
+        if right_w.onset in TENSE_MAP and right_p.onset == TENSE_MAP[right_w.onset]:
             counts["PHONO_TENSIFICATION"] += 1
             explained.add(right_onset_slot)
 
@@ -378,9 +368,7 @@ class KoreanReadingAnalyzer:
         sentence_list = tuple(str(sentence).strip() for sentence in sentences)
         joined = " ".join(sentence_list)
         surface_counts = count_surface_features(joined)
-        controllable_counts = count_surface_features(
-            mask_protected_terms(joined, protected_terms)
-        )
+        controllable_counts = count_surface_features(mask_protected_terms(joined, protected_terms))
         protected_counts = {
             code: count - controllable_counts.get(code, 0)
             for code, count in surface_counts.items()

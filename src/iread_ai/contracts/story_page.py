@@ -96,10 +96,7 @@ class StoryPageContentContract(StoryPageContractModel):
         preferred = self.preferred_written_syllables
         accepted = self.accepted_written_syllables
         if accepted.min > preferred.min or preferred.max > accepted.max:
-            raise ValueError(
-                "preferredWrittenSyllables must be inside "
-                "acceptedWrittenSyllables"
-            )
+            raise ValueError("preferredWrittenSyllables must be inside acceptedWrittenSyllables")
         return self
 
 
@@ -117,9 +114,7 @@ class StoryPageSkillPolicy(StoryPageContractModel):
             if self.max_occurrences is None:
                 raise ValueError(f"maxOccurrences is required for {self.role}")
             if self.target_min is not None or self.target_max is not None:
-                raise ValueError(
-                    "targetMin and targetMax are allowed only for TARGET"
-                )
+                raise ValueError("targetMin and targetMax are allowed only for TARGET")
         elif self.role == "TARGET":
             if self.target_min is None or self.target_max is None:
                 raise ValueError("targetMin and targetMax are required for TARGET")
@@ -214,9 +209,7 @@ class StoryPagePlanPayload(StoryPageContractModel):
 class StoryBranchInputPayload(StoryPageContractModel):
     source: BranchInputSource
     text: NonEmptyText = Field(
-        description=(
-            "Confirmed, de-identified child input. Raw STT and PII are forbidden."
-        )
+        description=("Confirmed, de-identified child input. Raw STT and PII are forbidden.")
     )
 
 
@@ -226,9 +219,7 @@ class StoryPageGenerateRequest(StoryPageContractModel):
     story_id: StrictInt = Field(ge=1)
     student_id: StrictInt = Field(
         ge=1,
-        description=(
-            "Backend routing identifier. It must never be forwarded to the model."
-        ),
+        description=("Backend routing identifier. It must never be forwarded to the model."),
     )
     story_revision: StrictInt = Field(ge=0)
     chapter_number: StrictInt = Field(ge=1)
@@ -241,9 +232,7 @@ class StoryPageGenerateRequest(StoryPageContractModel):
 
     @model_validator(mode="after")
     def validate_character_references(self) -> Self:
-        known_characters = {
-            character.character_id for character in self.story_state.characters
-        }
+        known_characters = {character.character_id for character in self.story_state.characters}
         unknown = set(self.page_plan.required_characters) - known_characters
         if unknown:
             raise ValueError(
@@ -252,13 +241,9 @@ class StoryPageGenerateRequest(StoryPageContractModel):
             )
         expects_branch = self.page_plan.page_number == 4 and not self.conclude
         if expects_branch and self.page_plan.question_focus is None:
-            raise ValueError(
-                "pagePlan.questionFocus is required for a non-concluding page 4"
-            )
+            raise ValueError("pagePlan.questionFocus is required for a non-concluding page 4")
         if not expects_branch and self.page_plan.question_focus is not None:
-            raise ValueError(
-                "pagePlan.questionFocus is allowed only for a non-concluding page 4"
-            )
+            raise ValueError("pagePlan.questionFocus is allowed only for a non-concluding page 4")
         return self
 
 
@@ -273,15 +258,11 @@ class GeneratedStoryPagePayload(StoryPageContractModel):
     def validate_branch_contract(self) -> Self:
         if self.requires_branch_input:
             if self.question is None or len(self.choices) != 3:
-                raise ValueError(
-                    "a branching page requires one question and exactly three choices"
-                )
+                raise ValueError("a branching page requires one question and exactly three choices")
             if len(set(self.choices)) != 3:
                 raise ValueError("branch choices must be distinct")
         elif self.question is not None or self.choices:
-            raise ValueError(
-                "a non-branching page must not contain a question or choices"
-            )
+            raise ValueError("a non-branching page must not contain a question or choices")
         return self
 
 
@@ -336,9 +317,7 @@ class StoryPageGenerationProvenance(StoryPageContractModel):
             for sentence_number in self.changed_sentence_numbers
         ):
             raise ValueError("changedSentenceNumbers must be between 1 and 4")
-        if len(self.changed_sentence_numbers) != len(
-            set(self.changed_sentence_numbers)
-        ):
+        if len(self.changed_sentence_numbers) != len(set(self.changed_sentence_numbers)):
             raise ValueError("changedSentenceNumbers must be unique")
         return self
 
@@ -398,22 +377,12 @@ class StoryPageGenerateResponse(StoryPageContractModel):
         if self.page.page_number != request.page_plan.page_number:
             raise ValueError("response pageNumber must match pagePlan.pageNumber")
         if self.state_patch.expected_base_revision != request.story_revision:
-            raise ValueError(
-                "statePatch.expectedBaseRevision must match request storyRevision"
-            )
-        expects_branch = (
-            request.page_plan.page_number == 4 and not request.conclude
-        )
+            raise ValueError("statePatch.expectedBaseRevision must match request storyRevision")
+        expects_branch = request.page_plan.page_number == 4 and not request.conclude
         if self.page.requires_branch_input != expects_branch:
-            raise ValueError(
-                "requiresBranchInput is true only for a non-concluding page 4"
-            )
-        if len(self.page.sentences) != (
-            request.generation_profile.content_contract.sentence_count
-        ):
-            raise ValueError(
-                "response sentence count must match generationProfile.contentContract"
-            )
+            raise ValueError("requiresBranchInput is true only for a non-concluding page 4")
+        if len(self.page.sentences) != (request.generation_profile.content_contract.sentence_count):
+            raise ValueError("response sentence count must match generationProfile.contentContract")
         return self
 
 

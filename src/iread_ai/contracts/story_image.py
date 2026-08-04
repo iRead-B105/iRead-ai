@@ -52,12 +52,8 @@ class StoryImageGenerateRequest(StoryPageContractModel):
 
     @model_validator(mode="after")
     def validate_character_links(self) -> Self:
-        context_ids = {
-            character.character_id for character in self.story_context.characters
-        }
-        scene_ids = {
-            character.character_id for character in self.visual_scene.characters
-        }
+        context_ids = {character.character_id for character in self.story_context.characters}
+        scene_ids = {character.character_id for character in self.visual_scene.characters}
         unknown_scene_ids = scene_ids - context_ids
         if unknown_scene_ids:
             raise ValueError(
@@ -65,9 +61,7 @@ class StoryImageGenerateRequest(StoryPageContractModel):
                 + ", ".join(sorted(unknown_scene_ids))
             )
 
-        reference_ids = [
-            reference.character_id for reference in self.character_references
-        ]
+        reference_ids = [reference.character_id for reference in self.character_references]
         if len(reference_ids) != len(set(reference_ids)):
             raise ValueError("characterReferences characterId values must be unique")
         unknown_reference_ids = set(reference_ids) - context_ids

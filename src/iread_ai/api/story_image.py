@@ -43,9 +43,7 @@ ERROR_RESPONSES = {
 OPENAPI_OPERATION_POLICY = {
     "x-timeout-ms": 190000,
     "x-idempotency-required": True,
-    "x-retry-policy": (
-        "연결 실패와 502·503·504에 한해 같은 Idempotency-Key로 최대 1회 재시도"
-    ),
+    "x-retry-policy": ("연결 실패와 502·503·504에 한해 같은 Idempotency-Key로 최대 1회 재시도"),
 }
 
 Auth = Annotated[AuthenticatedService, Depends(require_internal_api_key)]
@@ -111,10 +109,7 @@ async def generate_story_page_image(
             StoredResponse(status_code=200, body=body),
         )
         logger.info(
-            (
-                "Story image completed request_id=%s story_id=%s "
-                "chapter=%s page=%s elapsed_ms=%.1f"
-            ),
+            ("Story image completed request_id=%s story_id=%s chapter=%s page=%s elapsed_ms=%.1f"),
             payload.request_id,
             payload.story_id,
             payload.chapter_number,

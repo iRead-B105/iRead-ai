@@ -10,21 +10,15 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def _read_json(relative_path: str) -> object:
-    return json.loads(
-        (ROOT / relative_path).read_text(encoding="utf-8")
-    )
+    return json.loads((ROOT / relative_path).read_text(encoding="utf-8"))
 
 
 def test_documented_opening_and_continuation_requests_are_valid() -> None:
     opening = StoryChapterGenerateRequest.model_validate(
-        _read_json(
-            "docs/examples/story-chapter-opening-request.json"
-        )
+        _read_json("docs/examples/story-chapter-opening-request.json")
     )
     continuation = StoryChapterGenerateRequest.model_validate(
-        _read_json(
-            "docs/examples/story-chapter-continuation-request.json"
-        )
+        _read_json("docs/examples/story-chapter-continuation-request.json")
     )
 
     assert opening.chapter_number == 1

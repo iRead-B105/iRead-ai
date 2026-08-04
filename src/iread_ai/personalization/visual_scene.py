@@ -233,15 +233,11 @@ class OpenAIVisualScenePlanner:
             "input": [
                 {
                     "role": "system",
-                    "content": [
-                        {"type": "input_text", "text": system_prompt}
-                    ],
+                    "content": [{"type": "input_text", "text": system_prompt}],
                 },
                 {
                     "role": "user",
-                    "content": [
-                        {"type": "input_text", "text": user_prompt}
-                    ],
+                    "content": [{"type": "input_text", "text": user_prompt}],
                 },
             ],
             "text": {
@@ -252,8 +248,7 @@ class OpenAIVisualScenePlanner:
                     "schema": _visual_scene_schema(
                         page_count=len(page_tuple),
                         character_ids=tuple(
-                            character.character_id
-                            for character in request.story_state.characters
+                            character.character_id for character in request.story_state.characters
                         ),
                     ),
                 }
@@ -273,10 +268,7 @@ class OpenAIVisualScenePlanner:
                     "OpenAI Responses API visual-scene request failed "
                     f"with status {response.status_code}"
                 ),
-                retryable=(
-                    response.status_code in {408, 409, 429}
-                    or response.status_code >= 500
-                ),
+                retryable=(response.status_code in {408, 409, 429} or response.status_code >= 500),
             )
 
         try:
@@ -289,8 +281,7 @@ class OpenAIVisualScenePlanner:
                 document,
                 pages=page_tuple,
                 character_ids=tuple(
-                    character.character_id
-                    for character in request.story_state.characters
+                    character.character_id for character in request.story_state.characters
                 ),
             )
             usage = data.get("usage", {})
@@ -298,10 +289,7 @@ class OpenAIVisualScenePlanner:
                 usage = {}
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
             raise VisualSceneGenerationError(
-                (
-                    "OpenAI returned an invalid visual-scene document "
-                    f"({type(exc).__name__}: {exc})"
-                ),
+                (f"OpenAI returned an invalid visual-scene document ({type(exc).__name__}: {exc})"),
                 retryable=False,
                 raw_output=locals().get("raw_output"),
             ) from exc
@@ -332,9 +320,7 @@ class OpenAIVisualScenePlanner:
                         json=payload,
                         timeout=self._timeout_seconds,
                     )
-                async with httpx.AsyncClient(
-                    timeout=self._timeout_seconds
-                ) as client:
+                async with httpx.AsyncClient(timeout=self._timeout_seconds) as client:
                     return await client.post(
                         f"{self._base_url}/responses",
                         headers=headers,
@@ -402,16 +388,8 @@ def build_visual_scene_user_prompt(
             {
                 "pageNumber": page.page_number,
                 "sentences": list(page.sentences),
-                "question": (
-                    question
-                    if page.page_number == len(pages)
-                    else None
-                ),
-                "choices": (
-                    list(choices)
-                    if page.page_number == len(pages)
-                    else []
-                ),
+                "question": (question if page.page_number == len(pages) else None),
+                "choices": (list(choices) if page.page_number == len(pages) else []),
             }
             for page in pages
         ],
@@ -548,9 +526,7 @@ def _parse_visual_scenes(
     raw_pages = document["pages"]
     if not isinstance(raw_pages, list) or len(raw_pages) != len(pages):
         raise ValueError("visual-scene page count does not match final pages")
-    expected_page_numbers = [
-        page.page_number for page in pages
-    ]
+    expected_page_numbers = [page.page_number for page in pages]
     parsed_scenes: list[dict[str, Any]] = []
     for index, raw_page in enumerate(raw_pages):
         if not isinstance(raw_page, Mapping):
@@ -559,16 +535,10 @@ def _parse_visual_scenes(
             raise ValueError("visual-scene pages must retain final page order")
         raw_scene = raw_page["visualScene"]
         scene = StoryVisualScenePayload.model_validate(raw_scene)
-        output_ids = [
-            character.character_id for character in scene.characters
-        ]
+        output_ids = [character.character_id for character in scene.characters]
         if output_ids != list(character_ids):
-            raise ValueError(
-                "visual-scene characters must match the catalog order"
-            )
-        parsed_scenes.append(
-            scene.model_dump(mode="json", by_alias=True)
-        )
+            raise ValueError("visual-scene characters must match the catalog order")
+        parsed_scenes.append(scene.model_dump(mode="json", by_alias=True))
     return tuple(parsed_scenes)
 
 
@@ -624,17 +594,13 @@ def build_chapter_visual_scenes(
         )
         page_text = " ".join(page.sentences)
         present_ids = {
-            character.character_id
-            for character in characters
-            if character.name in page_text
+            character.character_id for character in characters if character.name in page_text
         }
         present_ids.update(event.required_characters)
         if any(marker in page_text for marker in _GROUP_MARKERS):
             present_ids.update(
                 event.required_characters
-                or tuple(
-                    character.character_id for character in characters
-                )
+                or tuple(character.character_id for character in characters)
             )
         if not present_ids and previous_present:
             present_ids.update(previous_present)
@@ -642,9 +608,7 @@ def build_chapter_visual_scenes(
             present_ids.add(characters[0].character_id)
 
         visible = tuple(
-            character
-            for character in characters
-            if character.character_id in present_ids
+            character for character in characters if character.character_id in present_ids
         )
         positions = _positions(visible)
         visual_characters: list[dict[str, Any]] = []
@@ -688,10 +652,7 @@ def build_chapter_visual_scenes(
                     "position": positions[character.character_id],
                     "orientation": (
                         "이동 방향"
-                        if any(
-                            marker in action
-                            for marker in _MOVEMENT_MARKERS
-                        )
+                        if any(marker in action for marker in _MOVEMENT_MARKERS)
                         else "시선 대상 방향"
                     ),
                     "gazeTarget": gaze_target,
@@ -759,13 +720,9 @@ def _positions(
         labels = ("화면 왼쪽", "화면 중앙", "화면 오른쪽")
     else:
         labels = tuple(
-            f"화면 {index + 1}/{len(characters)} 지점"
-            for index in range(len(characters))
+            f"화면 {index + 1}/{len(characters)} 지점" for index in range(len(characters))
         )
-    return {
-        character.character_id: labels[index]
-        for index, character in enumerate(characters)
-    }
+    return {character.character_id: labels[index] for index, character in enumerate(characters)}
 
 
 def _action_for_character(
@@ -773,11 +730,7 @@ def _action_for_character(
     sentences: Sequence[str],
     event: StoryChapterEventPayload,
 ) -> str:
-    named = [
-        sentence.strip()
-        for sentence in sentences
-        if character.name in sentence
-    ]
+    named = [sentence.strip() for sentence in sentences if character.name in sentence]
     if named:
         return min(
             named,
@@ -798,10 +751,9 @@ def _action_for_character(
 
 
 def _is_character_subject(name: str, sentence: str) -> bool:
-    normalized = sentence.lstrip(' "\'“‘')
+    normalized = sentence.lstrip(" \"'“‘")
     return any(
-        normalized.startswith(f"{name}{particle}")
-        for particle in ("은", "는", "이", "가", "도")
+        normalized.startswith(f"{name}{particle}") for particle in ("은", "는", "이", "가", "도")
     )
 
 
@@ -811,9 +763,7 @@ def _emotion_type(
     *,
     fallback: str,
 ) -> str:
-    related = " ".join(
-        sentence for sentence in sentences if character.name in sentence
-    )
+    related = " ".join(sentence for sentence in sentences if character.name in sentence)
     source = related or fallback
     for emotion_type, keywords in _EMOTION_KEYWORDS:
         if any(keyword in source for keyword in keywords):
@@ -824,10 +774,12 @@ def _emotion_type(
 def _emotion_intensity(emotion_type: str, source: str) -> str:
     if any(marker in source for marker in _HIGH_INTENSITY_MARKERS):
         return "HIGH"
-    if (
-        any(marker in source for marker in _LOW_INTENSITY_MARKERS)
-        or emotion_type in {"CALM", "FOCUSED", "WORRIED", "AFRAID"}
-    ):
+    if any(marker in source for marker in _LOW_INTENSITY_MARKERS) or emotion_type in {
+        "CALM",
+        "FOCUSED",
+        "WORRIED",
+        "AFRAID",
+    }:
         return "LOW"
     return "MEDIUM"
 
@@ -839,10 +791,7 @@ def _gaze_target(
     event: StoryChapterEventPayload,
 ) -> str:
     for other in visible:
-        if (
-            other.character_id != character.character_id
-            and other.name in action
-        ):
+        if other.character_id != character.character_id and other.name in action:
             return other.character_id
     if event.required_concepts:
         return event.required_concepts[0]

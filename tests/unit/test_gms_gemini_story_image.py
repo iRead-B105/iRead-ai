@@ -24,10 +24,7 @@ def _png(label: str) -> bytes:
     ihdr = struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0)
     idat = zlib.compress(bytes((0, red, 80, 160)))
     return (
-        signature
-        + _png_chunk(b"IHDR", ihdr)
-        + _png_chunk(b"IDAT", idat)
-        + _png_chunk(b"IEND", b"")
+        signature + _png_chunk(b"IHDR", ihdr) + _png_chunk(b"IDAT", idat) + _png_chunk(b"IEND", b"")
     )
 
 
@@ -63,9 +60,7 @@ async def test_gemini_sends_prompt_ordered_server_references_and_21_by_9() -> No
                                 {
                                     "inlineData": {
                                         "mimeType": "image/png",
-                                        "data": base64.b64encode(
-                                            _png("RESULT")
-                                        ).decode(),
+                                        "data": base64.b64encode(_png("RESULT")).decode(),
                                     }
                                 }
                             ]
@@ -75,9 +70,7 @@ async def test_gemini_sends_prompt_ordered_server_references_and_21_by_9() -> No
             },
         )
 
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(handler)
-    ) as client:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         generator = GMSGeminiImageGenerator(
             gms_key="secret",
             client=client,
@@ -100,10 +93,10 @@ async def test_gemini_sends_prompt_ordered_server_references_and_21_by_9() -> No
     payload = json.loads(request.content)
     parts = payload["contents"][0]["parts"]
     assert parts[0] == {"text": "one continuous full-bleed story scene"}
-    assert [
-        base64.b64decode(part["inline_data"]["data"])
-        for part in parts[1:]
-    ] == [_png("HARE"), _png("TORTOISE")]
+    assert [base64.b64decode(part["inline_data"]["data"]) for part in parts[1:]] == [
+        _png("HARE"),
+        _png("TORTOISE"),
+    ]
     assert payload["generationConfig"]["responseFormat"]["image"] == {
         "aspectRatio": "ASPECT_RATIO_TWENTY_ONE_BY_NINE"
     }
@@ -114,9 +107,7 @@ async def test_gemini_timeout_is_sanitized_and_retryable() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ReadTimeout("provider detail", request=request)
 
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(handler)
-    ) as client:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         generator = GMSGeminiImageGenerator(
             gms_key="must-not-leak",
             client=client,
@@ -146,9 +137,7 @@ async def test_gemini_rejects_non_image_response_data() -> None:
                                 {
                                     "inline_data": {
                                         "mime_type": "image/png",
-                                        "data": base64.b64encode(
-                                            b"not-an-image"
-                                        ).decode(),
+                                        "data": base64.b64encode(b"not-an-image").decode(),
                                     }
                                 }
                             ]
@@ -158,9 +147,7 @@ async def test_gemini_rejects_non_image_response_data() -> None:
             },
         )
 
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(handler)
-    ) as client:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         generator = GMSGeminiImageGenerator(
             gms_key="secret",
             client=client,

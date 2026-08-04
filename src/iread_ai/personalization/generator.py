@@ -42,34 +42,19 @@ class PageGenerationContext:
         _require_nonblank(self.locked_event, "locked_event")
         if self.page_number not in {1, 2, 3, 4}:
             raise ValueError("page_number must be between 1 and 4")
-        if any(
-            not isinstance(item, str) or not item.strip()
-            for item in self.previous_pages
-        ):
-            raise ValueError(
-                "previous_pages must contain only nonblank strings"
-            )
-        if any(
-            not isinstance(item, str) or not item.strip()
-            for item in self.characters
-        ):
+        if any(not isinstance(item, str) or not item.strip() for item in self.previous_pages):
+            raise ValueError("previous_pages must contain only nonblank strings")
+        if any(not isinstance(item, str) or not item.strip() for item in self.characters):
             raise ValueError("characters must contain only nonblank strings")
-        if any(
-            not isinstance(item, str) or not item.strip()
-            for item in self.required_concepts
-        ):
-            raise ValueError(
-                "required_concepts must contain only nonblank strings"
-            )
+        if any(not isinstance(item, str) or not item.strip() for item in self.required_concepts):
+            raise ValueError("required_concepts must contain only nonblank strings")
         if self.question_focus is not None:
             _require_nonblank(self.question_focus, "question_focus")
         if self.expected_sentence_count not in {3, 4}:
             raise ValueError("expected_sentence_count must be 3 or 4")
 
     def to_dict(self) -> dict[str, Any]:
-        branch_page_active = (
-            self.page_number == 1 and bool(self.child_input.strip())
-        )
+        branch_page_active = self.page_number == 1 and bool(self.child_input.strip())
         return {
             "story_title": self.story_title.strip(),
             "story_context": self.story_context.strip(),
@@ -80,9 +65,7 @@ class PageGenerationContext:
             "characters": list(self.characters),
             "required_concepts": list(self.required_concepts),
             "question_focus": (
-                self.question_focus.strip()
-                if self.question_focus is not None
-                else None
+                self.question_focus.strip() if self.question_focus is not None else None
             ),
             "expected_sentence_count": self.expected_sentence_count,
             "branch_page_plan": {
@@ -92,19 +75,12 @@ class PageGenerationContext:
                         "1문장: 아이 답이 이야기 속 실제 사건으로 발생",
                         "2문장: 기존 등장인물이 그 사건에 구체적으로 반응",
                         "3문장: 엉뚱하고 짧은 결과가 한 번 더 이어짐",
-                        (
-                            "4문장: 재미의 흔적은 남기되 "
-                            "locked_event의 본 흐름으로 복귀"
-                        ),
+                        ("4문장: 재미의 흔적은 남기되 locked_event의 본 흐름으로 복귀"),
                     ]
                     if branch_page_active
                     else []
                 ),
-                "return_event": (
-                    self.locked_event.strip()
-                    if branch_page_active
-                    else None
-                ),
+                "return_event": (self.locked_event.strip() if branch_page_active else None),
             },
             "chapter_mode": "ending" if self.conclude else "continuing",
         }
@@ -120,9 +96,7 @@ class PageCandidate:
     def __post_init__(self) -> None:
         _require_nonblank(self.candidate_id, "candidate_id")
         if len(self.sentences) not in {3, 4}:
-            raise ValueError(
-                "a page candidate must contain 3 or 4 sentences"
-            )
+            raise ValueError("a page candidate must contain 3 or 4 sentences")
         for sentence in self.sentences:
             _require_nonblank(sentence, "sentence")
             if not any("가" <= character <= "힣" for character in sentence):
@@ -133,9 +107,7 @@ class PageCandidate:
         else:
             _require_nonblank(self.question, "question")
             if len(self.choices) != 3:
-                raise ValueError(
-                    "a branch question must contain exactly three choices"
-                )
+                raise ValueError("a branch question must contain exactly three choices")
             for choice in self.choices:
                 _require_nonblank(choice, "choice")
             if len({choice.strip() for choice in self.choices}) != 3:
@@ -186,15 +158,10 @@ class RepairBatch:
     def __post_init__(self) -> None:
         _require_nonblank(self.source_candidate_id, "source_candidate_id")
         if self.repair_status not in {"REPAIRED", "UNABLE"}:
-            raise ValueError(
-                f"unsupported repair status: {self.repair_status}"
-            )
+            raise ValueError(f"unsupported repair status: {self.repair_status}")
         if self.elapsed_ms < 0:
             raise ValueError("elapsed_ms must not be negative")
-        indexes = [
-            replacement.sentence_index
-            for replacement in self.replacements
-        ]
+        indexes = [replacement.sentence_index for replacement in self.replacements]
         if len(indexes) != len(set(indexes)):
             raise ValueError("replacement sentence indexes must be unique")
         if len(indexes) > 2:
@@ -208,10 +175,7 @@ class RepairBatch:
         return {
             "sourceCandidateId": self.source_candidate_id,
             "repairStatus": self.repair_status,
-            "replacements": [
-                replacement.to_dict()
-                for replacement in self.replacements
-            ],
+            "replacements": [replacement.to_dict() for replacement in self.replacements],
             "rawOutput": self.raw_output,
             "elapsedMs": round(self.elapsed_ms, 3),
             "usage": self.usage,
@@ -260,11 +224,7 @@ class MockPageCandidateGenerator:
             replacements: tuple[RepairReplacement, ...] = ()
             repair_status: RepairStatus = "UNABLE"
         else:
-            subject = (
-                context.characters[0]
-                if context.characters
-                else "친구"
-            )
+            subject = context.characters[0] if context.characters else "친구"
             spoken = context.child_input.strip().strip("“”\"'‘’")
             spoken = spoken or "우리 함께 천천히 가요!"
             if spoken[-1] not in ".!?":
@@ -334,9 +294,7 @@ class OpenAIPageCandidateGenerator:
     ) -> RepairBatch:
         editable_indexes = _editable_indexes(repair_plan)
         if not editable_indexes:
-            raise ValueError(
-                "repair plan must contain an editable sentence index"
-            )
+            raise ValueError("repair plan must contain an editable sentence index")
         system_prompt = load_repair_prompt(self._repair_prompt_path)
         user_prompt = build_repair_user_prompt(
             context=context,
@@ -350,15 +308,11 @@ class OpenAIPageCandidateGenerator:
             "input": [
                 {
                     "role": "system",
-                    "content": [
-                        {"type": "input_text", "text": system_prompt}
-                    ],
+                    "content": [{"type": "input_text", "text": system_prompt}],
                 },
                 {
                     "role": "user",
-                    "content": [
-                        {"type": "input_text", "text": user_prompt}
-                    ],
+                    "content": [{"type": "input_text", "text": user_prompt}],
                 },
             ],
             "text": {
@@ -383,14 +337,8 @@ class OpenAIPageCandidateGenerator:
         elapsed_ms = (time.perf_counter() - started) * 1000
         if response.status_code >= 400:
             raise PageGenerationError(
-                (
-                    "OpenAI Responses API repair request failed "
-                    f"with status {response.status_code}"
-                ),
-                retryable=(
-                    response.status_code in {408, 409, 429}
-                    or response.status_code >= 500
-                ),
+                (f"OpenAI Responses API repair request failed with status {response.status_code}"),
+                retryable=(response.status_code in {408, 409, 429} or response.status_code >= 500),
             )
 
         try:
@@ -444,9 +392,7 @@ class OpenAIPageCandidateGenerator:
                         json=payload,
                         timeout=self._timeout_seconds,
                     )
-                async with httpx.AsyncClient(
-                    timeout=self._timeout_seconds
-                ) as client:
+                async with httpx.AsyncClient(timeout=self._timeout_seconds) as client:
                     return await client.post(
                         f"{self._base_url}/responses",
                         headers=headers,
@@ -534,9 +480,7 @@ def _editable_indexes(
     if len(indexes) != len(set(indexes)):
         raise ValueError("editable sentence indexes must be unique")
     if any(index not in {1, 2, 3, 4} for index in indexes):
-        raise ValueError(
-            "editable sentence indexes must be between 1 and 4"
-        )
+        raise ValueError("editable sentence indexes must be between 1 and 4")
     return indexes
 
 
@@ -564,10 +508,7 @@ def _parse_repair(
     )
     if len(replacements) != len(raw_replacements):
         raise TypeError("each repair replacement must be an object")
-    if any(
-        replacement.sentence_index not in editable_indexes
-        for replacement in replacements
-    ):
+    if any(replacement.sentence_index not in editable_indexes for replacement in replacements):
         raise ValueError("repair changed a locked sentence")
     return cast(RepairStatus, raw_status), replacements
 

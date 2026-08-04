@@ -106,9 +106,7 @@ def build_generation_profile(
             "directDialogueCount": 1,
         },
         "skills": copy.deepcopy(preset["skills"]),
-        "protectedTerms": [
-            character.name for character in story.characters
-        ],
+        "protectedTerms": [character.name for character in story.characters],
     }
     canonical = json.dumps(
         profile,

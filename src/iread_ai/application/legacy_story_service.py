@@ -59,6 +59,15 @@ _KNOWN_CHARACTER_NAMES = (
     "나무꾼",
     "여행자",
     "친구",
+    "노인",
+    "소년",
+    "청새치",
+    "상어",
+    "신데렐라",
+    "계모",
+    "요정",
+    "자라",
+    "용왕",
 )
 
 
@@ -107,7 +116,7 @@ class LegacyStoryGenerationService:
                     _unique_choice_labels(final_page.choices),
                     start=1,
                 )
-            ]
+            ],
         )
         response = GenerateStoryResponse(
             requestId=request.requestId,
@@ -155,9 +164,7 @@ class LegacyStoryGenerationService:
             narrative_count = 3
             requires_branch = True
         else:
-            raise ValueError(
-                "story continuation must start after page 4, 9, or 10"
-            )
+            raise ValueError("story continuation must start after page 4, 9, or 10")
 
         chapter_request = _build_chapter_request(
             request,
@@ -225,7 +232,7 @@ class LegacyStoryGenerationService:
                                 _unique_choice_labels(final_page.choices),
                                 start=1,
                             )
-                        ]
+                        ],
                     ),
                 )
             )
@@ -329,9 +336,7 @@ def _build_chapter_request(
                 "바로 행동해야 하는 작은 문제나 놀라운 발견이 생긴다",
                 "사건이 더 커지기 직전에 멈추고 다음 행동을 묻는다",
             )
-            question_focus = (
-                "주인공이 바로 다음에 할 구체적이고 재미있는 행동 또는 말"
-            )
+            question_focus = "주인공이 바로 다음에 할 구체적이고 재미있는 행동 또는 말"
     payload = {
         "requestId": _chapter_request_id(request.requestId),
         "schemaVersion": 3,
@@ -480,9 +485,7 @@ def _chapter_sentences(chapter: StoryChapterGenerateResponse) -> list[str]:
 
 def _three_sentence_lines(sentences: Sequence[str], *, line_count: int) -> list[str]:
     cleaned = [
-        _ensure_sentence_ending(sentence.strip())
-        for sentence in sentences
-        if sentence.strip()
+        _ensure_sentence_ending(sentence.strip()) for sentence in sentences if sentence.strip()
     ]
     target_count = line_count * 3
     if len(cleaned) < target_count:
@@ -516,13 +519,9 @@ def _validate_page_sentences(sentences: Sequence[str]) -> None:
     for sentence in sentences:
         syllable_count = _hangul_count(sentence)
         if syllable_count < 10 or syllable_count > 22:
-            raise ValueError(
-                "each story sentence must contain 10 to 22 Hangul syllables"
-            )
+            raise ValueError("each story sentence must contain 10 to 22 Hangul syllables")
         if sentence.rstrip().endswith(("?", "？")):
-            raise ValueError(
-                "story body must not contain a reader-facing branch question"
-            )
+            raise ValueError("story body must not contain a reader-facing branch question")
     normalized = [re.sub(r"[^가-힣 ]", "", sentence).strip() for sentence in sentences]
     first_words = [sentence.split(maxsplit=1)[0] for sentence in normalized if sentence]
     final_words = [sentence.rsplit(maxsplit=1)[-1] for sentence in normalized if sentence]

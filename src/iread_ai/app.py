@@ -13,6 +13,8 @@ from fastapi import File, Form, Header, HTTPException, Query, Request, UploadFil
 from fastapi.responses import Response
 
 from .adapters.generation.gms_gemini_image import GMSGeminiImageGenerator
+from .adapters.generation.openai_image import OpenAIImageGenerator
+from .adapters.story_cover_reference import StoryCoverReferenceRepository
 from .config import Settings
 from .curriculum_models import CurriculumRecommendRequest, CurriculumRecommendResponse
 from .curriculum_recommender import recommend_curriculum
@@ -71,9 +73,7 @@ speech_provider = (
     if settings.speech_provider == "azure"
     else DeterministicSpeechProvider()
 )
-idempotency_store = TrainingIdempotencyStore(
-    ttl_seconds=settings.idempotency_ttl_seconds
-)
+idempotency_store = TrainingIdempotencyStore(ttl_seconds=settings.idempotency_ttl_seconds)
 text_provider = (
     GMSTextProvider(
         api_key=settings.text_api_key,
@@ -86,19 +86,32 @@ text_provider = (
     if settings.generation_provider in {"gms", "openai"}
     else None
 )
-legacy_image_generator = (
-    GMSGeminiImageGenerator(
-        gms_key=settings.gms_key.get_secret_value(),
-        model=settings.gms_gemini_image_model,
-        base_url=settings.gms_base_url,
-        timeout_seconds=settings.gms_image_timeout_seconds,
-        max_image_bytes=settings.gms_image_max_bytes,
-        max_response_bytes=settings.gms_image_max_response_bytes,
-        max_request_bytes=settings.gms_image_max_request_bytes,
+legacy_image_generator = None
+if settings.story_image_provider in {"gms", "gemini"}:
+    image_key = (
+        settings.gms_key if settings.story_image_provider == "gms" else settings.gemini_api_key
     )
-    if settings.story_image_provider == "gemini" and settings.gms_key is not None
-    else None
-)
+    if image_key is not None:
+        legacy_image_generator = GMSGeminiImageGenerator(
+            gms_key=image_key.get_secret_value(),
+            model=settings.gms_gemini_image_model,
+            base_url=settings.gms_base_url
+            if settings.story_image_provider == "gms"
+            else settings.gemini_base_url,
+            direct=settings.story_image_provider == "gemini",
+            timeout_seconds=settings.gms_image_timeout_seconds,
+            max_image_bytes=settings.gms_image_max_bytes,
+            max_response_bytes=settings.gms_image_max_response_bytes,
+            max_request_bytes=settings.gms_image_max_request_bytes,
+        )
+elif settings.story_image_provider == "openai" and settings.openai_api_key is not None:
+    legacy_image_generator = OpenAIImageGenerator(
+        api_key=settings.openai_api_key.get_secret_value(),
+        model=settings.gms_gemini_image_model,
+        base_url=settings.openai_base_url,
+        timeout_seconds=settings.gms_image_timeout_seconds,
+    )
+story_cover_references = StoryCoverReferenceRepository(settings.story_cover_dir)
 _generated_images: OrderedDict[str, tuple[bytes, str]] = OrderedDict()
 _MAX_GENERATED_IMAGES = 128
 _LEGACY_IMAGE_POLICY = (
@@ -356,17 +369,24 @@ async def image_generate(
     _validate_idempotency(request.requestId, idempotency_key)
     kind = "character" if request.prompt.strip().startswith("[STORY_CHARACTER]") else "scene"
     digest = hashlib.sha256(
-        f"{request.requestId}\0{_LEGACY_IMAGE_POLICY}\0{request.prompt}".encode()
+        f"{request.requestId}\0{request.storyTemplateId}\0{settings.story_image_provider}\0{settings.gms_gemini_image_model}\0{_LEGACY_IMAGE_POLICY}\0{request.prompt}".encode()
     ).hexdigest()[:32]
     if legacy_image_generator is not None and digest not in _generated_images:
         prompt = (
             f"{_LEGACY_IMAGE_POLICY}\n\n"
+            "The attached approved book cover is the visual style and character "
+            "consistency reference. Keep its illustration language while depicting "
+            "the current branch scene described below.\n\n"
             f"[UNTRUSTED STORY SCENE DATA]\n{request.prompt.strip()}"
         )
         try:
             generated = await legacy_image_generator.generate(
                 prompt=prompt,
-                references=(),
+                references=(
+                    story_cover_references.resolve(request.storyTemplateId)
+                    if request.storyTemplateId is not None
+                    else ()
+                ),
                 aspect_ratio="1:1" if kind == "character" else "21:9",
             )
         except StoryImageProviderError as exception:
@@ -383,7 +403,7 @@ async def image_generate(
         requestId=request.requestId,
         imageUrl=f"/api/v1/images/generated.png?{query}",
         provider=(
-            f"GMS_GEMINI_{legacy_image_generator.model}"
+            f"{settings.story_image_provider.upper()}_{legacy_image_generator.model}"
             if legacy_image_generator is not None
             else "IREAD_MOCK_AI_PNG_V1"
         ),

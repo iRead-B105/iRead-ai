@@ -93,9 +93,7 @@ def _chapter_response(
                     page_number=page_number,
                 ),
                 "question": page_question,
-                "subtitle": (
-                    "다음 말을 고르는 갈림길" if page_question else None
-                ),
+                "subtitle": ("다음 말을 고르는 갈림길" if page_question else None),
                 "choices": (
                     [
                         "용기를 내자고 말해요.",
@@ -135,9 +133,7 @@ def _chapter_response(
             "provider": "openai",
             "model": "gpt-5.4-mini",
             "promptVersion": "dynamic-chapter-test",
-            "generationProfileVersion": profile[
-                "generationProfileVersion"
-            ],
+            "generationProfileVersion": profile["generationProfileVersion"],
             "policyHash": profile["policyHash"],
             "candidateCount": 1,
             "selectedCandidateId": "candidate-1",
@@ -162,16 +158,10 @@ def _chapter_response(
         },
         "statePatch": {
             "expectedBaseRevision": runtime["storyRevision"],
-            "rollingSummary": (
-                f"{chapter_number}장의 사건이 차례대로 이어졌어요."
-            ),
-            "resolvedFactsAdded": [
-                f"{chapter_number}장의 핵심 사건이 일어났어요."
-            ],
+            "rollingSummary": (f"{chapter_number}장의 사건이 차례대로 이어졌어요."),
+            "resolvedFactsAdded": [f"{chapter_number}장의 핵심 사건이 일어났어요."],
             "unresolvedHooksAdded": [question] if question else [],
-            "unresolvedHooksRemoved": (
-                [previous_question] if previous_question else []
-            ),
+            "unresolvedHooksRemoved": ([previous_question] if previous_question else []),
             "charactersUpserted": [],
             "lastQuestion": question,
         },
@@ -201,10 +191,9 @@ def test_build_chapter_request_uses_v3_ordered_events_and_profile() -> None:
     assert payload["chapterPlan"]["minPages"] == 2
     assert payload["chapterPlan"]["maxPages"] == 4
     assert len(payload["chapterPlan"]["orderedEvents"]) == 4
-    assert [
-        event["lockedEvent"]
-        for event in payload["chapterPlan"]["orderedEvents"]
-    ] == [page.locked_event for page in story.beats[0].pages]
+    assert [event["lockedEvent"] for event in payload["chapterPlan"]["orderedEvents"]] == [
+        page.locked_event for page in story.beats[0].pages
+    ]
     assert payload["generationProfile"]["generationProfileVersion"] == 5
     assert payload["generationProfile"]["skills"]
 
@@ -241,9 +230,7 @@ def test_next_chapter_requires_branch_and_saved_last_question() -> None:
     assert payload["chapterNumber"] == 2
     assert payload["branchInput"]["source"] == "CHOICE"
     assert payload["branchInput"]["text"] == "함께 가자고 말해요."
-    assert payload["storyState"]["lastQuestion"] == (
-        first_response["pages"][-1]["question"]
-    )
+    assert payload["storyState"]["lastQuestion"] == (first_response["pages"][-1]["question"])
 
 
 def test_first_chapter_rejects_branch_input() -> None:
@@ -281,12 +268,8 @@ def test_apply_chapter_adds_all_pages_but_increments_revision_once(
     assert updated["storyRevision"] == 1
     assert updated["lastAppliedChapterNumber"] == 1
     assert len(updated["storyState"]["recentPages"]) == page_count
-    assert updated["appliedGenerationIds"] == [
-        f"dynamic-{page_count}-pages"
-    ]
-    assert updated["storyState"]["lastQuestion"] == (
-        response["pages"][-1]["question"]
-    )
+    assert updated["appliedGenerationIds"] == [f"dynamic-{page_count}-pages"]
+    assert updated["storyState"]["lastQuestion"] == (response["pages"][-1]["question"])
 
 
 def test_apply_rejects_duplicate_generation_id_without_mutation() -> None:

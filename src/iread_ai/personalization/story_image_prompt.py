@@ -8,9 +8,7 @@ from pathlib import Path
 from iread_ai.contracts.story_image import StoryImageGenerateRequest
 from iread_ai.ports.story_image_generator import StoryImageReference
 
-DEFAULT_STORY_IMAGE_PROMPT_PATH = (
-    Path(__file__).resolve().parents[1] / "prompts" / "story_image.md"
-)
+DEFAULT_STORY_IMAGE_PROMPT_PATH = Path(__file__).resolve().parents[1] / "prompts" / "story_image.md"
 _PROMPT_SCHEMA_VERSION = "story-image-prompt-v1"
 
 
@@ -26,9 +24,7 @@ def load_story_image_prompt(path: Path | None = None) -> str:
 
 def story_image_prompt_version(path: Path | None = None) -> str:
     prompt = load_story_image_prompt(path)
-    digest = hashlib.sha256(
-        f"{_PROMPT_SCHEMA_VERSION}\n{prompt}".encode()
-    ).hexdigest()[:12]
+    digest = hashlib.sha256(f"{_PROMPT_SCHEMA_VERSION}\n{prompt}".encode()).hexdigest()[:12]
     return f"story-image-{digest}"
 
 
@@ -60,8 +56,7 @@ def build_story_image_prompt(
         by_alias=True,
     )
     sentences = "\n".join(
-        f"{index}. {sentence}"
-        for index, sentence in enumerate(request.sentences, start=1)
+        f"{index}. {sentence}" for index, sentence in enumerate(request.sentences, start=1)
     )
     return (
         f"{policy}\n\n"

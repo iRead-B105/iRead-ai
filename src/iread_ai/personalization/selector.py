@@ -128,9 +128,7 @@ class CandidateEvaluation:
             "limited_overage": self.limited_overage,
             "target_distance": self.target_distance,
             "feature_occurrences": dict(self.feature_occurrences),
-            "feature_risks": {
-                code: round(risk, 6) for code, risk in self.feature_risks.items()
-            },
+            "feature_risks": {code: round(risk, 6) for code, risk in self.feature_risks.items()},
             "total_risk": round(self.total_risk, 6),
             "risk_per_10": round(self.risk_per_10, 6),
             "preferred_length_distance": self.preferred_length_distance,
@@ -192,8 +190,7 @@ def evaluate_candidate(
         20 * abs(len(sentence_list) - contract.sentence_count)
         + 25 * sum(not sentence for sentence in sentence_list)
         + accepted_length_distance
-        + 10
-        * max(0, analysis.dialogue_sentence_count - contract.direct_dialogue)
+        + 10 * max(0, analysis.dialogue_sentence_count - contract.direct_dialogue)
     )
 
     excluded_overage = 0

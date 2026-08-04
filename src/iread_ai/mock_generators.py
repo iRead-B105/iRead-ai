@@ -33,17 +33,78 @@ SYLLABLES = ["가", "너", "도", "무", "비"]
 FINALS = ["감", "눈", "달", "밤", "집"]
 
 ONSETS = [
-    "ㄱ", "ㄲ", "ㄴ", "ㄷ", "ㄸ", "ㄹ", "ㅁ", "ㅂ", "ㅃ", "ㅅ",
-    "ㅆ", "ㅇ", "ㅈ", "ㅉ", "ㅊ", "ㅋ", "ㅌ", "ㅍ", "ㅎ",
+    "ㄱ",
+    "ㄲ",
+    "ㄴ",
+    "ㄷ",
+    "ㄸ",
+    "ㄹ",
+    "ㅁ",
+    "ㅂ",
+    "ㅃ",
+    "ㅅ",
+    "ㅆ",
+    "ㅇ",
+    "ㅈ",
+    "ㅉ",
+    "ㅊ",
+    "ㅋ",
+    "ㅌ",
+    "ㅍ",
+    "ㅎ",
 ]
 VOWELS = [
-    "ㅏ", "ㅐ", "ㅑ", "ㅒ", "ㅓ", "ㅔ", "ㅕ", "ㅖ", "ㅗ", "ㅘ", "ㅙ",
-    "ㅚ", "ㅛ", "ㅜ", "ㅝ", "ㅞ", "ㅟ", "ㅠ", "ㅡ", "ㅢ", "ㅣ",
+    "ㅏ",
+    "ㅐ",
+    "ㅑ",
+    "ㅒ",
+    "ㅓ",
+    "ㅔ",
+    "ㅕ",
+    "ㅖ",
+    "ㅗ",
+    "ㅘ",
+    "ㅙ",
+    "ㅚ",
+    "ㅛ",
+    "ㅜ",
+    "ㅝ",
+    "ㅞ",
+    "ㅟ",
+    "ㅠ",
+    "ㅡ",
+    "ㅢ",
+    "ㅣ",
 ]
 CODAS = [
-    "", "ㄱ", "ㄲ", "ㄳ", "ㄴ", "ㄵ", "ㄶ", "ㄷ", "ㄹ", "ㄺ", "ㄻ",
-    "ㄼ", "ㄽ", "ㄾ", "ㄿ", "ㅀ", "ㅁ", "ㅂ", "ㅄ", "ㅅ", "ㅆ", "ㅇ",
-    "ㅈ", "ㅊ", "ㅋ", "ㅌ", "ㅍ", "ㅎ",
+    "",
+    "ㄱ",
+    "ㄲ",
+    "ㄳ",
+    "ㄴ",
+    "ㄵ",
+    "ㄶ",
+    "ㄷ",
+    "ㄹ",
+    "ㄺ",
+    "ㄻ",
+    "ㄼ",
+    "ㄽ",
+    "ㄾ",
+    "ㄿ",
+    "ㅀ",
+    "ㅁ",
+    "ㅂ",
+    "ㅄ",
+    "ㅅ",
+    "ㅆ",
+    "ㅇ",
+    "ㅈ",
+    "ㅊ",
+    "ㅋ",
+    "ㅌ",
+    "ㅍ",
+    "ㅎ",
 ]
 
 
@@ -154,7 +215,11 @@ def _candidate(training_type: str, index: int) -> dict[str, Any]:
             "answerIndex": choices.index(correct),
         }
     if training_type in {"FINAL_CONSONANT_CHOICE", "WORD_FINAL_SOUND_CHOICE"}:
-        text = FINALS[index] if training_type.startswith("FINAL") else ["곰", "문", "밥", "집", "공"][index]
+        text = (
+            FINALS[index]
+            if training_type.startswith("FINAL")
+            else ["곰", "문", "밥", "집", "공"][index]
+        )
         correct = _final(text[-1])
         choices = _choice_values(correct, ["ㄱ", "ㄴ", "ㄹ", "ㅁ", "ㅂ", "ㅇ"], index)
         return {"audioText": text, "choices": choices, "answerIndex": choices.index(correct)}
@@ -182,7 +247,11 @@ def _candidate(training_type: str, index: int) -> dict[str, Any]:
     if training_type in {"PHONEME_BLEND", "SYLLABLE_BLEND"}:
         result = SYLLABLES[index] if training_type == "PHONEME_BLEND" else WORDS[index]
         parts = _decompose(result) if training_type == "PHONEME_BLEND" else list(result)
-        distractor_pool = ["ㄴ", "ㅓ", "ㅁ", "ㅗ"] if training_type == "PHONEME_BLEND" else ["가", "너", "도", "마"]
+        distractor_pool = (
+            ["ㄴ", "ㅓ", "ㅁ", "ㅗ"]
+            if training_type == "PHONEME_BLEND"
+            else ["가", "너", "도", "마"]
+        )
         distractor = next(value for value in distractor_pool if value not in parts)
         return {
             "audioParts": parts,
@@ -193,12 +262,8 @@ def _candidate(training_type: str, index: int) -> dict[str, Any]:
     if training_type == "BASIC_SYLLABLE_BUILD":
         result = SYLLABLES[index]
         initial, medial = _decompose(result)
-        initial_choices = _choice_values(
-            initial, ["ㄱ", "ㄴ", "ㄷ", "ㄹ", "ㅁ", "ㅂ", "ㅅ"], 0
-        )
-        medial_choices = _choice_values(
-            medial, ["ㅏ", "ㅓ", "ㅗ", "ㅜ", "ㅡ", "ㅣ"], 0
-        )
+        initial_choices = _choice_values(initial, ["ㄱ", "ㄴ", "ㄷ", "ㄹ", "ㅁ", "ㅂ", "ㅅ"], 0)
+        medial_choices = _choice_values(medial, ["ㅏ", "ㅓ", "ㅗ", "ㅜ", "ㅡ", "ㅣ"], 0)
         return {
             "targetAudioText": result,
             "initialChoices": initial_choices,
@@ -208,17 +273,17 @@ def _candidate(training_type: str, index: int) -> dict[str, Any]:
             "result": result,
         }
     if training_type in {"FINAL_SYLLABLE_BUILD", "DOUBLE_FINAL_BUILD"}:
-        result = FINALS[index] if training_type.startswith("FINAL") else ["닭", "삶", "값", "앉", "몫"][index]
+        result = (
+            FINALS[index]
+            if training_type.startswith("FINAL")
+            else ["닭", "삶", "값", "앉", "몫"][index]
+        )
         initial, medial, final = _decompose(result)
         initial_choices = _choice_values(
             initial, ["ㄱ", "ㄴ", "ㄷ", "ㄹ", "ㅁ", "ㅂ", "ㅅ", "ㅇ"], 0
         )
-        medial_choices = _choice_values(
-            medial, ["ㅏ", "ㅓ", "ㅗ", "ㅜ", "ㅡ", "ㅣ"], 0
-        )
-        final_choices = _choice_values(
-            final, ["ㄱ", "ㄴ", "ㄹ", "ㅁ", "ㅂ", "ㅅ", "ㅇ"], 0
-        )
+        medial_choices = _choice_values(medial, ["ㅏ", "ㅓ", "ㅗ", "ㅜ", "ㅡ", "ㅣ"], 0)
+        final_choices = _choice_values(final, ["ㄱ", "ㄴ", "ㄹ", "ㅁ", "ㅂ", "ㅅ", "ㅇ"], 0)
         return {
             "targetAudioText": result,
             "initialChoices": initial_choices,
@@ -285,7 +350,10 @@ def _candidate(training_type: str, index: int) -> dict[str, Any]:
             "친구들이 힘을 모아 협력한다.",
             "봄에는 예쁜 꽃잎이 날린다.",
         ][index]
-        return {"difficultWords": [{"word": difficult, "syllables": list(difficult)}], "sentence": sentence}
+        return {
+            "difficultWords": [{"word": difficult, "syllables": list(difficult)}],
+            "sentence": sentence,
+        }
     if training_type == "SENTENCE_READING":
         sentence = SENTENCES[index]
         return {"sentence": sentence, "tokens": sentence[:-1].split(" ")}
@@ -378,8 +446,7 @@ def _training_offset(request: TrainingCandidateRequest) -> int:
 def generate_training_candidates(request: TrainingCandidateRequest) -> TrainingCandidateResponse:
     offset = _training_offset(request)
     data = [
-        _candidate(request.trainingType, (offset + index) % 5)
-        for index in range(request.count)
+        _candidate(request.trainingType, (offset + index) % 5) for index in range(request.count)
     ]
     return TrainingCandidateResponse(type=request.trainingType, data=data)
 
@@ -518,7 +585,7 @@ def _story_branch_prompt() -> StoryBranchPrompt:
             StoryBranchOption(optionNo=1, label="반짝이는 별빛 길로 간다"),
             StoryBranchOption(optionNo=2, label="작은 친구가 가리킨 숲길로 간다"),
             StoryBranchOption(optionNo=3, label="맑은 시냇물 길을 따라간다"),
-        ]
+        ],
     )
 
 
@@ -565,7 +632,7 @@ def generate_story(request: GenerateStoryRequest) -> GenerateStoryResponse:
 
 
 def _clean_branch_intent(intent: str) -> str:
-    cleaned = intent.strip().strip('"\'“”‘’').rstrip(".?!。？！ ")
+    cleaned = intent.strip().strip("\"'“”‘’").rstrip(".?!。？！ ")
     return cleaned or "친구들이 함께 힘을 모으는 것"
 
 
@@ -577,30 +644,42 @@ def _continuation_segment(request: ContinueStoryRequest) -> tuple[list[str], boo
     intent = _clean_branch_intent(request.branchIntent)
 
     if page_in_day == 0:
-        return ([
-            f"{title}의 {day}일차 아침이 밝았어요.",
-            "어제의 선택을 기억한 친구들이 다시 길을 나섰어요.",
-            "길 앞에는 생각하지 못한 새로운 일이 기다리고 있었어요.",
-            "친구들은 어떻게 하면 좋을지 샛별이의 생각을 기다렸어요.",
-        ], True)
+        return (
+            [
+                f"{title}의 {day}일차 아침이 밝았어요.",
+                "어제의 선택을 기억한 친구들이 다시 길을 나섰어요.",
+                "길 앞에는 생각하지 못한 새로운 일이 기다리고 있었어요.",
+                "친구들은 어떻게 하면 좋을지 샛별이의 생각을 기다렸어요.",
+            ],
+            True,
+        )
 
     if page_in_day == 4:
-        return ([
-            f"샛별이는 ‘{intent}’라고 정했고, 이야기에서도 그 선택이 그대로 이루어졌어요.",
-            "친구들은 그 선택을 믿고 힘차게 앞으로 나아갔어요.",
-            "선택한 길에서 새로운 친구와 중요한 단서를 만났어요.",
-            "조금 전의 선택은 이야기 속 사건과 결과를 바꾸었어요.",
-            "이제 다음에는 어떤 일이 일어나면 좋을지 말해 볼까요?",
-        ], True)
+        return (
+            [
+                f"샛별이는 ‘{intent}’라고 정했고, 이야기에서도 그 선택이 그대로 이루어졌어요.",
+                "친구들은 그 선택을 믿고 힘차게 앞으로 나아갔어요.",
+                "선택한 길에서 새로운 친구와 중요한 단서를 만났어요.",
+                "조금 전의 선택은 이야기 속 사건과 결과를 바꾸었어요.",
+                "이제 다음에는 어떤 일이 일어나면 좋을지 말해 볼까요?",
+            ],
+            True,
+        )
 
     if page_in_day == 9:
         if page_count == 99:
-            return ([
-                f"마지막에도 ‘{intent}’ 선택이 이루어지며 모두가 기쁜 결말을 맞았어요.",
-            ], False)
-        return ([
-            f"‘{intent}’ 선택이 이루어지며 오늘의 모험이 즐겁게 마무리되었어요.",
-        ], False)
+            return (
+                [
+                    f"마지막에도 ‘{intent}’ 선택이 이루어지며 모두가 기쁜 결말을 맞았어요.",
+                ],
+                False,
+            )
+        return (
+            [
+                f"‘{intent}’ 선택이 이루어지며 오늘의 모험이 즐겁게 마무리되었어요.",
+            ],
+            False,
+        )
 
     raise ValueError(
         f"story continuation must start after page 4, 9, or 10 (received {page_count})"
@@ -641,8 +720,7 @@ def evaluate_training(request: EvaluateTrainingRequest) -> EvaluateTrainingRespo
         correct = sum(
             1
             for item in questions
-            if isinstance(item, dict)
-            and (item.get("isCorrect") or item.get("correctionConfirmed"))
+            if isinstance(item, dict) and (item.get("isCorrect") or item.get("correctionConfirmed"))
         )
         accuracy = round(correct / len(questions) * 100, 2)
     else:
@@ -665,9 +743,7 @@ def transcribe_speech_mock(
     request_id: str, expected_text: str | None
 ) -> SpeechTranscriptionResponse:
     transcript = (
-        expected_text.strip()
-        if expected_text and expected_text.strip()
-        else _TRANSCRIBE_FALLBACK
+        expected_text.strip() if expected_text and expected_text.strip() else _TRANSCRIBE_FALLBACK
     )
     duration_ms = max(300, len(transcript) * 250)
     return SpeechTranscriptionResponse(

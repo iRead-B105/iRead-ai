@@ -89,12 +89,11 @@ def build_repair_plan(
     edit_scores: Counter[int] = Counter()
     first_sentence_edit_allowed = False
     limited_excess_total = 0
-    child_input_missing = (
-        requires_child_input_reflection(context)
-        and not child_input_signal_preserved(
-            candidate.sentences[0],
-            context.child_input,
-        )
+    child_input_missing = requires_child_input_reflection(
+        context
+    ) and not child_input_signal_preserved(
+        candidate.sentences[0],
+        context.child_input,
     )
 
     if child_input_missing:
@@ -220,15 +219,11 @@ def build_repair_plan(
                     "count": count,
                     "analysis_status": analysis.status.value,
                     "pronunciation": (
-                        analysis.pronunciations[0]
-                        if analysis.pronunciations
-                        else None
+                        analysis.pronunciations[0] if analysis.pronunciations else None
                     ),
                 }
             )
-            edit_scores[sentence_index] += count * (
-                20 if skill.role == "EXCLUDED" else 5
-            )
+            edit_scores[sentence_index] += count * (20 if skill.role == "EXCLUDED" else 5)
         violations.append(
             {
                 "kind": kind,
@@ -236,21 +231,16 @@ def build_repair_plan(
                 "actual": actual,
                 "expected_max": maximum,
                 "excess": excess,
-                "affected_sentence_indexes": [
-                    row["sentence_index"] for row in evidence
-                ],
+                "affected_sentence_indexes": [row["sentence_index"] for row in evidence],
                 "evidence": evidence,
                 "repair_hint": (
-                    "사건과 화자를 유지하고 같은 뜻의 쉬운 표현으로 "
-                    "해당 특징의 초과만 줄이세요."
+                    "사건과 화자를 유지하고 같은 뜻의 쉬운 표현으로 해당 특징의 초과만 줄이세요."
                 ),
             }
         )
 
     if limited_excess_total >= _LIMITED_OVERAGE_REPAIR_THRESHOLD:
-        trigger_reasons.append(
-            f"LIMITED_OVERAGE_TOTAL:{limited_excess_total}"
-        )
+        trigger_reasons.append(f"LIMITED_OVERAGE_TOTAL:{limited_excess_total}")
 
     safe_scores = {
         index: score
@@ -276,19 +266,13 @@ def build_repair_plan(
         "trigger_reasons": list(dict.fromkeys(trigger_reasons)),
         "violations": violations,
         "limited_overage_total": limited_excess_total,
-        "limited_overage_repair_threshold": (
-            _LIMITED_OVERAGE_REPAIR_THRESHOLD
-        ),
+        "limited_overage_repair_threshold": (_LIMITED_OVERAGE_REPAIR_THRESHOLD),
         "sentence_evidence": [
             {
                 "sentence_index": index,
                 "written_syllables": analysis.written_syllables,
                 "analysis_status": analysis.status.value,
-                "pronunciation": (
-                    analysis.pronunciations[0]
-                    if analysis.pronunciations
-                    else None
-                ),
+                "pronunciation": (analysis.pronunciations[0] if analysis.pronunciations else None),
             }
             for index, analysis in enumerate(sentence_analyses, start=1)
         ],
@@ -385,9 +369,7 @@ def evaluate_repair(
         proposal_candidate.sentences,
         context.characters,
     )
-    proposal_dialogue_indexes = _dialogue_sentence_indexes(
-        proposal_candidate.sentences
-    )
+    proposal_dialogue_indexes = _dialogue_sentence_indexes(proposal_candidate.sentences)
     if proposal_dialogue_indexes and not has_exact_spoken_dialogue(
         proposal_candidate.sentences,
         context.characters,
@@ -457,13 +439,9 @@ def evaluate_repair(
     elif proposal.contract_penalty < source.contract_penalty:
         improvements.append("CONTRACT_PENALTY_REDUCED")
 
-    if _analysis_rank(proposal.analysis.status) > _analysis_rank(
-        source.analysis.status
-    ):
+    if _analysis_rank(proposal.analysis.status) > _analysis_rank(source.analysis.status):
         reasons.append("G2P_STATUS_WORSENED")
-    elif _analysis_rank(proposal.analysis.status) < _analysis_rank(
-        source.analysis.status
-    ):
+    elif _analysis_rank(proposal.analysis.status) < _analysis_rank(source.analysis.status):
         improvements.append("G2P_STATUS_IMPROVED")
 
     per_skill: list[dict[str, Any]] = []
@@ -478,10 +456,7 @@ def evaluate_repair(
         }
         if source_count is None or proposal_count is None:
             row["comparable"] = False
-            if skill.code.startswith("PHONO_") and (
-                source_count != proposal_count
-                or changed
-            ):
+            if skill.code.startswith("PHONO_") and (source_count != proposal_count or changed):
                 row["reason"] = "G2P_NOT_FULL"
             per_skill.append(row)
             continue
@@ -496,10 +471,7 @@ def evaluate_repair(
             worsened = (
                 proposal_overage > source_overage
                 if skill.role == "LIMITED"
-                else (
-                    proposal_count > source_count
-                    or proposal_overage > source_overage
-                )
+                else (proposal_count > source_count or proposal_overage > source_overage)
             )
             if worsened:
                 reasons.append(f"SKILL_WORSENED:{skill.code}")
@@ -521,9 +493,7 @@ def evaluate_repair(
     elif proposal.risk_per_10 < source.risk_per_10 - 1e-9:
         improvements.append("NORMALIZED_RISK_REDUCED")
 
-    source_dialogue_indexes = _dialogue_sentence_indexes(
-        source_candidate.sentences
-    )
+    source_dialogue_indexes = _dialogue_sentence_indexes(source_candidate.sentences)
     if (
         source_dialogue_indexes
         and not has_exact_spoken_dialogue(
@@ -588,10 +558,7 @@ def has_meta_child_reference(
 ) -> bool:
     if any(character.strip() == "아이" for character in characters):
         return False
-    return any(
-        _META_CHILD_REFERENCE_PATTERN.search(sentence) is not None
-        for sentence in sentences
-    )
+    return any(_META_CHILD_REFERENCE_PATTERN.search(sentence) is not None for sentence in sentences)
 
 
 def _dialogue_sentence_indexes(sentences: tuple[str, ...]) -> list[int]:
@@ -612,9 +579,7 @@ def _length_repair_indexes(
         for index, sentence in enumerate(candidate.sentences, start=1)
         if index != 1
     ]
-    if evaluation.analysis.written_syllables > (
-        profile.content_contract.accepted_max_syllables
-    ):
+    if evaluation.analysis.written_syllables > (profile.content_contract.accepted_max_syllables):
         rows.sort(key=lambda row: (-row[1], row[0]))
     else:
         rows.sort(key=lambda row: (row[1], row[0]))
@@ -649,10 +614,7 @@ def _reliable_occurrences(
     evaluation: CandidateEvaluation,
     skill: SkillPolicy,
 ) -> int | None:
-    if (
-        skill.code.startswith("PHONO_")
-        and evaluation.analysis.status is not AnalysisStatus.FULL
-    ):
+    if skill.code.startswith("PHONO_") and evaluation.analysis.status is not AnalysisStatus.FULL:
         return None
     return int(evaluation.feature_occurrences.get(skill.code, 0))
 
@@ -676,11 +638,7 @@ def _missing_protected_terms(
     source_text = " ".join(source.sentences)
     proposal_text = " ".join(proposal.sentences)
     terms = tuple(dict.fromkeys((*context.characters, *profile.protected_terms)))
-    return [
-        term
-        for term in terms
-        if source_text.count(term) > proposal_text.count(term)
-    ]
+    return [term for term in terms if source_text.count(term) > proposal_text.count(term)]
 
 
 def _dialogue_speaker(
@@ -738,8 +696,8 @@ def _semantic_overlap(source: str, proposal: str) -> float:
     proposal_bigrams = _hangul_bigrams(proposal)
     if not source_bigrams or not proposal_bigrams:
         return 0.0
-    return 2.0 * len(source_bigrams & proposal_bigrams) / (
-        len(source_bigrams) + len(proposal_bigrams)
+    return (
+        2.0 * len(source_bigrams & proposal_bigrams) / (len(source_bigrams) + len(proposal_bigrams))
     )
 
 
@@ -753,9 +711,7 @@ def child_input_signal_preserved(sentence: str, child_input: str) -> bool:
     if len(child_hangul) == 1:
         return child_hangul in sentence_hangul
     child_phrases = {
-        phrase
-        for phrase in _HANGUL_WORD_PATTERN.findall(child_input)
-        if len(phrase) >= 3
+        phrase for phrase in _HANGUL_WORD_PATTERN.findall(child_input) if len(phrase) >= 3
     }
     if any(phrase in sentence_hangul for phrase in child_phrases):
         return True

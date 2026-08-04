@@ -76,13 +76,9 @@ def _baseline_response() -> StoryChapterGenerateResponse:
 @pytest.mark.asyncio
 async def test_comparison_reuses_displayed_result_and_calls_baseline_once() -> None:
     request = StoryChapterGenerateRequest.model_validate(request_payload())
-    personalized = StoryChapterGenerateResponse.model_validate(
-        response_payload()
-    )
+    personalized = StoryChapterGenerateResponse.model_validate(response_payload())
     baseline_service = RecordingBaselineService(_baseline_response())
-    service = ChapterGenerationComparisonService(
-        baseline_service=baseline_service
-    )
+    service = ChapterGenerationComparisonService(baseline_service=baseline_service)
 
     result = await service.compare_displayed_chapter_to_plain(
         request,
@@ -123,9 +119,7 @@ async def test_non_full_g2p_returns_a_labeled_partial_score() -> None:
     baseline_document["quality"]["chapter"]["analysisStatus"] = "UNRELIABLE"
     baseline_document["quality"]["chapter"]["status"] = "ANALYSIS_DEGRADED"
     baseline = StoryChapterGenerateResponse.model_validate(baseline_document)
-    personalized = StoryChapterGenerateResponse.model_validate(
-        deepcopy(response_payload())
-    )
+    personalized = StoryChapterGenerateResponse.model_validate(deepcopy(response_payload()))
     service = ChapterGenerationComparisonService(
         baseline_service=RecordingBaselineService(baseline)
     )
@@ -141,26 +135,25 @@ async def test_non_full_g2p_returns_a_labeled_partial_score() -> None:
     )
     assert result["plain"]["fit"]["comparable"] is True
     assert result["plain"]["fit"]["scoreConfidence"] == "PARTIAL"
-    assert result["plain"]["fit"]["unverifiedSkillCodes"] == [
-        "PHONO_LIAISON"
-    ]
+    assert result["plain"]["fit"]["unverifiedSkillCodes"] == ["PHONO_LIAISON"]
     assert result["comparison"]["comparable"] is True
     assert result["comparison"]["comparisonConfidence"] == "PARTIAL"
     assert result["comparison"]["scoreBasis"] == "COMMON_SURFACE_ONLY"
-    assert result["comparison"]["plainProfileFitScore"] == result["plain"][
-        "fit"
-    ]["surfaceProfileFitScore"]
-    assert result["comparison"]["personalizedProfileFitScore"] == result[
-        "personalized"
-    ]["fit"]["surfaceProfileFitScore"]
-    assert result["comparison"]["personalizedProfileFitScore"] != result[
-        "personalized"
-    ]["fit"]["profileFitScore"]
+    assert (
+        result["comparison"]["plainProfileFitScore"]
+        == result["plain"]["fit"]["surfaceProfileFitScore"]
+    )
+    assert (
+        result["comparison"]["personalizedProfileFitScore"]
+        == result["personalized"]["fit"]["surfaceProfileFitScore"]
+    )
+    assert (
+        result["comparison"]["personalizedProfileFitScore"]
+        != result["personalized"]["fit"]["profileFitScore"]
+    )
     assert result["comparison"]["winner"] == "PERSONALIZED"
     assert isinstance(
         result["comparison"]["delta"]["profileFitScore"],
         float,
     )
-    assert "0회로 판정하지 않습니다" in result["comparison"][
-        "comparisonReason"
-    ]
+    assert "0회로 판정하지 않습니다" in result["comparison"]["comparisonReason"]

@@ -31,9 +31,9 @@ def test_story_image_operation_uses_auth_idempotency_and_canonical_models() -> N
     assert operation["requestBody"]["content"]["application/json"]["schema"] == {
         "$ref": "#/components/schemas/StoryImageGenerateRequest"
     }
-    assert operation["responses"]["200"]["content"]["application/json"][
-        "schema"
-    ] == {"$ref": "#/components/schemas/StoryImageGenerateResponse"}
+    assert operation["responses"]["200"]["content"]["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/StoryImageGenerateResponse"
+    }
 
 
 def test_story_image_request_accepts_visual_scene_and_id_only_references() -> None:

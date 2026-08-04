@@ -21,8 +21,7 @@ from iread_ai.ports.story_image_generator import (
 from tests.unit.test_story_image_contracts import image_request_payload
 
 _VALID_PNG = base64.b64decode(
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk"
-    "+A8AAQUBAScY42YAAAAASUVORK5CYII="
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
 )
 
 
@@ -171,9 +170,7 @@ async def test_empty_client_reference_list_auto_selects_known_present_assets() -
     sent_references = generator.calls[0]["references"]
     assert isinstance(sent_references, tuple)
     assert [reference.character_id for reference in sent_references] == ["hare"]
-    assert "Input image 1: characterId=hare" in str(
-        generator.calls[0]["prompt"]
-    )
+    assert "Input image 1: characterId=hare" in str(generator.calls[0]["prompt"])
 
 
 @pytest.mark.asyncio

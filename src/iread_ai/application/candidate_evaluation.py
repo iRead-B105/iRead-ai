@@ -65,9 +65,7 @@ def _surface_only_analysis(
 ) -> CandidateAnalysis:
     joined = " ".join(sentences)
     surface = count_surface_features(joined)
-    controllable = count_surface_features(
-        mask_protected_terms(joined, protected_terms)
-    )
+    controllable = count_surface_features(mask_protected_terms(joined, protected_terms))
     protected = {
         code: count - controllable.get(code, 0)
         for code, count in surface.items()
@@ -81,8 +79,7 @@ def _surface_only_analysis(
         phonological_rule_counts={},
         written_syllables=written_syllable_count(joined),
         dialogue_sentence_count=sum(
-            _DIALOGUE_PATTERN.search(sentence) is not None
-            for sentence in sentences
+            _DIALOGUE_PATTERN.search(sentence) is not None for sentence in sentences
         ),
         pronunciations=(),
         kiwi_token_count=0,

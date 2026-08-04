@@ -98,9 +98,7 @@ def test_image_api_returns_base64_image_and_generation_metadata(
     assert body["requestId"] == "image-page-101-2-1"
     assert body["schemaVersion"] == 1
     assert body["mimeType"] == "image/png"
-    assert base64.b64decode(body["imageBase64"]).startswith(
-        b"\x89PNG\r\n\x1a\n"
-    )
+    assert base64.b64decode(body["imageBase64"]).startswith(b"\x89PNG\r\n\x1a\n")
     assert body["model"] == "gemini-2.5-flash-image"
     assert body["promptVersion"].startswith("story-image-")
     assert body["timingMs"] >= 0

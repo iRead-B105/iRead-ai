@@ -42,10 +42,10 @@ def test_eight_sentences_are_divided_into_two_valid_pages() -> None:
     assert all(50 <= page.written_syllable_count <= 70 for page in result.pages)
     assert all(page.direct_dialogue_count == 1 for page in result.pages)
     assert [page.page_number for page in result.pages] == [1, 2]
-    assert [
-        (page.start_sentence_index, page.end_sentence_index)
-        for page in result.pages
-    ] == [(1, 4), (5, 8)]
+    assert [(page.start_sentence_index, page.end_sentence_index) for page in result.pages] == [
+        (1, 4),
+        (5, 8),
+    ]
 
 
 def test_length_selects_three_and_four_pages_without_fixed_page_count() -> None:
@@ -100,10 +100,7 @@ def test_best_effort_partition_is_returned_when_syllables_are_too_short() -> Non
     assert result.page_count == 2
     assert result.contract_pass is False
     assert result.contract_failure_count == 2
-    assert all(
-        page.contract_failures == ("WRITTEN_SYLLABLE_RANGE",)
-        for page in result.pages
-    )
+    assert all(page.contract_failures == ("WRITTEN_SYLLABLE_RANGE",) for page in result.pages)
 
 
 def test_split_alias_uses_the_same_deterministic_result() -> None:
@@ -148,8 +145,4 @@ def test_dynamic_layout_never_exceeds_four_sentences(
 
     assert 2 <= result.page_count <= 4
     assert all(3 <= len(page.sentences) <= 4 for page in result.pages)
-    assert tuple(
-        sentence
-        for page in result.pages
-        for sentence in page.sentences
-    ) == source
+    assert tuple(sentence for page in result.pages for sentence in page.sentences) == source

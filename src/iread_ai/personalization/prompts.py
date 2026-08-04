@@ -28,9 +28,7 @@ _FEATURE_DESCRIPTIONS = {
     "PHONO_CODA_NEUTRALIZATION": "받침이 대표 받침 소리로 바뀌는 규칙",
 }
 
-DEFAULT_REPAIR_PROMPT_PATH = (
-    Path(__file__).resolve().parents[1] / "prompts" / "page_repair.md"
-)
+DEFAULT_REPAIR_PROMPT_PATH = Path(__file__).resolve().parents[1] / "prompts" / "page_repair.md"
 
 
 def load_repair_prompt(path: Path | None = None) -> str:
@@ -42,9 +40,7 @@ def _load_prompt(prompt_path: Path, prompt_name: str) -> str:
     if not prompt:
         raise ValueError(f"{prompt_name} prompt must not be empty")
     if len(prompt.encode("utf-8")) > 64 * 1024:
-        raise ValueError(
-            f"{prompt_name} prompt must not exceed 64 KiB"
-        )
+        raise ValueError(f"{prompt_name} prompt must not exceed 64 KiB")
     return prompt
 
 
@@ -57,9 +53,7 @@ def build_repair_user_prompt(
 ) -> str:
     profile_document = _jsonable(profile)
     if not isinstance(profile_document, Mapping):
-        raise TypeError(
-            "generation profile must serialize to an object"
-        )
+        raise TypeError("generation profile must serialize to an object")
     source_document = _jsonable(source_candidate)
     if not isinstance(source_document, Mapping):
         raise TypeError("source candidate must serialize to an object")
@@ -68,9 +62,7 @@ def build_repair_user_prompt(
             "candidate_id",
             source_document.get("candidateId"),
         ),
-        "sentences": _jsonable(
-            source_document.get("sentences", [])
-        ),
+        "sentences": _jsonable(source_document.get("sentences", [])),
     }
     document = {
         "task": "repair_story_page",
@@ -105,23 +97,15 @@ def _context_document(context: Any) -> dict[str, Any]:
     else:
         raw = _jsonable(context)
     if not isinstance(raw, Mapping):
-        raise TypeError(
-            "page generation context must serialize to an object"
-        )
-    return {
-        str(key): _jsonable(value)
-        for key, value in raw.items()
-    }
+        raise TypeError("page generation context must serialize to an object")
+    return {str(key): _jsonable(value) for key, value in raw.items()}
 
 
 def _jsonable(value: Any) -> Any:
     if value is None or isinstance(value, str | int | float | bool):
         return value
     if isinstance(value, Mapping):
-        return {
-            str(key): _jsonable(item)
-            for key, item in value.items()
-        }
+        return {str(key): _jsonable(item) for key, item in value.items()}
     if isinstance(value, tuple | list | set | frozenset):
         return [_jsonable(item) for item in value]
     if hasattr(value, "to_dict"):
@@ -130,25 +114,17 @@ def _jsonable(value: Any) -> Any:
         return _jsonable(value.model_dump(mode="json", by_alias=True))
     if is_dataclass(value):
         return _jsonable(asdict(value))
-    raise TypeError(
-        f"value is not JSON serializable: {type(value).__name__}"
-    )
+    raise TypeError(f"value is not JSON serializable: {type(value).__name__}")
 
 
 def _policy_hints(
     profile_document: Any,
 ) -> dict[str, list[dict[str, Any]]]:
     if not isinstance(profile_document, Mapping):
-        raise TypeError(
-            "generation profile must serialize to an object"
-        )
+        raise TypeError("generation profile must serialize to an object")
     raw_skills = profile_document.get("skills", [])
     if not isinstance(raw_skills, list):
-        raw_skills = (
-            list(raw_skills)
-            if isinstance(raw_skills, tuple)
-            else []
-        )
+        raw_skills = list(raw_skills) if isinstance(raw_skills, tuple) else []
 
     hints: dict[str, list[dict[str, Any]]] = {
         "excluded": [],

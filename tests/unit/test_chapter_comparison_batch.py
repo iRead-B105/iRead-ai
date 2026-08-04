@@ -35,17 +35,13 @@ def test_build_cases_produces_balanced_100_case_matrix() -> None:
     assert {case["profileKey"] for case in cases} == set(PROFILE_KEYS)
     assert {case["stage"] for case in cases} == set(STAGE_LABELS)
     assert {
-        profile: sum(case["profileKey"] == profile for case in cases)
-        for profile in PROFILE_KEYS
+        profile: sum(case["profileKey"] == profile for case in cases) for profile in PROFILE_KEYS
     } == {"balanced": 50, "beginner": 50}
+    assert {stage: sum(case["stage"] == stage for case in cases) for stage in STAGE_LABELS} == {
+        stage: 20 for stage in STAGE_LABELS
+    }
     assert {
-        stage: sum(case["stage"] == stage for case in cases)
-        for stage in STAGE_LABELS
-    } == {stage: 20 for stage in STAGE_LABELS}
-    assert {
-        story.template_id: sum(
-            case["storyId"] == story.template_id for case in cases
-        )
+        story.template_id: sum(case["storyId"] == story.template_id for case in cases)
         for story in STORY_CATALOG
     } == {story.template_id: 10 for story in STORY_CATALOG}
 
@@ -54,12 +50,7 @@ def test_build_cases_produces_balanced_100_case_matrix() -> None:
 def test_batch_preflight_accepts_real_story_providers(
     provider: str,
 ) -> None:
-    assert (
-        _validate_real_provider_health(
-            {"status": "UP", "storyProvider": provider}
-        )
-        == provider
-    )
+    assert _validate_real_provider_health({"status": "UP", "storyProvider": provider}) == provider
 
 
 def test_batch_preflight_rejects_mock_provider() -> None:
@@ -67,9 +58,7 @@ def test_batch_preflight_rejects_mock_provider() -> None:
         RuntimeError,
         match="storyProvider=gms or openai",
     ):
-        _validate_real_provider_health(
-            {"status": "ok", "storyProvider": "mock"}
-        )
+        _validate_real_provider_health({"status": "ok", "storyProvider": "mock"})
 
 
 def test_each_story_uses_five_unique_normalized_positions() -> None:
@@ -103,18 +92,16 @@ def test_profiles_share_exact_context_and_child_input() -> None:
         left, right = pair
         assert left["childInput"] == right["childInput"]
         assert left["inputType"] == right["inputType"]
-        assert _context_without_profile(
-            left["chapterRequest"]
-        ) == _context_without_profile(right["chapterRequest"])
+        assert _context_without_profile(left["chapterRequest"]) == _context_without_profile(
+            right["chapterRequest"]
+        )
 
 
 def test_every_synthetic_request_validates_current_v3_contract() -> None:
     cases = build_cases(run_token="contract")
 
     for case in cases:
-        request = StoryChapterGenerateRequest.model_validate(
-            case["chapterRequest"]
-        )
+        request = StoryChapterGenerateRequest.model_validate(case["chapterRequest"])
         assert request.schema_version == 3
         assert request.chapter_number == case["chapterNumber"]
         assert request.story_revision == case["chapterNumber"] - 1
@@ -155,15 +142,9 @@ def _outcome(
             "riskPer10": risk,
             "surfaceRiskPer10": risk,
             "contractPass": contract_pass,
-            "contractFailures": (
-                [] if contract_pass else ["WRITTEN_SYLLABLE_RANGE"]
-            ),
+            "contractFailures": ([] if contract_pass else ["WRITTEN_SYLLABLE_RANGE"]),
             "analysisStatus": analysis_status,
-            "unverifiedSkillCodes": (
-                ["PHONO_LIAISON"]
-                if analysis_status != "FULL"
-                else []
-            ),
+            "unverifiedSkillCodes": (["PHONO_LIAISON"] if analysis_status != "FULL" else []),
         },
         "generation": {
             "apiCallCount": model_calls,
@@ -328,9 +309,7 @@ def test_aggregate_separates_full_and_partial_and_keeps_case_text() -> None:
     assert score["max"] == 30.0
     assert score["mean"] == 5.0
     assert summary["overall"]["highestCase"]["caseId"] == "high"
-    assert "개인화 글" in summary["overall"]["highestCase"][
-        "personalizedText"
-    ]
+    assert "개인화 글" in summary["overall"]["highestCase"]["personalizedText"]
     assert summary["overall"]["lowestCase"]["caseId"] == "low"
     assert set(summary["byScoreBasis"]) == {
         "FULL_POLICY",

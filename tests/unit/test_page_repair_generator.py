@@ -91,9 +91,7 @@ async def test_openai_repair_uses_locked_schema_and_parses_result() -> None:
             },
         )
 
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(handler)
-    ) as client:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         generator = OpenAIPageCandidateGenerator(
             api_key="test-key",
             model="test-model",
@@ -110,9 +108,7 @@ async def test_openai_repair_uses_locked_schema_and_parses_result() -> None:
         )
 
     schema = captured["text"]["format"]["schema"]
-    indexes = schema["properties"]["replacements"]["items"][
-        "properties"
-    ]["sentence_index"]["enum"]
+    indexes = schema["properties"]["replacements"]["items"]["properties"]["sentence_index"]["enum"]
     assert indexes == [2, 3]
     assert captured["text"]["format"]["strict"] is True
     assert batch.repair_status == "REPAIRED"

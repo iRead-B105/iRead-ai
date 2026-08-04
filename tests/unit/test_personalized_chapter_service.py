@@ -3,8 +3,11 @@ from __future__ import annotations
 import re
 from typing import Any
 
+import pytest
+
 from iread_ai.application.personalized_chapter_service import (
     PersonalizedStoryChapterService,
+    StoryChapterUseCaseError,
     build_chapter_generation_context,
 )
 from iread_ai.contracts.story_chapter import StoryChapterGenerateRequest
@@ -59,9 +62,7 @@ def chapter_candidate(
 class RecordingChapterGenerator:
     def __init__(self, candidate: ChapterCandidate) -> None:
         self.candidate = candidate
-        self.calls: list[
-            tuple[ChapterGenerationContext, GenerationProfile, int]
-        ] = []
+        self.calls: list[tuple[ChapterGenerationContext, GenerationProfile, int]] = []
 
     async def generate(
         self,
@@ -75,9 +76,7 @@ class RecordingChapterGenerator:
             ChapterCandidate(
                 candidate_id=f"chapter-candidate-{index}",
                 sentences=self.candidate.sentences,
-                child_detour_end_sentence_index=(
-                    self.candidate.child_detour_end_sentence_index
-                ),
+                child_detour_end_sentence_index=(self.candidate.child_detour_end_sentence_index),
                 question=self.candidate.question,
                 choices=self.candidate.choices,
             )
@@ -160,6 +159,33 @@ class FixedChapterBatchGenerator:
         )
 
 
+class SequencedChapterGenerator:
+    def __init__(self, candidates: tuple[ChapterCandidate, ...]) -> None:
+        self.candidates = candidates
+        self.calls = 0
+
+    async def generate(
+        self,
+        context: ChapterGenerationContext,
+        profile: GenerationProfile,
+        *,
+        candidate_count: int = 1,
+    ) -> ChapterGenerationBatch:
+        del context, profile
+        assert candidate_count == 1
+        index = min(self.calls, len(self.candidates) - 1)
+        self.calls += 1
+        candidate = self.candidates[index]
+        return ChapterGenerationBatch(
+            candidates=(candidate,),
+            raw_output=f"attempt-{self.calls}",
+            elapsed_ms=20.0,
+            model="gms-test-model",
+            system_prompt="chapter prompt",
+            user_prompt="test context",
+        )
+
+
 class DeterministicAnalyzer:
     def analyze(
         self,
@@ -176,8 +202,7 @@ class DeterministicAnalyzer:
             phonological_rule_counts={},
             written_syllables=written_syllable_count(text),
             dialogue_sentence_count=sum(
-                _DIALOGUE.search(sentence) is not None
-                for sentence in sentences
+                _DIALOGUE.search(sentence) is not None for sentence in sentences
             ),
             pronunciations=(),
             kiwi_token_count=len(sentences),
@@ -216,9 +241,7 @@ class DialogueRepairer:
 
 class RecordingDynamicPageRepairer:
     def __init__(self) -> None:
-        self.calls: list[
-            tuple[PageGenerationContext, GenerationProfile, PageCandidate]
-        ] = []
+        self.calls: list[tuple[PageGenerationContext, GenerationProfile, PageCandidate]] = []
 
     async def repair(
         self,
@@ -236,9 +259,7 @@ class RecordingDynamicPageRepairer:
             replacements=(
                 RepairReplacement(
                     sentence_index=2,
-                    sentence=(
-                        "거북이는 “멈추지 않고 언덕을 천천히 갈 거야.” 하고 말해요."
-                    ),
+                    sentence=("거북이는 “멈추지 않고 언덕을 천천히 갈 거야.” 하고 말해요."),
                 ),
             ),
             raw_output="repair",
@@ -255,17 +276,13 @@ def _request() -> StoryChapterGenerateRequest:
     }
     payload["storyTemplate"]["title"] = "토끼와 거북이"
     payload["storyTemplate"]["context"] = "토끼와 거북이가 숲길에서 경주해요."
-    payload["storyTemplate"]["currentBeat"]["goal"] = (
-        "짧은 소동 뒤 경주가 다시 이어져요."
-    )
+    payload["storyTemplate"]["currentBeat"]["goal"] = "짧은 소동 뒤 경주가 다시 이어져요."
     payload["storyState"]["characters"][0]["name"] = "토끼"
     payload["storyState"]["characters"][1]["name"] = "거북이"
     payload["chapterPlan"]["orderedEvents"][0]["lockedEvent"] = (
         "아이의 소리가 숲길에 실제로 울려요."
     )
-    payload["chapterPlan"]["orderedEvents"][1]["lockedEvent"] = (
-        "두 친구가 경주로 돌아가요."
-    )
+    payload["chapterPlan"]["orderedEvents"][1]["lockedEvent"] = "두 친구가 경주로 돌아가요."
     payload["chapterPlan"]["questionFocus"] = "다음에 갈 길"
     return StoryChapterGenerateRequest.model_validate(payload)
 
@@ -294,8 +311,7 @@ def test_visual_scene_infers_restrained_character_emotions() -> None:
         pages=(page,),
     )[0]
     emotions = {
-        character["characterId"]: character["emotion"]["type"]
-        for character in scene["characters"]
+        character["characterId"]: character["emotion"]["type"] for character in scene["characters"]
     }
 
     assert emotions == {
@@ -325,10 +341,10 @@ async def test_generates_one_dynamic_chapter_and_splits_it_into_two_pages() -> N
     assert response.pages[-1].requires_branch_input is True
     assert response.generation.api_call_count == 1
     assert response.generation.page_count == 2
-    assert [
-        character.character_id
-        for character in response.pages[0].visual_scene.characters
-    ] == ["hare", "tortoise"]
+    assert [character.character_id for character in response.pages[0].visual_scene.characters] == [
+        "hare",
+        "tortoise",
+    ]
     assert all(
         character.emotion is not None
         for character in response.pages[0].visual_scene.characters
@@ -361,8 +377,7 @@ async def test_question_and_choices_are_analyzed_with_the_final_page() -> None:
     final_quality = response.quality.pages[-1].quality
     assert final_quality.analysis_status == "FULL"
     assert response.quality.chapter.written_syllable_count == sum(
-        row.quality.written_syllable_count
-        for row in response.quality.pages
+        row.quality.written_syllable_count for row in response.quality.pages
     )
     assert response.quality.chapter.direct_dialogue_count == 2
 
@@ -397,9 +412,7 @@ async def test_forward_question_is_selected_over_question_that_rewinds_story() -
 
     assert response.generation.selected_candidate_id == good.candidate_id
     assert response.pages[-1].question == good.question
-    assert "QUESTION_TIME_REVERSAL" not in (
-        response.quality.pages[-1].quality.contract_failures
-    )
+    assert "QUESTION_TIME_REVERSAL" not in (response.quality.pages[-1].quality.contract_failures)
     assert response.generation.api_call_count == 1
 
 
@@ -421,11 +434,64 @@ async def test_retroactive_question_is_visible_as_best_effort_without_failure() 
     response = await service.generate(_request())
 
     assert response.pages[-1].question == retroactive.question
-    assert "QUESTION_TIME_REVERSAL" in (
-        response.quality.pages[-1].quality.contract_failures
-    )
+    assert "QUESTION_TIME_REVERSAL" in (response.quality.pages[-1].quality.contract_failures)
     assert response.quality.chapter.status == "BEST_EFFORT"
     assert response.generation.api_call_count == 1
+
+
+async def test_quality_contract_retries_until_a_passing_chapter() -> None:
+    source = chapter_candidate()
+    rejected = ChapterCandidate(
+        candidate_id="rejected",
+        sentences=source.sentences,
+        child_detour_end_sentence_index=4,
+        question="출발 종 대신 무엇이 울릴까요?",
+        choices=("나무 구호", "잎사귀 종", "조약돌 종"),
+    )
+    accepted = source
+    generator = SequencedChapterGenerator((rejected, accepted))
+    service = PersonalizedStoryChapterService(
+        generator=generator,
+        analyzer=DeterministicAnalyzer(),  # type: ignore[arg-type]
+        candidate_count=1,
+        quality_retry_count=2,
+        require_contract_pass=True,
+        provider_name="gms",
+    )
+
+    response = await service.generate(_request())
+
+    assert generator.calls == 2
+    assert response.quality.chapter.contract_pass is True
+    assert response.generation.provider == "gms"
+    assert response.generation.api_call_count == 2
+
+
+async def test_quality_contract_blocks_after_two_retries() -> None:
+    source = chapter_candidate()
+    rejected = ChapterCandidate(
+        candidate_id="rejected",
+        sentences=source.sentences,
+        child_detour_end_sentence_index=4,
+        question="출발 종 대신 무엇이 울릴까요?",
+        choices=("나무 구호", "잎사귀 종", "조약돌 종"),
+    )
+    generator = SequencedChapterGenerator((rejected,))
+    service = PersonalizedStoryChapterService(
+        generator=generator,
+        analyzer=DeterministicAnalyzer(),  # type: ignore[arg-type]
+        candidate_count=1,
+        quality_retry_count=2,
+        require_contract_pass=True,
+        provider_name="gms",
+    )
+
+    with pytest.raises(StoryChapterUseCaseError) as raised:
+        await service.generate(_request())
+
+    assert generator.calls == 3
+    assert raised.value.status_code == 502
+    assert raised.value.code == "STORY_QUALITY_CONTRACT_FAILED"
 
 
 async def test_student_identifier_is_not_forwarded_to_the_model_context() -> None:
@@ -464,9 +530,7 @@ async def test_v2_dialogue_format_is_part_of_chapter_quality() -> None:
 
     response = await service.generate(_request())
 
-    assert "CURLY_DIALOGUE_FORMAT" in (
-        response.quality.pages[0].quality.contract_failures
-    )
+    assert "CURLY_DIALOGUE_FORMAT" in (response.quality.pages[0].quality.contract_failures)
 
 
 async def test_malformed_dialogue_uses_one_conditional_repair_call() -> None:
@@ -505,9 +569,7 @@ async def test_malformed_dialogue_uses_one_conditional_repair_call() -> None:
         for character in response.pages[1].visual_scene.characters
         if character.character_id == "tortoise"
     )
-    assert tortoise_scene.action == (
-        "거북이가 “난 멈추지 않고 갈 거야!” 하고 말해요."
-    )
+    assert tortoise_scene.action == ("거북이가 “난 멈추지 않고 갈 거야!” 하고 말해요.")
 
 
 async def test_visual_scene_llm_receives_final_repaired_pages() -> None:
@@ -534,14 +596,8 @@ async def test_visual_scene_llm_receives_final_repaired_pages() -> None:
 
     response = await service.generate(_request())
 
-    planned_sentences = [
-        sentence
-        for page in planner.pages
-        for sentence in page.sentences
-    ]
-    assert "거북이가 “난 멈추지 않고 갈 거야!” 하고 말해요." in (
-        planned_sentences
-    )
+    planned_sentences = [sentence for page in planner.pages for sentence in page.sentences]
+    assert "거북이가 “난 멈추지 않고 갈 거야!” 하고 말해요." in (planned_sentences)
     assert response.generation.api_call_count == 3
     assert response.generation.visual_scene_status == "LLM_GENERATED"
     assert response.generation.visual_scene_model == "scene-model"
@@ -559,16 +615,13 @@ async def test_visual_scene_failure_returns_transparent_deterministic_fallback()
     response = await service.generate(_request())
 
     assert response.generation.api_call_count == 2
-    assert (
-        response.generation.visual_scene_status
-        == "DETERMINISTIC_FALLBACK"
-    )
+    assert response.generation.visual_scene_status == "DETERMINISTIC_FALLBACK"
     assert response.generation.visual_scene_model == "deterministic"
     assert response.generation.visual_scene_fallback_reason == "TIMEOUT"
-    assert [
-        character.character_id
-        for character in response.pages[0].visual_scene.characters
-    ] == ["hare", "tortoise"]
+    assert [character.character_id for character in response.pages[0].visual_scene.characters] == [
+        "hare",
+        "tortoise",
+    ]
 
 
 async def test_three_sentence_dynamic_page_can_be_repaired() -> None:
@@ -615,9 +668,7 @@ async def test_three_sentence_dynamic_page_can_be_repaired() -> None:
 async def test_child_answer_owner_and_later_callback_affect_selection() -> None:
     payload = request_payload(min_pages=2, max_pages=2)
     payload["branchInput"]["text"] = "으쌰으쌰"
-    payload["storyState"]["lastQuestion"] = (
-        "거북이가 어떤 리듬 말을 외칠까요?"
-    )
+    payload["storyState"]["lastQuestion"] = "거북이가 어떤 리듬 말을 외칠까요?"
     request = StoryChapterGenerateRequest.model_validate(payload)
     bad = ChapterCandidate(
         candidate_id="candidate-a-discarded-answer",
@@ -671,16 +722,12 @@ def test_catalog_branch_placeholders_are_materialized_before_prompting() -> None
     payload["chapterPlan"]["orderedEvents"][0]["lockedEvent"] = (
         "거북이가 직전 답의 리듬 말을 되뇌며 다가가요."
     )
-    payload["chapterPlan"]["orderedEvents"][0]["requiredConcepts"] = [
-        "직전 답의 리듬 말"
-    ]
+    payload["chapterPlan"]["orderedEvents"][0]["requiredConcepts"] = ["직전 답의 리듬 말"]
     request = StoryChapterGenerateRequest.model_validate(payload)
 
     context = build_chapter_generation_context(request)
 
-    serialized = " ".join(
-        (context.chapter_goal, *context.ordered_events)
-    )
+    serialized = " ".join((context.chapter_goal, *context.ordered_events))
     assert "으쌰으쌰" in serialized
     assert "직전 답" not in serialized
 
@@ -690,8 +737,7 @@ async def test_missing_child_input_is_visible_as_contract_failure() -> None:
     missing = ChapterCandidate(
         candidate_id="missing-child-input",
         sentences=tuple(
-            sentence.replace("방구 소리", "나뭇잎 소리")
-            for sentence in source.sentences
+            sentence.replace("방구 소리", "나뭇잎 소리") for sentence in source.sentences
         ),
         child_detour_end_sentence_index=4,
         question=source.question,
@@ -705,9 +751,7 @@ async def test_missing_child_input_is_visible_as_contract_failure() -> None:
 
     response = await service.generate(_request())
 
-    assert "CHILD_INPUT_NOT_REFLECTED" in (
-        response.quality.pages[0].quality.contract_failures
-    )
+    assert "CHILD_INPUT_NOT_REFLECTED" in (response.quality.pages[0].quality.contract_failures)
 
 
 async def test_question_answer_already_in_body_is_contract_failure() -> None:

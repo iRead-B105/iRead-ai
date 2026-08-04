@@ -44,14 +44,23 @@ class Settings(BaseSettings):
         validation_alias="AI_MAX_AUDIO_BYTES",
     )
 
-    story_provider: Literal["mock", "openai", "gms"] = "mock"
+    story_provider: Literal["mock", "openai", "gemini", "gms"] = Field(
+        default="mock",
+        validation_alias=AliasChoices("STORY_TEXT_PROVIDER", "STORY_PROVIDER"),
+    )
     generation_provider: Literal["mock", "openai", "gms"] = Field(
         default="mock",
         validation_alias="AI_GENERATION_PROVIDER",
     )
     openai_api_key: SecretStr | None = None
-    openai_model: str = "gpt-5.4-mini"
+    openai_model: str = Field(
+        default="gpt-5.4-mini",
+        validation_alias=AliasChoices("STORY_TEXT_MODEL", "OPENAI_MODEL"),
+    )
     openai_base_url: str = "https://api.openai.com/v1"
+    gemini_api_key: SecretStr | None = None
+    gemini_base_url: str = "https://generativelanguage.googleapis.com"
+    gemini_openai_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai"
     openai_max_output_tokens: int = Field(default=2400, ge=256, le=16_384)
     openai_chapter_max_output_tokens: int = Field(
         default=8000,
@@ -85,12 +94,25 @@ class Settings(BaseSettings):
         le=20.0,
     )
     chapter_candidate_count: int = Field(default=1, ge=1, le=8)
+    chapter_quality_retry_count: int = Field(
+        default=2,
+        ge=0,
+        le=2,
+        validation_alias="CHAPTER_QUALITY_RETRY_COUNT",
+    )
+    chapter_require_contract_pass: bool = Field(
+        default=True,
+        validation_alias="CHAPTER_REQUIRE_CONTRACT_PASS",
+    )
 
     gms_key: SecretStr | None = None
     gms_base_url: str = "https://gms.ssafy.io/gmsapi"
     gms_openai_base_url: str | None = None
-    story_image_provider: Literal["disabled", "gemini"] = "disabled"
-    gms_gemini_image_model: str = "gemini-2.5-flash-image"
+    story_image_provider: Literal["disabled", "gms", "gemini", "openai"] = "disabled"
+    gms_gemini_image_model: str = Field(
+        default="gemini-2.5-flash-image",
+        validation_alias=AliasChoices("STORY_IMAGE_MODEL", "GMS_GEMINI_IMAGE_MODEL"),
+    )
     gms_image_timeout_seconds: float = Field(default=180.0, gt=0, le=300)
     gms_image_max_bytes: int = Field(
         default=12 * 1024 * 1024,
@@ -112,6 +134,7 @@ class Settings(BaseSettings):
         default=Path("local-output/lexicon/story-lexicon.sqlite3"),
         validation_alias="AI_LEXICON_DB_PATH",
     )
+    story_cover_dir: Path = Path("assets/story-covers")
 
     model_timeout_seconds: float = Field(default=75.0, gt=0, le=120.0)
     idempotency_ttl_seconds: float = Field(
@@ -159,16 +182,11 @@ class Settings(BaseSettings):
         if self.app_env == "production" and self.story_provider == "mock":
             raise ValueError("STORY_PROVIDER=mock is not allowed in production")
         if self.app_env == "production" and self.generation_provider == "mock":
-            raise ValueError(
-                "AI_GENERATION_PROVIDER=mock is not allowed in production"
-            )
+            raise ValueError("AI_GENERATION_PROVIDER=mock is not allowed in production")
         if self.story_provider == "openai" and (
-            self.openai_api_key is None
-            or not self.openai_api_key.get_secret_value()
+            self.openai_api_key is None or not self.openai_api_key.get_secret_value()
         ):
-            raise ValueError(
-                "OPENAI_API_KEY is required when STORY_PROVIDER=openai"
-            )
+            raise ValueError("OPENAI_API_KEY is required when STORY_PROVIDER=openai")
         if self.generation_provider == "openai" and (
             self.openai_api_key is None
             or not self.openai_api_key.get_secret_value()
@@ -180,24 +198,32 @@ class Settings(BaseSettings):
             self.gms_key is None or not self.gms_key.get_secret_value()
         ):
             raise ValueError("GMS_KEY is required when STORY_PROVIDER=gms")
+        if self.story_provider == "gemini" and (
+            self.gemini_api_key is None or not self.gemini_api_key.get_secret_value()
+        ):
+            raise ValueError("GEMINI_API_KEY is required when STORY_TEXT_PROVIDER=gemini")
         if self.generation_provider == "gms" and (
             self.gms_key is None or not self.gms_key.get_secret_value()
         ):
-            raise ValueError(
-                "GMS_KEY is required when AI_GENERATION_PROVIDER=gms"
-            )
+            raise ValueError("GMS_KEY is required when AI_GENERATION_PROVIDER=gms")
         if self.pronunciation_provider == "gms" and (
             self.gms_key is None or not self.gms_key.get_secret_value()
         ):
             raise ValueError(
                 "GMS_KEY is required when AI_PRONUNCIATION_PROVIDER=gms"
             )
-        if self.story_image_provider == "gemini" and (
+        if self.story_image_provider == "gms" and (
             self.gms_key is None or not self.gms_key.get_secret_value()
         ):
-            raise ValueError(
-                "GMS_KEY is required when STORY_IMAGE_PROVIDER=gemini"
-            )
+            raise ValueError("GMS_KEY is required when STORY_IMAGE_PROVIDER=gms")
+        if self.story_image_provider == "gemini" and (
+            self.gemini_api_key is None or not self.gemini_api_key.get_secret_value()
+        ):
+            raise ValueError("GEMINI_API_KEY is required when STORY_IMAGE_PROVIDER=gemini")
+        if self.story_image_provider == "openai" and (
+            self.openai_api_key is None or not self.openai_api_key.get_secret_value()
+        ):
+            raise ValueError("OPENAI_API_KEY is required when STORY_IMAGE_PROVIDER=openai")
         return self
 
     @property
@@ -208,6 +234,9 @@ class Settings(BaseSettings):
         if self.story_provider == "openai":
             assert self.openai_api_key is not None
             return self.openai_api_key.get_secret_value()
+        if self.story_provider == "gemini":
+            assert self.gemini_api_key is not None
+            return self.gemini_api_key.get_secret_value()
         raise RuntimeError("mock story generation does not use an API key")
 
     @property
@@ -215,12 +244,11 @@ class Settings(BaseSettings):
         if self.story_provider == "gms":
             if self.gms_openai_base_url:
                 return self.gms_openai_base_url.rstrip("/")
-            return (
-                f"{self.gms_base_url.rstrip('/')}"
-                "/api.openai.com/v1"
-            )
+            return f"{self.gms_base_url.rstrip('/')}/api.openai.com/v1"
         if self.story_provider == "openai":
             return self.openai_base_url.rstrip("/")
+        if self.story_provider == "gemini":
+            return self.gemini_openai_base_url.rstrip("/")
         raise RuntimeError("mock story generation does not use an API URL")
 
     @property

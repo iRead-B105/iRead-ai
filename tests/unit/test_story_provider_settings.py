@@ -17,10 +17,7 @@ def test_gms_story_provider_uses_shared_key_and_derived_proxy_url() -> None:
     )
 
     assert settings.story_api_key == "gms-test-key"
-    assert (
-        settings.story_api_base_url
-        == "https://gateway.example/gmsapi/api.openai.com/v1"
-    )
+    assert settings.story_api_base_url == "https://gateway.example/gmsapi/api.openai.com/v1"
     assert "gms-test-key" not in repr(settings)
 
 
@@ -103,13 +100,13 @@ def test_direct_openai_training_provider_requires_openai_key() -> None:
         )
 
 
-def test_gemini_story_image_provider_requires_gms_key() -> None:
+def test_gemini_story_image_provider_requires_gemini_key() -> None:
     with pytest.raises(
         ValidationError,
-        match="GMS_KEY is required when STORY_IMAGE_PROVIDER=gemini",
+        match="GEMINI_API_KEY is required when STORY_IMAGE_PROVIDER=gemini",
     ):
         Settings(
             _env_file=None,
             story_image_provider="gemini",
-            gms_key=None,
+            gemini_api_key=None,
         )

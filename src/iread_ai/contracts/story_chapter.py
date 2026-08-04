@@ -71,9 +71,7 @@ class StoryVisualCharacterPayload(StoryPageContractModel):
                 "gazeTarget, action, and emotion"
             )
         if not self.present and any(value is not None for value in scene_values):
-            raise ValueError(
-                "an absent character must not define scene details or emotion"
-            )
+            raise ValueError("an absent character must not define scene details or emotion")
         return self
 
 
@@ -87,9 +85,7 @@ class StoryVisualScenePayload(StoryPageContractModel):
 
     @model_validator(mode="after")
     def validate_scene(self) -> Self:
-        character_ids = [
-            character.character_id for character in self.characters
-        ]
+        character_ids = [character.character_id for character in self.characters]
         if len(character_ids) != len(set(character_ids)):
             raise ValueError("visualScene characterId values must be unique")
         if len(self.must_include) != len(set(self.must_include)):
@@ -98,9 +94,7 @@ class StoryVisualScenePayload(StoryPageContractModel):
             raise ValueError("mustAvoid values must be unique")
         overlap = set(self.must_include) & set(self.must_avoid)
         if overlap:
-            raise ValueError(
-                "mustInclude and mustAvoid must not contain the same value"
-            )
+            raise ValueError("mustInclude and mustAvoid must not contain the same value")
         return self
 
 
@@ -144,9 +138,7 @@ class StoryChapterGenerateRequest(StoryPageContractModel):
     story_id: StrictInt = Field(ge=1)
     student_id: StrictInt = Field(
         ge=1,
-        description=(
-            "Backend routing identifier. It must never be forwarded to the model."
-        ),
+        description=("Backend routing identifier. It must never be forwarded to the model."),
     )
     story_revision: StrictInt = Field(ge=0)
     chapter_number: StrictInt = Field(ge=1)
@@ -159,9 +151,7 @@ class StoryChapterGenerateRequest(StoryPageContractModel):
 
     @model_validator(mode="after")
     def validate_request_invariants(self) -> Self:
-        known_characters = {
-            character.character_id for character in self.story_state.characters
-        }
+        known_characters = {character.character_id for character in self.story_state.characters}
         required_characters = {
             character_id
             for event in self.chapter_plan.ordered_events
@@ -175,13 +165,9 @@ class StoryChapterGenerateRequest(StoryPageContractModel):
             )
 
         if self.conclude and self.chapter_plan.question_focus is not None:
-            raise ValueError(
-                "chapterPlan.questionFocus is not allowed for a concluding chapter"
-            )
+            raise ValueError("chapterPlan.questionFocus is not allowed for a concluding chapter")
         if not self.conclude and self.chapter_plan.question_focus is None:
-            raise ValueError(
-                "chapterPlan.questionFocus is required for a non-concluding chapter"
-            )
+            raise ValueError("chapterPlan.questionFocus is required for a non-concluding chapter")
         return self
 
 
@@ -197,11 +183,7 @@ class GeneratedStoryChapterPagePayload(StoryPageContractModel):
     @model_validator(mode="after")
     def validate_branch_contract(self) -> Self:
         if self.requires_branch_input:
-            if (
-                self.question is None
-                or self.subtitle is None
-                or len(self.choices) != 3
-            ):
+            if self.question is None or self.subtitle is None or len(self.choices) != 3:
                 raise ValueError(
                     "a branching page requires a subtitle, one question, and exactly three choices"
                 )
@@ -236,30 +218,21 @@ class StoryChapterQualityPayload(StoryPageContractModel):
             "written_syllable_count": sum(
                 page.quality.written_syllable_count for page in self.pages
             ),
-            "direct_dialogue_count": sum(
-                page.quality.direct_dialogue_count for page in self.pages
-            ),
+            "direct_dialogue_count": sum(page.quality.direct_dialogue_count for page in self.pages),
             "excluded_overage_count": sum(
                 page.quality.excluded_overage_count for page in self.pages
             ),
-            "limited_overage_count": sum(
-                page.quality.limited_overage_count for page in self.pages
-            ),
+            "limited_overage_count": sum(page.quality.limited_overage_count for page in self.pages),
         }
         for field_name, expected in totals.items():
             if getattr(self.chapter, field_name) != expected:
                 alias = "".join(
                     (
                         field_name.split("_")[0],
-                        *(
-                            part.title()
-                            for part in field_name.split("_")[1:]
-                        ),
+                        *(part.title() for part in field_name.split("_")[1:]),
                     )
                 )
-                raise ValueError(
-                    f"chapter {alias} must equal the sum of page qualities"
-                )
+                raise ValueError(f"chapter {alias} must equal the sum of page qualities")
         return self
 
 
@@ -304,33 +277,21 @@ class StoryChapterGenerationProvenance(StoryPageContractModel):
             self.visual_scene_status == "DETERMINISTIC_FALLBACK"
             and self.visual_scene_fallback_reason is None
         ):
-            raise ValueError(
-                "visualSceneFallbackReason is required for fallback"
-            )
+            raise ValueError("visualSceneFallbackReason is required for fallback")
         if (
             self.visual_scene_status != "DETERMINISTIC_FALLBACK"
             and self.visual_scene_fallback_reason is not None
         ):
-            raise ValueError(
-                "visualSceneFallbackReason is allowed only for fallback"
-            )
+            raise ValueError("visualSceneFallbackReason is allowed only for fallback")
 
-        global_numbers = [
-            sentence.global_sentence_number
-            for sentence in self.changed_sentences
-        ]
+        global_numbers = [sentence.global_sentence_number for sentence in self.changed_sentences]
         positions = [
-            (sentence.page_number, sentence.sentence_number)
-            for sentence in self.changed_sentences
+            (sentence.page_number, sentence.sentence_number) for sentence in self.changed_sentences
         ]
         if len(global_numbers) != len(set(global_numbers)):
-            raise ValueError(
-                "changedSentences globalSentenceNumber values must be unique"
-            )
+            raise ValueError("changedSentences globalSentenceNumber values must be unique")
         if len(positions) != len(set(positions)):
-            raise ValueError(
-                "changedSentences page and sentence positions must be unique"
-            )
+            raise ValueError("changedSentences page and sentence positions must be unique")
         return self
 
 
@@ -378,38 +339,28 @@ class StoryChapterGenerateResponse(StoryPageContractModel):
             raise ValueError("pages must be ordered from 1 through page count")
         if len(self.quality.pages) != len(self.pages):
             raise ValueError("quality.pages must contain one entry for every page")
-        if [
-            page_quality.page_number for page_quality in self.quality.pages
-        ] != page_numbers:
+        if [page_quality.page_number for page_quality in self.quality.pages] != page_numbers:
             raise ValueError("quality.pages must match generated page numbers")
         if self.generation.page_count != len(self.pages):
             raise ValueError("generation.pageCount must equal generated page count")
 
         for page in self.pages[:-1]:
             if page.requires_branch_input:
-                raise ValueError(
-                    "requiresBranchInput may be true only on the final page"
-                )
+                raise ValueError("requiresBranchInput may be true only on the final page")
 
         for changed in self.generation.changed_sentences:
             if changed.page_number > len(self.pages):
                 raise ValueError("changedSentences references an unknown page")
             page = self.pages[changed.page_number - 1]
             if changed.sentence_number > len(page.sentences):
-                raise ValueError(
-                    "changedSentences references an unknown sentence"
-                )
+                raise ValueError("changedSentences references an unknown sentence")
             expected_global_number = (
-                sum(
-                    len(previous.sentences)
-                    for previous in self.pages[: changed.page_number - 1]
-                )
+                sum(len(previous.sentences) for previous in self.pages[: changed.page_number - 1])
                 + changed.sentence_number
             )
             if changed.global_sentence_number != expected_global_number:
                 raise ValueError(
-                    "changedSentences globalSentenceNumber does not match "
-                    "its page position"
+                    "changedSentences globalSentenceNumber does not match its page position"
                 )
         return self
 
@@ -422,51 +373,34 @@ class StoryChapterGenerateResponse(StoryPageContractModel):
         if self.story_id != request.story_id:
             raise ValueError("response storyId must match request storyId")
         if self.story_revision != request.story_revision:
-            raise ValueError(
-                "response storyRevision must match request storyRevision"
-            )
+            raise ValueError("response storyRevision must match request storyRevision")
         if self.chapter_number != request.chapter_number:
-            raise ValueError(
-                "response chapterNumber must match request chapterNumber"
-            )
+            raise ValueError("response chapterNumber must match request chapterNumber")
         if self.state_patch.expected_base_revision != request.story_revision:
-            raise ValueError(
-                "statePatch.expectedBaseRevision must match request storyRevision"
-            )
+            raise ValueError("statePatch.expectedBaseRevision must match request storyRevision")
 
         page_count = len(self.pages)
-        if not (
-            request.chapter_plan.min_pages
-            <= page_count
-            <= request.chapter_plan.max_pages
-        ):
-            raise ValueError(
-                "response page count must be inside chapterPlan page bounds"
-            )
+        if not (request.chapter_plan.min_pages <= page_count <= request.chapter_plan.max_pages):
+            raise ValueError("response page count must be inside chapterPlan page bounds")
 
         final_page = self.pages[-1]
         expects_branch = not request.conclude
         if final_page.requires_branch_input != expects_branch:
             raise ValueError(
-                "only the final page of a non-concluding chapter may require "
-                "branch input"
+                "only the final page of a non-concluding chapter may require branch input"
             )
         if self.generation.generation_profile_version != (
             request.generation_profile.generation_profile_version
         ):
-            raise ValueError(
-                "generationProfileVersion must match the request snapshot"
-            )
+            raise ValueError("generationProfileVersion must match the request snapshot")
         if self.generation.policy_hash != request.generation_profile.policy_hash:
             raise ValueError("generation policyHash must match the request snapshot")
         expected_character_ids = [
-            character.character_id
-            for character in request.story_state.characters
+            character.character_id for character in request.story_state.characters
         ]
         for page in self.pages:
             actual_character_ids = [
-                character.character_id
-                for character in page.visual_scene.characters
+                character.character_id for character in page.visual_scene.characters
             ]
             if actual_character_ids != expected_character_ids:
                 raise ValueError(

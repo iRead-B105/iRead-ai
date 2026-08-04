@@ -52,9 +52,7 @@ def _app(
     return create_app(
         settings=Settings(
             app_env=app_env,
-            internal_api_key=(
-                API_KEY if not is_production else "production-test-key"
-            ),
+            internal_api_key=(API_KEY if not is_production else "production-test-key"),
             story_provider="openai" if is_production else "mock",
             openai_api_key="unused-test-key" if is_production else None,
             generation_provider="gms" if is_production else "mock",

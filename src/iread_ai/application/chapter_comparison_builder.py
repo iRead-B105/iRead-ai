@@ -20,9 +20,7 @@ def build_displayed_chapter_comparison_payload(
 ) -> dict[str, Any]:
     payload = DisplayedChapterComparisonRequest(
         requestId=request_id,
-        chapterRequest=StoryChapterGenerateRequest.model_validate(
-            dict(chapter_request_payload)
-        ),
+        chapterRequest=StoryChapterGenerateRequest.model_validate(dict(chapter_request_payload)),
         personalizedResponse=StoryChapterGenerateResponse.model_validate(
             dict(personalized_response_payload)
         ),

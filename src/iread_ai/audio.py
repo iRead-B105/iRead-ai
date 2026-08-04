@@ -67,9 +67,7 @@ def stage_azure_audio(audio: bytes, original_filename: str | None) -> Path:
             timeout=20,
         )
         if completed.returncode != 0 or output_path.stat().st_size == 0:
-            raise AudioPreparationError(
-                "Uploaded audio format could not be decoded"
-            )
+            raise AudioPreparationError("Uploaded audio format could not be decoded")
         prepared = True
         return output_path
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exception:

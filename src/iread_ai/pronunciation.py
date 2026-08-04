@@ -55,17 +55,13 @@ class AzurePronunciationProvider:
         try:
             import azure.cognitiveservices.speech as speechsdk
         except ImportError as exception:
-            raise PronunciationProviderError(
-                "Azure Speech SDK is not installed"
-            ) from exception
+            raise PronunciationProviderError("Azure Speech SDK is not installed") from exception
 
         speech_config = speechsdk.SpeechConfig(
             subscription=self._settings.azure_speech_key,
             region=self._settings.azure_speech_region,
         )
-        speech_config.speech_recognition_language = (
-            self._settings.azure_speech_language
-        )
+        speech_config.speech_recognition_language = self._settings.azure_speech_language
         audio_config = speechsdk.audio.AudioConfig(filename=str(audio_path))
         recognizer = speechsdk.SpeechRecognizer(
             speech_config=speech_config,
@@ -81,9 +77,7 @@ class AzurePronunciationProvider:
         result = recognizer.recognize_once_async().get()
         if result.reason != speechsdk.ResultReason.RecognizedSpeech:
             raise PronunciationProviderError("Azure Speech did not recognize the audio")
-        raw = result.properties.get(
-            speechsdk.PropertyId.SpeechServiceResponse_JsonResult
-        )
+        raw = result.properties.get(speechsdk.PropertyId.SpeechServiceResponse_JsonResult)
         try:
             return json.loads(raw)
         except (TypeError, json.JSONDecodeError) as exception:
@@ -351,9 +345,7 @@ def parse_azure_result(
             PronunciationWordResult(
                 resultIndex=index,
                 word=str(raw_word["Word"]),
-                accuracyScore=_optional_float(
-                    word_assessment.get("AccuracyScore")
-                ),
+                accuracyScore=_optional_float(word_assessment.get("AccuracyScore")),
                 errorType=str(word_assessment.get("ErrorType", "None")),
                 offsetMs=_ticks_to_ms(raw_word.get("Offset", 0)),
                 durationMs=_ticks_to_ms(raw_word.get("Duration", 0)),
@@ -364,9 +356,7 @@ def parse_azure_result(
         requestId=request_id,
         pronunciationAccuracyScore=float(assessment["AccuracyScore"]),
         fluencyScore=_optional_float(assessment.get("FluencyScore")),
-        completenessScore=_optional_float(
-            assessment.get("CompletenessScore")
-        ),
+        completenessScore=_optional_float(assessment.get("CompletenessScore")),
         pronScore=_optional_float(assessment.get("PronScore")),
         confidence=float(best.get("Confidence", 0)),
         analysisVersion=ANALYSIS_VERSION,

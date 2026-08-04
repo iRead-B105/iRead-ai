@@ -89,7 +89,5 @@ def test_repair_user_prompt_contains_locks_source_and_plan() -> None:
 
     assert document["task"] == "repair_story_page"
     assert document["source_candidate"]["candidate_id"] == "candidate-1"
-    assert document["page_locks"]["locked_event"] == (
-        "토끼가 작은 별을 만나요."
-    )
+    assert document["page_locks"]["locked_event"] == ("토끼가 작은 별을 만나요.")
     assert document["repair_plan"]["editable_sentence_indexes"] == [2]

@@ -144,11 +144,7 @@ def decompose_text(text: str | None) -> tuple[HangulSyllable, ...]:
 def mask_protected_terms(text: str, protected_terms: tuple[str, ...]) -> str:
     masked = normalize_text(text)
     terms = sorted(
-        {
-            normalize_text(term).strip()
-            for term in protected_terms
-            if normalize_text(term).strip()
-        },
+        {normalize_text(term).strip() for term in protected_terms if normalize_text(term).strip()},
         key=len,
         reverse=True,
     )

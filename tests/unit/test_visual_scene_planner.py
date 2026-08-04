@@ -109,9 +109,7 @@ async def test_openai_visual_scene_planner_uses_one_strict_call_without_student_
         )
 
     request = StoryChapterGenerateRequest.model_validate(request_payload())
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(handler)
-    ) as client:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         planner = OpenAIVisualScenePlanner(
             api_key="test-key",
             model="gpt-test",
@@ -155,9 +153,7 @@ async def test_openai_visual_scene_planner_rejects_page_reordering() -> None:
         )
 
     request = StoryChapterGenerateRequest.model_validate(request_payload())
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(handler)
-    ) as client:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         planner = OpenAIVisualScenePlanner(
             api_key="test-key",
             model="gpt-test",
@@ -196,9 +192,7 @@ async def test_openai_visual_scene_planner_rejects_emotion_for_absent_character(
         )
 
     request = StoryChapterGenerateRequest.model_validate(request_payload())
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(handler)
-    ) as client:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         planner = OpenAIVisualScenePlanner(
             api_key="test-key",
             model="gpt-test",
@@ -219,9 +213,7 @@ async def test_openai_visual_scene_planner_marks_rate_limit_retryable() -> None:
         return httpx.Response(429, json={"error": {"message": "slow"}})
 
     request = StoryChapterGenerateRequest.model_validate(request_payload())
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(handler)
-    ) as client:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         planner = OpenAIVisualScenePlanner(
             api_key="test-key",
             model="gpt-test",

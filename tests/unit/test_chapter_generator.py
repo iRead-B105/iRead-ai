@@ -75,9 +75,7 @@ def _candidate(
             "토끼가 “여기까지 와 봐!” 하고 크게 외쳐요.",
             "거북이는 흔들림 없이 돌길을 건너가요.",
         ],
-        "child_detour_end_sentence_index": (
-            3 if child_branch_active else None
-        ),
+        "child_detour_end_sentence_index": (3 if child_branch_active else None),
     }
     if branch_required:
         document.update(
@@ -192,9 +190,7 @@ def test_prompt_is_utf8_and_user_document_contains_context_and_profile() -> None
     assert user_document["chapter"]["child_input"] == "방구 소리"
     assert user_document["chapter"]["ordered_events"]
     assert user_document["generation_profile"]["skills"]
-    assert user_document["reading_policy_hints"]["excluded"][0][
-        "description"
-    ]
+    assert user_document["reading_policy_hints"]["excluded"][0]["description"]
 
 
 def test_baseline_prompt_omits_the_reading_profile() -> None:
@@ -223,9 +219,7 @@ async def test_baseline_generator_makes_one_call_without_profile_hints() -> None
         captured.update(json.loads(request.content))
         return httpx.Response(200, json=_completed_response(1))
 
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(handler)
-    ) as client:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         batch = await _generator(client).generate(
             _context(),
             None,
@@ -234,14 +228,10 @@ async def test_baseline_generator_makes_one_call_without_profile_hints() -> None
         )
 
     assert len(batch.candidates) == 1
-    user_document = json.loads(
-        captured["input"][1]["content"][0]["text"]
-    )
+    user_document = json.loads(captured["input"][1]["content"][0]["text"])
     assert "generation_profile" not in user_document
     assert "reading_policy_hints" not in user_document
-    assert "일반 한국어 이야기" in (
-        captured["input"][0]["content"][0]["text"]
-    )
+    assert "일반 한국어 이야기" in (captured["input"][0]["content"][0]["text"])
 
 
 @pytest.mark.asyncio
@@ -252,9 +242,7 @@ async def test_openai_generator_requests_three_whole_chapter_candidates_once() -
         requests.append(json.loads(request.content))
         return httpx.Response(200, json=_completed_response(3))
 
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(handler)
-    ) as client:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         batch = await _generator(client).generate(
             _context(),
             _PROFILE,
@@ -269,12 +257,8 @@ async def test_openai_generator_requests_three_whole_chapter_candidates_once() -
     assert candidates_schema["maxItems"] == 3
     assert item_schema["properties"]["sentences"]["minItems"] == 9
     assert item_schema["properties"]["sentences"]["maxItems"] == 9
-    assert item_schema["properties"]["sentences"]["items"]["pattern"] == (
-        "[가-힣]"
-    )
-    assert item_schema["properties"][
-        "child_detour_end_sentence_index"
-    ]["enum"] == [3]
+    assert item_schema["properties"]["sentences"]["items"]["pattern"] == ("[가-힣]")
+    assert item_schema["properties"]["child_detour_end_sentence_index"]["enum"] == [3]
     assert {"question", "choices"} <= set(item_schema["required"])
     assert item_schema["properties"]["choices"]["minItems"] == 3
     assert item_schema["properties"]["choices"]["maxItems"] == 3
@@ -300,21 +284,15 @@ async def test_concluding_chapter_has_no_branch_fields_or_detour() -> None:
             ),
         )
 
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(handler)
-    ) as client:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         batch = await _generator(client).generate(
             _context(child_input="", conclude=True),
             _PROFILE,
             candidate_count=1,
         )
 
-    item_schema = captured["text"]["format"]["schema"]["properties"][
-        "candidates"
-    ]["items"]
-    assert item_schema["properties"][
-        "child_detour_end_sentence_index"
-    ] == {"type": "null"}
+    item_schema = captured["text"]["format"]["schema"]["properties"]["candidates"]["items"]
+    assert item_schema["properties"]["child_detour_end_sentence_index"] == {"type": "null"}
     assert "question" not in item_schema["properties"]
     assert "choices" not in item_schema["properties"]
     assert batch.candidates[0].child_detour_end_sentence_index is None
@@ -332,14 +310,8 @@ async def test_mock_generator_obeys_count_and_child_detour_contract() -> None:
 
     assert len(batch.candidates) == 3
     assert len({candidate.candidate_id for candidate in batch.candidates}) == 3
-    assert all(
-        8 <= len(candidate.sentences) <= 16
-        for candidate in batch.candidates
-    )
-    assert all(
-        candidate.child_detour_end_sentence_index == 3
-        for candidate in batch.candidates
-    )
+    assert all(8 <= len(candidate.sentences) <= 16 for candidate in batch.candidates)
+    assert all(candidate.child_detour_end_sentence_index == 3 for candidate in batch.candidates)
     assert all(candidate.question for candidate in batch.candidates)
 
 
@@ -379,9 +351,7 @@ async def test_mock_generator_uses_each_storys_planned_events() -> None:
 async def test_generator_rejects_missing_child_detour_boundary() -> None:
     response = _completed_response(1)
     raw_document = json.loads(response["output_text"])
-    raw_document["candidates"][0][
-        "child_detour_end_sentence_index"
-    ] = None
+    raw_document["candidates"][0]["child_detour_end_sentence_index"] = None
     response["output_text"] = json.dumps(
         raw_document,
         ensure_ascii=False,
@@ -390,9 +360,7 @@ async def test_generator_rejects_missing_child_detour_boundary() -> None:
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json=response)
 
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(handler)
-    ) as client:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(
             ChapterGenerationError,
             match="invalid story-chapter",

@@ -35,9 +35,9 @@ def test_story_chapter_v3_openapi_uses_canonical_path_and_models() -> None:
     assert operation["requestBody"]["content"]["application/json"]["schema"] == {
         "$ref": "#/components/schemas/StoryChapterGenerateRequest"
     }
-    assert operation["responses"]["200"]["content"]["application/json"][
-        "schema"
-    ] == {"$ref": "#/components/schemas/StoryChapterGenerateResponse"}
+    assert operation["responses"]["200"]["content"]["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/StoryChapterGenerateResponse"
+    }
 
 
 def test_story_chapter_v3_request_schema_is_strict_and_reuses_profile_v2() -> None:

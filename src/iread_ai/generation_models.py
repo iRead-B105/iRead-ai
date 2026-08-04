@@ -70,7 +70,6 @@ class TrainingGenerationMetadata(ContractModel):
     lexiconApplied: bool
 
 
-
 class TrainingCandidateResponse(ContractModel):
     type: str
     data: list[dict[str, Any]] = Field(min_length=5, max_length=5)
@@ -263,9 +262,7 @@ class GeneratedStoryLine(ContractModel):
     @model_validator(mode="after")
     def validate_branch_prompt(self) -> "GeneratedStoryLine":
         if self.requiresBranchInput != (self.branchPrompt is not None):
-            raise ValueError(
-                "branchPrompt is required only when requiresBranchInput is true"
-            )
+            raise ValueError("branchPrompt is required only when requiresBranchInput is true")
         return self
 
 
@@ -277,10 +274,10 @@ class GenerateStoryResponse(ContractModel):
     lines: list[GeneratedStoryLine] = Field(min_length=1, max_length=5)
 
 
-
 class GenerateImageRequest(ContractModel):
     requestId: str = Field(min_length=1)
     prompt: str = Field(min_length=1)
+    storyTemplateId: int | None = Field(default=None, ge=1)
 
 
 class GenerateImageResponse(ContractModel):

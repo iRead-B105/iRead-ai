@@ -17,15 +17,13 @@ def test_builder_pairs_the_exact_v3_request_and_displayed_response() -> None:
     )
 
     assert payload["requestId"] == "displayed-chapter-pair"
-    assert payload["chapterRequest"]["requestId"] == (
-        payload["personalizedResponse"]["requestId"]
+    assert payload["chapterRequest"]["requestId"] == (payload["personalizedResponse"]["requestId"])
+    assert (
+        payload["chapterRequest"]["storyRevision"]
+        == (payload["personalizedResponse"]["storyRevision"])
     )
-    assert payload["chapterRequest"]["storyRevision"] == (
-        payload["personalizedResponse"]["storyRevision"]
+    assert (
+        payload["chapterRequest"]["chapterNumber"]
+        == (payload["personalizedResponse"]["chapterNumber"])
     )
-    assert payload["chapterRequest"]["chapterNumber"] == (
-        payload["personalizedResponse"]["chapterNumber"]
-    )
-    assert payload["personalizedResponse"]["generation"][
-        "candidateCount"
-    ] == 3
+    assert payload["personalizedResponse"]["generation"]["candidateCount"] == 3

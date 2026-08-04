@@ -66,9 +66,7 @@ def test_visual_scene_may_contain_only_current_page_characters() -> None:
     request = StoryImageGenerateRequest.model_validate(image_request_payload())
 
     assert len(request.story_context.characters) == 2
-    assert [character.character_id for character in request.visual_scene.characters] == [
-        "hare"
-    ]
+    assert [character.character_id for character in request.visual_scene.characters] == ["hare"]
 
 
 def test_character_references_are_optional_for_text_only_characters() -> None:

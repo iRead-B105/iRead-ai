@@ -114,11 +114,7 @@ def request_payload() -> dict[str, Any]:
 
 def response_payload(*, branching: bool = False) -> dict[str, Any]:
     question = "거북이는 다음에 무엇을 할까요?" if branching else None
-    choices = (
-        ["언덕을 올라요.", "친구를 불러요.", "오솔길로 가요."]
-        if branching
-        else []
-    )
+    choices = ["언덕을 올라요.", "친구를 불러요.", "오솔길로 가요."] if branching else []
     return {
         "requestId": "req-story-101-chapter-2-page-1",
         "schemaVersion": 2,
@@ -290,9 +286,10 @@ def test_request_rejects_invalid_profile_policy() -> None:
         StoryPageGenerateRequest.model_validate(payload)
 
     payload = request_payload()
-    payload["generationProfile"]["contentContract"][
-        "preferredWrittenSyllables"
-    ] = {"min": 45, "max": 80}
+    payload["generationProfile"]["contentContract"]["preferredWrittenSyllables"] = {
+        "min": 45,
+        "max": 80,
+    }
 
     with pytest.raises(ValidationError, match="must be inside"):
         StoryPageGenerateRequest.model_validate(payload)
@@ -326,9 +323,7 @@ def test_page_four_is_the_only_branching_page_for_non_concluding_request() -> No
     payload["pagePlan"]["pageNumber"] = 4
     payload["pagePlan"]["questionFocus"] = "거북이가 마지막 언덕에서 무엇을 할지"
     request = StoryPageGenerateRequest.model_validate(payload)
-    response = StoryPageGenerateResponse.model_validate(
-        response_payload(branching=True)
-    )
+    response = StoryPageGenerateResponse.model_validate(response_payload(branching=True))
 
     assert response.validate_against_request(request) is response
 
@@ -339,9 +334,7 @@ def test_page_four_is_the_only_branching_page_for_non_concluding_request() -> No
 
 def test_response_cross_validation_rejects_branch_before_page_four() -> None:
     request = StoryPageGenerateRequest.model_validate(request_payload())
-    response = StoryPageGenerateResponse.model_validate(
-        response_payload(branching=True)
-    )
+    response = StoryPageGenerateResponse.model_validate(response_payload(branching=True))
 
     with pytest.raises(ValueError, match="pageNumber"):
         response.validate_against_request(request)

@@ -76,9 +76,7 @@ async def story_continue(
         idempotency_key=idempotency_key,
         x_api_key=x_api_key,
         operation="CONTINUE",
-        generate=lambda: request.app.state.legacy_story_service.continue_story(
-            payload
-        ),
+        generate=lambda: request.app.state.legacy_story_service.continue_story(payload),
     )
 
 
@@ -174,8 +172,7 @@ async def _run_request(
             payload=payload,
             outcome=(
                 "TIMEOUT"
-                if exception.status_code == 504
-                or exception.code == "MODEL_TIMEOUT"
+                if exception.status_code == 504 or exception.code == "MODEL_TIMEOUT"
                 else "FAILED"
             ),
             http_status=exception.status_code,

@@ -76,14 +76,9 @@ def partition_chapter_sentences(
     for page_count in range(min_pages, max_pages + 1):
         for cuts in combinations(range(1, sentence_count), page_count - 1):
             boundaries = (0, *cuts, sentence_count)
-            sizes = tuple(
-                boundaries[index + 1] - boundaries[index]
-                for index in range(page_count)
-            )
+            sizes = tuple(boundaries[index + 1] - boundaries[index] for index in range(page_count))
             if any(
-                size < min_sentences_per_page
-                or size > max_sentences_per_page
-                for size in sizes
+                size < min_sentences_per_page or size > max_sentences_per_page for size in sizes
             ):
                 continue
             if forced_first_break is not None and boundaries[1] != forced_first_break:
@@ -140,8 +135,7 @@ def _build_partition(
         page_sentences = sentences[start:end]
         syllables = written_syllable_count(" ".join(page_sentences))
         dialogue_count = sum(
-            _DIALOGUE_PATTERN.search(sentence) is not None
-            for sentence in page_sentences
+            _DIALOGUE_PATTERN.search(sentence) is not None for sentence in page_sentences
         )
         accepted_distance = _range_distance(
             syllables,
@@ -176,32 +170,23 @@ def _build_partition(
     failure_count = sum(len(page.contract_failures) for page in pages)
     accepted_penalty = sum(page.accepted_length_distance for page in pages)
     dialogue_penalty = sum(
-        max(0, page.direct_dialogue_count - direct_dialogue_per_page)
-        for page in pages
+        max(0, page.direct_dialogue_count - direct_dialogue_per_page) for page in pages
     )
     return ChapterPartition(
         pages=tuple(pages),
         contract_pass=failure_count == 0,
         contract_failure_count=failure_count,
         contract_penalty=accepted_penalty + 10 * dialogue_penalty,
-        preferred_length_distance=sum(
-            page.preferred_length_distance for page in pages
-        ),
+        preferred_length_distance=sum(page.preferred_length_distance for page in pages),
         forced_first_break=forced_first_break,
     )
 
 
 def _partition_rank(partition: ChapterPartition) -> tuple[object, ...]:
-    syllable_counts = tuple(
-        page.written_syllable_count for page in partition.pages
-    )
-    sentence_shape_penalty = sum(
-        4 - len(page.sentences) for page in partition.pages
-    )
+    syllable_counts = tuple(page.written_syllable_count for page in partition.pages)
+    sentence_shape_penalty = sum(4 - len(page.sentences) for page in partition.pages)
     spread = max(syllable_counts) - min(syllable_counts)
-    boundaries = tuple(
-        page.end_sentence_index for page in partition.pages[:-1]
-    )
+    boundaries = tuple(page.end_sentence_index for page in partition.pages[:-1])
     return (
         partition.contract_failure_count,
         partition.contract_penalty,
@@ -241,9 +226,7 @@ def _validate_options(
         raise PagePartitionError("sentences must not contain blank values")
     if min_pages < 1 or min_pages > max_pages:
         raise PagePartitionError("page range is invalid")
-    if min_sentences_per_page < 1 or (
-        min_sentences_per_page > max_sentences_per_page
-    ):
+    if min_sentences_per_page < 1 or (min_sentences_per_page > max_sentences_per_page):
         raise PagePartitionError("sentence range is invalid")
     if not (
         0
@@ -254,9 +237,7 @@ def _validate_options(
     ):
         raise PagePartitionError("syllable ranges are inconsistent")
     if direct_dialogue_per_page < 0:
-        raise PagePartitionError(
-            "direct_dialogue_per_page must be zero or greater"
-        )
+        raise PagePartitionError("direct_dialogue_per_page must be zero or greater")
     minimum_total = min_pages * min_sentences_per_page
     maximum_total = max_pages * max_sentences_per_page
     if not minimum_total <= len(sentences) <= maximum_total:
@@ -264,13 +245,9 @@ def _validate_options(
             f"sentence count must be between {minimum_total} and {maximum_total}"
         )
     if forced_first_break is not None and not (
-        min_sentences_per_page
-        <= forced_first_break
-        <= max_sentences_per_page
+        min_sentences_per_page <= forced_first_break <= max_sentences_per_page
     ):
-        raise PagePartitionError(
-            "forced_first_break must fit the first-page sentence range"
-        )
+        raise PagePartitionError("forced_first_break must fit the first-page sentence range")
 
 
 __all__ = [

@@ -39,6 +39,7 @@ class GMSGeminiImageGenerator:
         max_request_bytes: int = 20 * 1024 * 1024,
         max_prompt_bytes: int = 64 * 1024,
         client: httpx.AsyncClient | None = None,
+        direct: bool = False,
     ) -> None:
         if not gms_key.strip():
             raise ValueError("gms_key must not be empty")
@@ -68,8 +69,9 @@ class GMSGeminiImageGenerator:
         self._client = client
         root = base_url.rstrip("/")
         self._url = (
-            f"{root}/generativelanguage.googleapis.com/v1beta/models/"
-            f"{model}:generateContent"
+            f"{root}/v1beta/models/{model}:generateContent"
+            if direct
+            else f"{root}/generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
         )
 
     @property
@@ -134,10 +136,7 @@ class GMSGeminiImageGenerator:
         response = await self._post(payload)
         request_id = _request_id(response)
         if response.status_code >= 400:
-            retryable = (
-                response.status_code in {408, 409, 429}
-                or response.status_code >= 500
-            )
+            retryable = response.status_code in {408, 409, 429} or response.status_code >= 500
             raise StoryImageProviderError(
                 "PROVIDER_HTTP_ERROR",
                 f"Gemini image request failed (HTTP {response.status_code}).",
@@ -319,11 +318,7 @@ def _decode_image(
             "Gemini returned an unsupported image type.",
             retryable=False,
         )
-    normalized_declared = (
-        declared_mime.strip().lower()
-        if isinstance(declared_mime, str)
-        else None
-    )
+    normalized_declared = declared_mime.strip().lower() if isinstance(declared_mime, str) else None
     if normalized_declared == "image/jpg":
         normalized_declared = "image/jpeg"
     if normalized_declared is not None and normalized_declared != detected_mime:
@@ -339,11 +334,7 @@ def _detect_mime(content: bytes) -> str | None:
     for mime_type, signature in _IMAGE_SIGNATURES:
         if content.startswith(signature):
             return mime_type
-    if (
-        len(content) >= 12
-        and content.startswith(b"RIFF")
-        and content[8:12] == b"WEBP"
-    ):
+    if len(content) >= 12 and content.startswith(b"RIFF") and content[8:12] == b"WEBP":
         return "image/webp"
     return None
 

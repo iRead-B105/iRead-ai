@@ -214,16 +214,10 @@ def response_payload(
                 "pageNumber": index,
                 "sentences": sentences,
                 "visualScene": _visual_scene(index),
-                "question": (
-                    "두 친구는 어느 길로 달려갈까요?"
-                    if branching
-                    else None
-                ),
+                "question": ("두 친구는 어느 길로 달려갈까요?" if branching else None),
                 "subtitle": "숲길의 새로운 갈림길" if branching else None,
                 "choices": (
-                    ["꽃길로 가요.", "냇물 길로 가요.", "숲길로 가요."]
-                    if branching
-                    else []
+                    ["꽃길로 가요.", "냇물 길로 가요.", "숲길로 가요."] if branching else []
                 ),
                 "requiresBranchInput": branching,
             }
@@ -283,24 +277,12 @@ def response_payload(
         },
         "statePatch": {
             "expectedBaseRevision": 8,
-            "rollingSummary": (
-                "방구 소리로 소동이 생겼지만 토끼와 거북이는 다시 경주해요."
-            ),
+            "rollingSummary": ("방구 소리로 소동이 생겼지만 토끼와 거북이는 다시 경주해요."),
             "resolvedFactsAdded": ["두 친구가 소동 뒤 경주로 돌아갔어요."],
-            "unresolvedHooksAdded": (
-                ["두 친구는 어느 길로 달려갈까요?"]
-                if not conclude
-                else []
-            ),
-            "unresolvedHooksRemoved": [
-                "어떤 소리로 경주를 시작할까요?"
-            ],
+            "unresolvedHooksAdded": (["두 친구는 어느 길로 달려갈까요?"] if not conclude else []),
+            "unresolvedHooksRemoved": ["어떤 소리로 경주를 시작할까요?"],
             "charactersUpserted": [],
-            "lastQuestion": (
-                "두 친구는 어느 길로 달려갈까요?"
-                if not conclude
-                else None
-            ),
+            "lastQuestion": ("두 친구는 어느 길로 달려갈까요?" if not conclude else None),
         },
     }
 
@@ -374,17 +356,15 @@ def test_response_rejects_a_five_sentence_page() -> None:
 
 def test_request_rejects_unknown_character_and_duplicate_event_ids() -> None:
     payload = request_payload()
-    payload["chapterPlan"]["orderedEvents"][0]["requiredCharacters"] = [
-        "unknown"
-    ]
+    payload["chapterPlan"]["orderedEvents"][0]["requiredCharacters"] = ["unknown"]
 
     with pytest.raises(ValidationError, match="unknown characterId"):
         StoryChapterGenerateRequest.model_validate(payload)
 
     payload = request_payload()
-    payload["chapterPlan"]["orderedEvents"][1]["eventId"] = (
-        payload["chapterPlan"]["orderedEvents"][0]["eventId"]
-    )
+    payload["chapterPlan"]["orderedEvents"][1]["eventId"] = payload["chapterPlan"]["orderedEvents"][
+        0
+    ]["eventId"]
 
     with pytest.raises(ValidationError, match="eventId values must be unique"):
         StoryChapterGenerateRequest.model_validate(payload)
@@ -485,35 +465,23 @@ def test_response_validates_changed_sentence_coordinates() -> None:
 def test_response_cross_validation_accepts_each_dynamic_page_count(
     page_count: int,
 ) -> None:
-    request = StoryChapterGenerateRequest.model_validate(
-        request_payload(min_pages=2, max_pages=4)
-    )
-    response = StoryChapterGenerateResponse.model_validate(
-        response_payload(page_count=page_count)
-    )
+    request = StoryChapterGenerateRequest.model_validate(request_payload(min_pages=2, max_pages=4))
+    response = StoryChapterGenerateResponse.model_validate(response_payload(page_count=page_count))
 
     assert response.validate_against_request(request) is response
 
 
 def test_response_cross_validation_enforces_requested_page_range() -> None:
-    request = StoryChapterGenerateRequest.model_validate(
-        request_payload(min_pages=2, max_pages=2)
-    )
-    response = StoryChapterGenerateResponse.model_validate(
-        response_payload(page_count=3)
-    )
+    request = StoryChapterGenerateRequest.model_validate(request_payload(min_pages=2, max_pages=2))
+    response = StoryChapterGenerateResponse.model_validate(response_payload(page_count=3))
 
     with pytest.raises(ValueError, match="page count"):
         response.validate_against_request(request)
 
 
 def test_response_cross_validation_enforces_concluding_branch_mode() -> None:
-    request = StoryChapterGenerateRequest.model_validate(
-        request_payload(conclude=True)
-    )
-    response = StoryChapterGenerateResponse.model_validate(
-        response_payload(conclude=False)
-    )
+    request = StoryChapterGenerateRequest.model_validate(request_payload(conclude=True))
+    response = StoryChapterGenerateResponse.model_validate(response_payload(conclude=False))
 
     with pytest.raises(ValueError, match="non-concluding"):
         response.validate_against_request(request)
@@ -521,9 +489,7 @@ def test_response_cross_validation_enforces_concluding_branch_mode() -> None:
     concluding_response = StoryChapterGenerateResponse.model_validate(
         response_payload(conclude=True)
     )
-    assert concluding_response.validate_against_request(request) is (
-        concluding_response
-    )
+    assert concluding_response.validate_against_request(request) is (concluding_response)
 
 
 def test_response_cross_validation_rejects_snapshot_mismatch() -> None:

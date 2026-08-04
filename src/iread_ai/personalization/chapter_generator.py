@@ -22,9 +22,7 @@ DEFAULT_CHAPTER_PROMPT_PATH = (
 DEFAULT_BASELINE_CHAPTER_PROMPT_PATH = (
     Path(__file__).resolve().parents[1] / "prompts" / "chapter_baseline.md"
 )
-CHAPTER_PROMPT_MODES = frozenset(
-    {BASELINE_PROMPT_MODE, PERSONALIZED_PROMPT_MODE}
-)
+CHAPTER_PROMPT_MODES = frozenset({BASELINE_PROMPT_MODE, PERSONALIZED_PROMPT_MODE})
 ChapterPromptMode = Literal["baseline", "personalized"]
 
 
@@ -66,23 +64,14 @@ class ChapterGenerationContext:
             ("previous_context", self.previous_context),
             ("characters", self.characters),
         ):
-            if any(
-                not isinstance(value, str) or not value.strip()
-                for value in values
-            ):
-                raise ValueError(
-                    f"{field_name} must contain only nonblank strings"
-                )
+            if any(not isinstance(value, str) or not value.strip() for value in values):
+                raise ValueError(f"{field_name} must contain only nonblank strings")
         if self.conclude:
             if self.question_focus is not None:
-                raise ValueError(
-                    "question_focus is not allowed for a concluding chapter"
-                )
+                raise ValueError("question_focus is not allowed for a concluding chapter")
         else:
             if self.question_focus is None:
-                raise ValueError(
-                    "question_focus is required for a continuing chapter"
-                )
+                raise ValueError("question_focus is required for a continuing chapter")
             _require_nonblank(self.question_focus, "question_focus")
         if self.last_question is not None:
             _require_nonblank(self.last_question, "last_question")
@@ -111,8 +100,7 @@ class ChapterGenerationContext:
             [
                 character.strip()
                 for character in self.characters
-                if self.last_question is not None
-                and character.strip() in self.last_question
+                if self.last_question is not None and character.strip() in self.last_question
             ]
             if child_branch_active
             else []
@@ -122,25 +110,15 @@ class ChapterGenerationContext:
             "story_context": self.story_context.strip(),
             "chapter_number": self.chapter_number,
             "chapter_goal": self.chapter_goal.strip(),
-            "ordered_events": [
-                event.strip() for event in self.ordered_events
-            ],
+            "ordered_events": [event.strip() for event in self.ordered_events],
             "child_input": self.child_input.strip(),
             "last_question": (
-                self.last_question.strip()
-                if self.last_question is not None
-                else None
+                self.last_question.strip() if self.last_question is not None else None
             ),
-            "previous_context": [
-                context.strip() for context in self.previous_context
-            ],
-            "characters": [
-                character.strip() for character in self.characters
-            ],
+            "previous_context": [context.strip() for context in self.previous_context],
+            "characters": [character.strip() for character in self.characters],
             "question_focus": (
-                self.question_focus.strip()
-                if self.question_focus is not None
-                else None
+                self.question_focus.strip() if self.question_focus is not None else None
             ),
             "chapter_mode": "ending" if self.conclude else "continuing",
             "expected_page_count": self.expected_page_count,
@@ -151,20 +129,15 @@ class ChapterGenerationContext:
                 "active": child_branch_active,
                 "answer_to_question": (
                     self.last_question.strip()
-                    if child_branch_active
-                    and self.last_question is not None
+                    if child_branch_active and self.last_question is not None
                     else None
                 ),
                 "answer_owner_candidates": answer_owner_candidates,
                 "required_literal_signal": (
-                    self.child_input.strip()
-                    if child_branch_active
-                    else None
+                    self.child_input.strip() if child_branch_active else None
                 ),
                 "answer_delivery": (
-                    "natural_direct_dialogue"
-                    if spoken_answer
-                    else "natural_narrative_event"
+                    "natural_direct_dialogue" if spoken_answer else "natural_narrative_event"
                 )
                 if child_branch_active
                 else None,
@@ -182,8 +155,7 @@ class ChapterGenerationContext:
                 "sentence_roles": (
                     [
                         (
-                            "첫 3문장: 답을 기존 인물의 자연스러운 대사와 "
-                            "행동으로 실행"
+                            "첫 3문장: 답을 기존 인물의 자연스러운 대사와 행동으로 실행"
                             if spoken_answer
                             else "첫 3문장: 아이 답이 이야기 속 실제 사건으로 발생"
                         ),
@@ -212,9 +184,7 @@ class ChapterCandidate:
     def __post_init__(self) -> None:
         _require_nonblank(self.candidate_id, "candidate_id")
         if not 8 <= len(self.sentences) <= 16:
-            raise ValueError(
-                "a chapter candidate must contain between 8 and 16 sentences"
-            )
+            raise ValueError("a chapter candidate must contain between 8 and 16 sentences")
         for sentence in self.sentences:
             _require_nonblank(sentence, "sentence")
             if not any("가" <= character <= "힣" for character in sentence):
@@ -222,13 +192,9 @@ class ChapterCandidate:
         detour_end = self.child_detour_end_sentence_index
         if detour_end is not None:
             if detour_end not in {3, 4}:
-                raise ValueError(
-                    "child_detour_end_sentence_index must be 3 or 4"
-                )
+                raise ValueError("child_detour_end_sentence_index must be 3 or 4")
             if detour_end > len(self.sentences):
-                raise ValueError(
-                    "child_detour_end_sentence_index exceeds sentence count"
-                )
+                raise ValueError("child_detour_end_sentence_index exceeds sentence count")
         if self.question is None:
             if self.subtitle is not None or self.choices:
                 raise ValueError("subtitle and choices require a question")
@@ -237,13 +203,9 @@ class ChapterCandidate:
             if self.subtitle is not None:
                 _require_nonblank(self.subtitle, "subtitle")
                 if len(self.subtitle) > 40:
-                    raise ValueError(
-                        "subtitle must contain at most 40 characters"
-                    )
+                    raise ValueError("subtitle must contain at most 40 characters")
             if len(self.choices) != 3:
-                raise ValueError(
-                    "a continuing chapter must contain exactly three choices"
-                )
+                raise ValueError("a continuing chapter must contain exactly three choices")
             for choice in self.choices:
                 _require_nonblank(choice, "choice")
             if len({choice.strip() for choice in self.choices}) != 3:
@@ -253,9 +215,7 @@ class ChapterCandidate:
         document: dict[str, Any] = {
             "candidateId": self.candidate_id,
             "sentences": list(self.sentences),
-            "childDetourEndSentenceIndex": (
-                self.child_detour_end_sentence_index
-            ),
+            "childDetourEndSentenceIndex": (self.child_detour_end_sentence_index),
         }
         if self.question is not None:
             document["question"] = self.question
@@ -276,14 +236,10 @@ class ChapterGenerationBatch:
 
     def __post_init__(self) -> None:
         if not self.candidates:
-            raise ValueError(
-                "chapter generation batch must contain at least one candidate"
-            )
+            raise ValueError("chapter generation batch must contain at least one candidate")
         if self.elapsed_ms < 0:
             raise ValueError("elapsed_ms must not be negative")
-        candidate_ids = [
-            candidate.candidate_id for candidate in self.candidates
-        ]
+        candidate_ids = [candidate.candidate_id for candidate in self.candidates]
         if len(candidate_ids) != len(set(candidate_ids)):
             raise ValueError("candidate ids must be unique")
 
@@ -291,9 +247,7 @@ class ChapterGenerationBatch:
         return {
             "model": self.model,
             "candidateCount": len(self.candidates),
-            "candidates": [
-                candidate.to_dict() for candidate in self.candidates
-            ],
+            "candidates": [candidate.to_dict() for candidate in self.candidates],
             "rawOutput": self.raw_output,
             "elapsedMs": round(self.elapsed_ms, 3),
             "usage": dict(self.usage),
@@ -435,9 +389,7 @@ class OpenAIChapterCandidateGenerator:
             "input": [
                 {
                     "role": "system",
-                    "content": [
-                        {"type": "input_text", "text": system_prompt}
-                    ],
+                    "content": [{"type": "input_text", "text": system_prompt}],
                 },
                 {
                     "role": "user",
@@ -451,14 +403,11 @@ class OpenAIChapterCandidateGenerator:
                     "strict": True,
                     "schema": _chapter_candidate_schema(
                         candidate_count,
-                        child_branch_active=bool(
-                            context.child_input.strip()
-                        ),
+                        child_branch_active=bool(context.child_input.strip()),
                         branch_required=not context.conclude,
                         expected_page_count=context.expected_page_count,
                         expected_sentence_count=(
-                            context.expected_page_count
-                            * context.expected_sentences_per_page
+                            context.expected_page_count * context.expected_sentences_per_page
                         ),
                     ),
                 }
@@ -479,13 +428,9 @@ class OpenAIChapterCandidateGenerator:
                 raise
             if response.status_code >= 400:
                 raise ChapterGenerationError(
-                    (
-                        "OpenAI Responses API request failed "
-                        f"with status {response.status_code}"
-                    ),
+                    (f"OpenAI Responses API request failed with status {response.status_code}"),
                     retryable=(
-                        response.status_code in {408, 409, 429}
-                        or response.status_code >= 500
+                        response.status_code in {408, 409, 429} or response.status_code >= 500
                     ),
                 )
 
@@ -544,9 +489,7 @@ class OpenAIChapterCandidateGenerator:
                         json=payload,
                         timeout=self._timeout_seconds,
                     )
-                async with httpx.AsyncClient(
-                    timeout=self._timeout_seconds
-                ) as client:
+                async with httpx.AsyncClient(timeout=self._timeout_seconds) as client:
                     return await client.post(
                         f"{self._base_url}/responses",
                         headers=headers,
@@ -606,17 +549,13 @@ def build_chapter_user_prompt(
     if prompt_mode not in CHAPTER_PROMPT_MODES:
         raise ValueError(f"unsupported chapter prompt mode: {prompt_mode}")
     if prompt_mode == PERSONALIZED_PROMPT_MODE and profile is None:
-        raise ValueError(
-            "personalized chapter generation requires a generation profile"
-        )
+        raise ValueError("personalized chapter generation requires a generation profile")
     document: dict[str, Any] = {
         "chapter": context.to_dict(),
     }
     if prompt_mode == PERSONALIZED_PROMPT_MODE:
         document["generation_profile"] = _jsonable(profile)
-        document["reading_policy_hints"] = build_reading_policy_hints(
-            profile
-        )
+        document["reading_policy_hints"] = build_reading_policy_hints(profile)
     return json.dumps(
         document,
         ensure_ascii=False,
@@ -634,9 +573,7 @@ def _validate_generation_options(
     if prompt_mode not in CHAPTER_PROMPT_MODES:
         raise ValueError(f"unsupported chapter prompt mode: {prompt_mode}")
     if prompt_mode == PERSONALIZED_PROMPT_MODE and profile is None:
-        raise ValueError(
-            "personalized chapter generation requires a generation profile"
-        )
+        raise ValueError("personalized chapter generation requires a generation profile")
     if not 1 <= candidate_count <= 8:
         raise ValueError("candidate_count must be between 1 and 8")
 
@@ -759,9 +696,7 @@ def _parse_candidates(
     branch_required: bool,
 ) -> tuple[ChapterCandidate, ...]:
     raw_candidates = document["candidates"]
-    if not isinstance(raw_candidates, list) or (
-        len(raw_candidates) != expected_count
-    ):
+    if not isinstance(raw_candidates, list) or (len(raw_candidates) != expected_count):
         raise ValueError("candidate count does not match the request")
 
     parsed: list[ChapterCandidate] = []
@@ -772,45 +707,23 @@ def _parse_candidates(
         if not isinstance(raw_sentences, list):
             raise TypeError("sentences must be an array")
         raw_detour_end = raw_candidate["child_detour_end_sentence_index"]
-        detour_end = (
-            int(raw_detour_end)
-            if raw_detour_end is not None
-            else None
-        )
+        detour_end = int(raw_detour_end) if raw_detour_end is not None else None
         if child_branch_active and detour_end is None:
-            raise ValueError(
-                "child input requires child_detour_end_sentence_index"
-            )
+            raise ValueError("child input requires child_detour_end_sentence_index")
         if not child_branch_active and detour_end is not None:
-            raise ValueError(
-                "child_detour_end_sentence_index requires child input"
-            )
+            raise ValueError("child_detour_end_sentence_index requires child input")
         raw_choices = raw_candidate.get("choices", [])
         if branch_required and not isinstance(raw_choices, list):
             raise TypeError("choices must be an array")
         parsed.append(
             ChapterCandidate(
                 candidate_id=str(raw_candidate["candidate_id"]).strip(),
-                sentences=tuple(
-                    str(sentence).strip() for sentence in raw_sentences
-                ),
+                sentences=tuple(str(sentence).strip() for sentence in raw_sentences),
                 child_detour_end_sentence_index=detour_end,
-                question=(
-                    str(raw_candidate["question"]).strip()
-                    if branch_required
-                    else None
-                ),
-                subtitle=(
-                    str(raw_candidate["subtitle"]).strip()
-                    if branch_required
-                    else None
-                ),
+                question=(str(raw_candidate["question"]).strip() if branch_required else None),
+                subtitle=(str(raw_candidate["subtitle"]).strip() if branch_required else None),
                 choices=(
-                    tuple(
-                        str(choice).strip() for choice in raw_choices
-                    )
-                    if branch_required
-                    else ()
+                    tuple(str(choice).strip() for choice in raw_choices) if branch_required else ()
                 ),
             )
         )
@@ -848,9 +761,7 @@ def _jsonable(value: Any) -> Any:
     if value is None or isinstance(value, str | int | float | bool):
         return value
     if isinstance(value, Mapping):
-        return {
-            str(key): _jsonable(item) for key, item in value.items()
-        }
+        return {str(key): _jsonable(item) for key, item in value.items()}
     if isinstance(value, tuple | list | set | frozenset):
         return [_jsonable(item) for item in value]
     if hasattr(value, "to_dict"):
@@ -867,11 +778,7 @@ def _mock_candidate(
     candidate_number: int,
 ) -> ChapterCandidate:
     main_character = context.characters[0] if context.characters else "친구"
-    companion = (
-        context.characters[1]
-        if len(context.characters) > 1
-        else "작은 친구"
-    )
+    companion = context.characters[1] if len(context.characters) > 1 else "작은 친구"
     child_input = context.child_input.strip()
     planned_sentences = _mock_planned_sentences(
         context,

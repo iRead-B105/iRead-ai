@@ -4,7 +4,7 @@ from pydantic import SecretStr
 
 import iread_ai.app as app_module
 from iread_ai.main import create_app
-from iread_ai.ports.story_image_generator import GeneratedStoryImage
+from iread_ai.ports.story_image_generator import GeneratedStoryImage, StoryImageReference
 from iread_ai.training_bank.generator import RULE_BASED_TYPES
 
 client = TestClient(app_module.app)
@@ -23,6 +23,7 @@ def configured_internal_key(monkeypatch) -> None:
             "internal_api_key": SecretStr(AUTH_HEADERS["X-API-Key"]),
             "story_provider": "mock",
             "story_image_provider": "disabled",
+            "chapter_require_contract_pass": False,
         }
     )
     mock_app = create_app(settings=configured)
@@ -56,20 +57,40 @@ def candidate_request(training_type: str) -> dict:
 
 def test_all_training_types_generate_five_candidates() -> None:
     training_types = [
-        "VOWEL_TRACE", "CONSONANT_TRACE", "SYLLABLE_TRACE",
-        "CONSONANT_SOUND_CHOICE", "VOWEL_SOUND_CHOICE",
-        "CONSONANT_VOWEL_CLASSIFICATION", "SYLLABLE_INITIAL_CHOICE",
-        "WORD_INITIAL_CHOICE", "SAME_INITIAL_WORD_CHOICE",
-        "FINAL_CONSONANT_CHOICE", "WORD_FINAL_SOUND_CHOICE",
-        "FINAL_CONSONANT_COMPARISON", "SIMILAR_SOUND_CHOICE",
-        "PHONEME_BLEND", "SYLLABLE_BLEND", "BASIC_SYLLABLE_BUILD",
-        "FINAL_SYLLABLE_BUILD", "DOUBLE_FINAL_BUILD",
-        "FINAL_CONSONANT_DELETE", "SYLLABLE_DELETE", "SYLLABLE_REPLACE",
-        "WORD_READING", "NONWORD_READING", "DIFFICULT_WORD_PREVIEW",
-        "SENTENCE_READING", "SHORT_PASSAGE_READING", "SENTENCE_ASSEMBLY",
-        "FILL_IN_THE_BLANK", "IMAGE_SENTENCE_MATCH", "SENTENCE_REPEAT",
-        "WORD_CHAIN_READING", "PHRASE_READING",
-        "REPEATED_SENTENCE_READING", "SHORT_STORY_READING",
+        "VOWEL_TRACE",
+        "CONSONANT_TRACE",
+        "SYLLABLE_TRACE",
+        "CONSONANT_SOUND_CHOICE",
+        "VOWEL_SOUND_CHOICE",
+        "CONSONANT_VOWEL_CLASSIFICATION",
+        "SYLLABLE_INITIAL_CHOICE",
+        "WORD_INITIAL_CHOICE",
+        "SAME_INITIAL_WORD_CHOICE",
+        "FINAL_CONSONANT_CHOICE",
+        "WORD_FINAL_SOUND_CHOICE",
+        "FINAL_CONSONANT_COMPARISON",
+        "SIMILAR_SOUND_CHOICE",
+        "PHONEME_BLEND",
+        "SYLLABLE_BLEND",
+        "BASIC_SYLLABLE_BUILD",
+        "FINAL_SYLLABLE_BUILD",
+        "DOUBLE_FINAL_BUILD",
+        "FINAL_CONSONANT_DELETE",
+        "SYLLABLE_DELETE",
+        "SYLLABLE_REPLACE",
+        "WORD_READING",
+        "NONWORD_READING",
+        "DIFFICULT_WORD_PREVIEW",
+        "SENTENCE_READING",
+        "SHORT_PASSAGE_READING",
+        "SENTENCE_ASSEMBLY",
+        "FILL_IN_THE_BLANK",
+        "IMAGE_SENTENCE_MATCH",
+        "SENTENCE_REPEAT",
+        "WORD_CHAIN_READING",
+        "PHRASE_READING",
+        "REPEATED_SENTENCE_READING",
+        "SHORT_STORY_READING",
     ]
     for training_type in training_types:
         request = candidate_request(training_type)
@@ -88,10 +109,14 @@ def test_all_training_types_generate_five_candidates() -> None:
 
 def test_multiple_choice_contract_uses_three_choices() -> None:
     three_choice_types = [
-        "CONSONANT_SOUND_CHOICE", "VOWEL_SOUND_CHOICE",
-        "SYLLABLE_INITIAL_CHOICE", "WORD_INITIAL_CHOICE",
-        "SAME_INITIAL_WORD_CHOICE", "FINAL_CONSONANT_CHOICE",
-        "WORD_FINAL_SOUND_CHOICE", "FINAL_CONSONANT_COMPARISON",
+        "CONSONANT_SOUND_CHOICE",
+        "VOWEL_SOUND_CHOICE",
+        "SYLLABLE_INITIAL_CHOICE",
+        "WORD_INITIAL_CHOICE",
+        "SAME_INITIAL_WORD_CHOICE",
+        "FINAL_CONSONANT_CHOICE",
+        "WORD_FINAL_SOUND_CHOICE",
+        "FINAL_CONSONANT_COMPARISON",
     ]
     for training_type in three_choice_types:
         request = candidate_request(training_type)
@@ -240,9 +265,7 @@ def test_story_generation_returns_day_one_first_four_pages() -> None:
     assert body["nextProgress"] == 4
     assert body["completed"] is False
     assert len(body["lines"]) == 4
-    assert [line["requiresBranchInput"] for line in body["lines"]] == [
-        False, False, False, True
-    ]
+    assert [line["requiresBranchInput"] for line in body["lines"]] == [False, False, False, True]
 
 
 def test_story_first_branch_returns_five_pages_and_reflects_intent() -> None:
@@ -370,7 +393,7 @@ def test_real_image_generation_uses_storybook_policy(monkeypatch) -> None:
             self.aspect_ratio = ""
 
         async def generate(self, *, prompt, references, aspect_ratio):
-            assert references == ()
+            assert references[0].character_id == "story-template-1"
             self.prompt = prompt
             self.aspect_ratio = aspect_ratio
             return GeneratedStoryImage(
@@ -380,6 +403,18 @@ def test_real_image_generation_uses_storybook_policy(monkeypatch) -> None:
 
     generator = RecordingImageGenerator()
     monkeypatch.setattr(app_module, "legacy_image_generator", generator)
+    reference = StoryImageReference(
+        character_id="story-template-1",
+        name="cover",
+        description="approved cover",
+        content=b"\x89PNG\r\n\x1a\ncover",
+        mime_type="image/png",
+    )
+    monkeypatch.setattr(
+        app_module.story_cover_references,
+        "resolve",
+        lambda template_id: (reference,),
+    )
     app_module._generated_images.clear()
 
     response = client.post(
@@ -388,6 +423,7 @@ def test_real_image_generation_uses_storybook_policy(monkeypatch) -> None:
         json={
             "requestId": "image-policy-1",
             "prompt": "거북이가 숲길의 작은 돌을 힘껏 밀어요.",
+            "storyTemplateId": 1,
         },
     )
 

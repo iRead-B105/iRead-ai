@@ -82,10 +82,7 @@ class KnownCharacterReferenceRepository:
         max_image_bytes: int = 8 * 1024 * 1024,
     ) -> None:
         self._root = (
-            root
-            or Path(__file__).resolve().parents[3]
-            / "assets"
-            / "character-references"
+            root or Path(__file__).resolve().parents[3] / "assets" / "character-references"
         ).resolve()
         self._definitions = dict(definitions)
         self._max_image_bytes = max_image_bytes
@@ -184,10 +181,7 @@ class StoryImageApplicationService:
                 message="이미지 생성 공급자가 설정되지 않았습니다.",
                 retryable=False,
             )
-        reference_ids = [
-            reference.character_id
-            for reference in request.character_references
-        ]
+        reference_ids = [reference.character_id for reference in request.character_references]
         try:
             if reference_ids:
                 resolved_references = self._references.resolve(reference_ids)
@@ -197,17 +191,12 @@ class StoryImageApplicationService:
                     for character in request.visual_scene.characters
                     if character.present
                 ]
-                resolved_references = self._references.resolve_available(
-                    present_character_ids
-                )
+                resolved_references = self._references.resolve_available(present_character_ids)
         except CharacterReferenceNotFoundError as exc:
             raise StoryImageUseCaseError(
                 status_code=422,
                 code="UNKNOWN_CHARACTER_REFERENCE",
-                message=(
-                    "서버에 등록되지 않은 캐릭터 레퍼런스입니다: "
-                    f"{exc.args[0]}"
-                ),
+                message=(f"서버에 등록되지 않은 캐릭터 레퍼런스입니다: {exc.args[0]}"),
                 retryable=False,
             ) from exc
         except CharacterReferenceConfigurationError as exc:
@@ -275,11 +264,7 @@ def _detect_image_mime(content: bytes) -> str | None:
         return "image/png"
     if content.startswith(b"\xff\xd8\xff"):
         return "image/jpeg"
-    if (
-        len(content) >= 12
-        and content.startswith(b"RIFF")
-        and content[8:12] == b"WEBP"
-    ):
+    if len(content) >= 12 and content.startswith(b"RIFF") and content[8:12] == b"WEBP":
         return "image/webp"
     return None
 
