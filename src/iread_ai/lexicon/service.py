@@ -4,6 +4,7 @@ from collections import OrderedDict
 from pathlib import Path
 from threading import Lock
 
+from ..training_language_quality import content_lexemes
 from .contracts import (
     LexiconItem,
     LexiconPaletteRequest,
@@ -100,6 +101,29 @@ class LexiconPaletteService:
             while len(self._cache) > 128:
                 self._cache.popitem(last=False)
         return response
+
+    def unknown_content_words(self, texts: list[str]) -> list[str]:
+        if self._repository is None:
+            raise LexiconUnavailableError(self._load_error or "lexicon database is unavailable")
+        units = []
+        for text in texts:
+            analyzed = content_lexemes(text)
+            if analyzed is None:
+                raise LexiconUnavailableError("Kiwi tokenizer is unavailable")
+            units.extend(analyzed)
+        lookup_forms = {
+            lookup
+            for unit in units
+            for lookup in unit.lookupForms
+        }
+        registered = self._repository.registered_forms(lookup_forms)
+        return sorted(
+            {
+                unit.surface
+                for unit in units
+                if not any(lookup in registered for lookup in unit.lookupForms)
+            }
+        )
 
     @staticmethod
     def _score_candidate(

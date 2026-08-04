@@ -189,6 +189,38 @@ def test_gms_text_provider_uses_responses_json_schema() -> None:
     ) == {"value": "안전한 훈련"}
 
 
+def test_text_provider_identifies_direct_openai_requests() -> None:
+    provider = GMSTextProvider(
+        api_key="openai-key",
+        model="gpt-test",
+        base_url="https://api.openai.com/v1",
+        timeout_seconds=1,
+        max_output_tokens=256,
+        provider_name="openai",
+        client=httpx.Client(
+            transport=httpx.MockTransport(
+                lambda _request: httpx.Response(
+                    200,
+                    json={"status": "completed", "output_text": '{"ok":true}'},
+                )
+            )
+        ),
+    )
+
+    assert provider.provider_name == "openai"
+    assert provider.generate_json(
+        schema_name="test_schema",
+        schema={
+            "type": "object",
+            "properties": {"ok": {"type": "boolean"}},
+            "required": ["ok"],
+            "additionalProperties": False,
+        },
+        system_prompt="safe",
+        user_prompt="training",
+    ) == {"ok": True}
+
+
 def test_training_candidates_allow_generic_generation_without_weak_profiles(
     monkeypatch,
 ) -> None:

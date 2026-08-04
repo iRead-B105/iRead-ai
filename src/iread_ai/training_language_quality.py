@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import threading
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Any
 
 _SENTENCE_END_PATTERN = re.compile(r"[.!?。！？][”’'\"]?$")
@@ -45,6 +46,13 @@ _kiwi: Any | None = None
 _kiwi_failed = False
 _kiwi_init_lock = threading.Lock()
 _kiwi_call_lock = threading.Lock()
+
+
+@dataclass(frozen=True, slots=True)
+class KoreanContentLexeme:
+    surface: str
+    lookupForms: tuple[str, ...]
+    tag: str
 
 
 def validate_complete_korean_sentence(text: str) -> None:
@@ -106,6 +114,39 @@ def content_terms(text: str) -> set[str]:
         for word in _WORD_PATTERN.findall(text)
         if word not in _GENERIC_IMAGE_WORDS and len(word) >= 2
     }
+
+
+def content_lexemes(text: str) -> tuple[KoreanContentLexeme, ...] | None:
+    tokens = _tokenize(text)
+    if tokens is None:
+        return None
+    result: list[KoreanContentLexeme] = []
+    seen: set[tuple[str, str]] = set()
+    for token in tokens:
+        surface = str(token.form).strip()
+        tag = str(token.tag)
+        if not surface or not _HANGUL_PATTERN.search(surface):
+            continue
+        if tag == "NNP":
+            continue
+        if tag.startswith(("NN", "NP")):
+            lookup_forms = (surface,)
+        elif tag.startswith(("VV", "VA", "VX", "VCP", "VCN")):
+            lookup_forms = (surface, f"{surface}다")
+        else:
+            continue
+        key = (surface, tag)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(
+            KoreanContentLexeme(
+                surface=surface,
+                lookupForms=lookup_forms,
+                tag=tag,
+            )
+        )
+    return tuple(result)
 
 
 def _validate_token_particles(tokens: Sequence[Any]) -> None:
@@ -206,6 +247,8 @@ def _load_kiwi() -> Any | None:
 
 
 __all__ = [
+    "KoreanContentLexeme",
+    "content_lexemes",
     "content_terms",
     "validate_complete_korean_sentence",
     "validate_image_sentence_answer",

@@ -54,10 +54,27 @@ class TrainingCandidateRequest(ContractModel):
         return self
 
 
+TrainingLexicalPolicy = Literal["PSEUDOWORD_ALLOWED", "REAL_WORD_ONLY"]
+TrainingGenerationStrategy = Literal[
+    "RULE_DB",
+    "LLM_WITH_LOCAL_VALIDATION",
+    "CURATED_FALLBACK",
+]
+
+
+class TrainingGenerationMetadata(ContractModel):
+    provider: str
+    model: str
+    strategy: TrainingGenerationStrategy
+    lexicalPolicy: TrainingLexicalPolicy
+    lexiconApplied: bool
+
+
 
 class TrainingCandidateResponse(ContractModel):
     type: str
     data: list[dict[str, Any]] = Field(min_length=5, max_length=5)
+    generationMetadata: TrainingGenerationMetadata | None = None
 
 
 TrainingCurriculumArea = Literal[

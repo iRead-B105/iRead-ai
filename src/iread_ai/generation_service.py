@@ -15,6 +15,7 @@ from pydantic import ValidationError
 from .generation_models import (
     TrainingCandidateRequest,
     TrainingCandidateResponse,
+    TrainingGenerationMetadata,
     TrainingTargetFeature,
 )
 from .lexicon.contracts import LexiconPaletteRequest, LexiconTargetFeature
@@ -45,6 +46,8 @@ HYBRID_LLM_TYPES = frozenset(
         "SHORT_STORY_READING",
     }
 )
+
+REAL_WORD_ONLY_TYPES = HYBRID_LLM_TYPES
 
 SEMANTIC_REVIEW_TYPES = frozenset(
     {
@@ -308,6 +311,7 @@ def _word_matches_training_position(
 def generate_training(
     request: TrainingCandidateRequest,
     provider: GMSTextProvider | None,
+    lexicon_service: LexiconPaletteService | None = None,
 ) -> ProviderResult:
     try:
         rule_based = default_basic_training_generator().generate(request)
@@ -318,19 +322,27 @@ def generate_training(
         )
         rule_based = None
     if rule_based is not None:
-        return ProviderResult(
-            _validated_training_response(request, rule_based.model_dump(mode="json")),
-            "rule-db",
-            False,
+        return _with_generation_metadata(
+            request,
+            ProviderResult(
+                _validated_training_response(request, rule_based.model_dump(mode="json")),
+                "rule-db",
+                False,
+            ),
         )
     if provider is None:
-        return ProviderResult(
-            _validated_training_response(
-                request,
-                mock_training_candidates(request).model_dump(mode="json"),
+        fallback = _validated_training_response(
+            request,
+            mock_training_candidates(request).model_dump(mode="json"),
+        )
+        _validate_registered_vocabulary(request, fallback, lexicon_service)
+        return _with_generation_metadata(
+            request,
+            ProviderResult(
+                fallback,
+                "curated-fallback",
+                True,
             ),
-            "curated-fallback",
-            False,
         )
 
     def generate(validation_feedback: str | None = None) -> TrainingCandidateResponse:
@@ -354,6 +366,7 @@ def generate_training(
         result = _validated_training_response(request, document)
         if request.trainingType in SEMANTIC_REVIEW_TYPES:
             result = _review_training_response(request, result, provider)
+        _validate_registered_vocabulary(request, result, lexicon_service)
         return result
 
     def generate_with_one_validation_retry() -> TrainingCandidateResponse:
@@ -368,14 +381,12 @@ def generate_training(
             feedback = f"{type(exception).__name__}: {exception}"
             return generate(feedback)
 
-    return _with_fallback(
+    result = _with_fallback(
         generate_with_one_validation_retry,
-        lambda: _validated_training_response(
-            request,
-            mock_training_candidates(request).model_dump(mode="json"),
-        ),
-        f"gms:{provider.model}",
+        lambda: _validated_fallback_response(request, lexicon_service),
+        f"{getattr(provider, 'provider_name', 'gms')}:{provider.model}",
     )
+    return _with_generation_metadata(request, result)
 
 
 def _validated_training_response(
@@ -411,6 +422,8 @@ def _review_training_response(
             "그림 문항은 imagePrompt와 정확히 일치하는 선택지가 answerIndex에 오게 하세요.",
             "빈칸 문항은 정답만 문맥상 자연스럽고 오답은 분명히 틀리게 하세요.",
             "원문에 없던 새 인물이나 새 사건을 불필요하게 추가하지 마세요.",
+            "문장과 선택지에는 실제 한국어 사전에 등재된 낱말만 사용하세요. "
+            "목표 글자를 넣기 위해 '까나' 같은 낯선 낱말을 새로 만들지 마세요.",
             "설명 없이 수정된 JSON 객체만 출력하세요.",
         ],
         "requestPolicy": _training_prompt_document(request),
@@ -457,6 +470,24 @@ def _training_prompt_document(request: TrainingCandidateRequest) -> dict[str, An
         "featureCode 문자열을 문장에 그대로 쓰지 말고 실제 한국어 예시로 구현하세요.",
         "다섯 문항은 서로 다른 자연스러운 문장으로 만드세요.",
     ]
+    if request.trainingType in REAL_WORD_ONLY_TYPES:
+        document["lexicalPolicy"] = {
+            "mode": "REAL_WORD_ONLY",
+            "scope": "아동이 읽거나 선택하는 모든 문장과 낱말",
+        }
+        document["generationRules"].extend(
+            (
+                "문장·짧은 글 단계에서는 실제 한국어 사전에 등재된 낱말만 사용하세요.",
+                "목표 글자나 음운을 넣기 위해 낯선 이름이나 무의미 낱말을 만들지 마세요.",
+                "목표를 만족하는 등재어가 떠오르지 않으면 verifiedVocabularyPalette의 "
+                "다른 단어로 문장을 다시 구성하세요.",
+            )
+        )
+    else:
+        document["lexicalPolicy"] = {
+            "mode": "PSEUDOWORD_ALLOWED",
+            "scope": "글자·음절·낱말 단위 훈련",
+        }
     if request.targetFeatures:
         document["generationRules"].append(
             "목표 특징은 짧은 이야기 전체 2~6회, 한 문장 훈련은 1~2회만 사용하세요. "
@@ -648,6 +679,105 @@ def _with_fallback(
             exception,
         )
         return ProviderResult(fallback(), "curated-fallback", True)
+
+
+def _validated_fallback_response(
+    request: TrainingCandidateRequest,
+    lexicon_service: LexiconPaletteService | None,
+) -> TrainingCandidateResponse:
+    response = _validated_training_response(
+        request,
+        mock_training_candidates(request).model_dump(mode="json"),
+    )
+    _validate_registered_vocabulary(request, response, lexicon_service)
+    return response
+
+
+def _with_generation_metadata(
+    request: TrainingCandidateRequest,
+    result: ProviderResult,
+) -> ProviderResult:
+    if result.provider == "rule-db":
+        provider = "rule-db"
+        model = "korean-training-bank-v1"
+        strategy = "RULE_DB"
+    elif result.provider.startswith(("gms:", "openai:")):
+        provider = result.provider.split(":", 1)[0]
+        model = result.provider.split(":", 1)[1]
+        strategy = "LLM_WITH_LOCAL_VALIDATION"
+    else:
+        provider = "curated-fallback"
+        model = "curated-training-fallback-v1"
+        strategy = "CURATED_FALLBACK"
+    metadata = TrainingGenerationMetadata(
+        provider=provider,
+        model=model,
+        strategy=strategy,
+        lexicalPolicy=(
+            "REAL_WORD_ONLY"
+            if request.trainingType in REAL_WORD_ONLY_TYPES
+            else "PSEUDOWORD_ALLOWED"
+        ),
+        lexiconApplied=bool(
+            request.useLexicon
+            and (request.recommendedWords or request.recommendedWordsByFeature)
+        ),
+    )
+    return ProviderResult(
+        result.value.model_copy(update={"generationMetadata": metadata}),
+        result.provider,
+        result.fallback,
+    )
+
+
+def _validate_registered_vocabulary(
+    request: TrainingCandidateRequest,
+    response: TrainingCandidateResponse,
+    lexicon_service: LexiconPaletteService | None,
+) -> None:
+    if request.trainingType not in REAL_WORD_ONLY_TYPES or lexicon_service is None:
+        return
+    try:
+        unknown = lexicon_service.unknown_content_words(
+            _reading_texts_for_lexicon(request.trainingType, response)
+        )
+    except LexiconUnavailableError as exception:
+        logger.warning("Registered-word validation was unavailable: %s", exception)
+        return
+    if unknown:
+        raise ValueError(
+            "sentence-level content contained unregistered Korean words: "
+            + ", ".join(unknown)
+        )
+
+
+def _reading_texts_for_lexicon(
+    training_type: str,
+    response: TrainingCandidateResponse,
+) -> list[str]:
+    texts: list[str] = []
+    for item in response.data:
+        if training_type == "DIFFICULT_WORD_PREVIEW":
+            texts.append(str(item.get("sentence", "")))
+        elif training_type in {
+            "SENTENCE_READING",
+            "SENTENCE_REPEAT",
+            "PHRASE_READING",
+            "REPEATED_SENTENCE_READING",
+        }:
+            texts.append(str(item.get("sentence", "")))
+        elif training_type == "SHORT_PASSAGE_READING":
+            texts.extend(str(sentence) for sentence in item.get("sentences", []))
+        elif training_type == "SENTENCE_ASSEMBLY":
+            texts.append(str(item.get("completedSentence", "")))
+        elif training_type == "FILL_IN_THE_BLANK":
+            texts.append(str(item.get("completedSentence", "")))
+            texts.extend(str(choice) for choice in item.get("choices", []))
+        elif training_type == "IMAGE_SENTENCE_MATCH":
+            texts.extend(str(choice) for choice in item.get("choices", []))
+        elif training_type == "SHORT_STORY_READING":
+            texts.extend(str(line.get("text", "")) for line in item.get("sentences", []))
+    return [text for text in texts if text.strip()]
 
 
 def _validate_output_template(

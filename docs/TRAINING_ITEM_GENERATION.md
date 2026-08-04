@@ -110,6 +110,16 @@ SENTENCE_REPEAT, PHRASE_READING, REPEATED_SENTENCE_READING,
 SHORT_STORY_READING
 ```
 
+어휘 검증은 훈련 단계에 따라 다르게 적용한다.
+
+- 글자·음절·낱말 단위 24종은 `PSEUDOWORD_ALLOWED`이다. 난독 훈련에 필요한
+  무의미 글자·음절·낱말을 허용하며 사전 미등재만으로 탈락시키지 않는다.
+- 문장·짧은 글 단위 10종은 `REAL_WORD_ONLY`이다. Kiwi가 내용어의 기본형을
+  분석하고 AI 서버 소유 사전에서 등재 여부를 확인한다. `까나`처럼 목표 글자를
+  맞추기 위해 만든 조어가 있으면 후보 전체를 다시 생성하고, 재시도도 실패하면
+  검증된 고정 후보로 대체한다.
+- 고유명사는 Kiwi의 고유명사 판정을 따르므로 일반 등재어 검사에서 제외한다.
+
 ## API 실행
 
 AI 서버 저장소에서 환경 파일을 준비한다.
@@ -130,6 +140,15 @@ STORY_IMAGE_PROVIDER=disabled
 ```dotenv
 AI_GENERATION_PROVIDER=gms
 GMS_KEY=발급받은_GMS_키
+OPENAI_MODEL=gpt-5.4-mini
+STORY_IMAGE_PROVIDER=disabled
+```
+
+OpenAI API를 직접 사용할 때는 다음 설정을 사용한다.
+
+```dotenv
+AI_GENERATION_PROVIDER=openai
+OPENAI_API_KEY=발급받은_OpenAI_API_키
 OPENAI_MODEL=gpt-5.4-mini
 STORY_IMAGE_PROVIDER=disabled
 ```
@@ -216,7 +235,8 @@ Idempotency-Key: training-review-001
 }
 ```
 
-응답 본문은 후보 5개이며 실제 생성 방식은 응답 헤더에서 확인한다.
+응답 본문은 후보 5개이며 실제 생성 방식은 응답 헤더와
+`generationMetadata`에서 함께 확인한다.
 
 ```json
 {
@@ -227,9 +247,22 @@ Idempotency-Key: training-review-001
       "choices": ["ㄱ", "ㄴ", "ㅅ"],
       "answerIndex": 2
     }
-  ]
+  ],
+  "generationMetadata": {
+    "provider": "rule-db",
+    "model": "korean-training-bank-v1",
+    "strategy": "RULE_DB",
+    "lexicalPolicy": "PSEUDOWORD_ALLOWED",
+    "lexiconApplied": true
+  }
 }
 ```
+
+문장형 OpenAI/GMS 응답은 실제 경로에 따라 `provider: "openai"` 또는
+`provider: "gms"`, `strategy: "LLM_WITH_LOCAL_VALIDATION"`,
+`lexicalPolicy: "REAL_WORD_ONLY"`로 표시된다.
+백엔드는 이 객체를 교안의 `generationMetadata`에 보존하므로 교수자 화면이나
+저장 데이터에서도 실제 생성 경로를 `MOCK`과 구분할 수 있다.
 
 ## 검증
 

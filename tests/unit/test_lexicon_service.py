@@ -128,3 +128,15 @@ def test_palette_cache_reuses_the_same_policy_with_a_new_request_id(
     assert second.requestId == "palette-second"
     assert [item.surface for item in second.items] == [item.surface for item in first.items]
     assert len(service._cache) == 1
+
+
+def test_registered_word_validation_reports_only_unknown_content_words(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "lexicon.sqlite3"
+    _create_database(database)
+    service = LexiconPaletteService(database)
+
+    unknown = service.unknown_content_words(["나비 꽃 꿀", "까나를"])
+
+    assert unknown == ["까나"]

@@ -269,7 +269,11 @@ def generate_training_activity(
         lexicon_service,
     )
     recommended_words = candidate_request.recommendedWords
-    generated = generate_training(candidate_request, provider)
+    generated = generate_training(
+        candidate_request,
+        provider,
+        lexicon_service=lexicon_service,
+    )
     item, personalization = select_training_candidate(
         list(generated.value.data),
         target_features=(feature.featureCode for feature in request.targetFeatures),
@@ -282,7 +286,7 @@ def generate_training_activity(
     )
     selected_fit = personalization.candidates[personalization.selectedCandidateIndex]
     if (
-        generated.provider.startswith("gms:")
+        generated.provider.startswith(("gms:", "openai:"))
         and selected_fit.lengthStatus in {"TOO_SHORT", "TOO_LONG"}
     ):
         retry_request = candidate_request.model_copy(
@@ -297,7 +301,11 @@ def generate_training_activity(
                 ).strip(),
             }
         )
-        retry_generated = generate_training(retry_request, provider)
+        retry_generated = generate_training(
+            retry_request,
+            provider,
+            lexicon_service=lexicon_service,
+        )
         retry_item, retry_personalization = select_training_candidate(
             list(retry_generated.value.data),
             target_features=(feature.featureCode for feature in request.targetFeatures),

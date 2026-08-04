@@ -70,6 +70,28 @@ class LexiconRepository:
             ).fetchone()
         return {key: int(row[key]) for key in row.keys()}
 
+    def registered_forms(self, values: Iterable[str]) -> set[str]:
+        normalized = tuple(dict.fromkeys(value.strip() for value in values if value.strip()))
+        if not normalized:
+            return set()
+        registered: set[str] = set()
+        with self._lock:
+            for offset in range(0, len(normalized), 400):
+                batch = normalized[offset : offset + 400]
+                placeholders = _placeholders(batch)
+                rows = self._connection.execute(
+                    f"""
+                    SELECT headword AS value FROM lexemes
+                    WHERE headword IN ({placeholders})
+                    UNION
+                    SELECT written_form AS value FROM word_forms
+                    WHERE written_form IN ({placeholders})
+                    """,
+                    (*batch, *batch),
+                ).fetchall()
+                registered.update(str(row["value"]) for row in rows)
+        return registered
+
     def palette_candidates(
         self,
         *,

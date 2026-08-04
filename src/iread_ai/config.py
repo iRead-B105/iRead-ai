@@ -45,7 +45,7 @@ class Settings(BaseSettings):
     )
 
     story_provider: Literal["mock", "openai", "gms"] = "mock"
-    generation_provider: Literal["mock", "gms"] = Field(
+    generation_provider: Literal["mock", "openai", "gms"] = Field(
         default="mock",
         validation_alias="AI_GENERATION_PROVIDER",
     )
@@ -153,6 +153,13 @@ class Settings(BaseSettings):
             raise ValueError(
                 "OPENAI_API_KEY is required when STORY_PROVIDER=openai"
             )
+        if self.generation_provider == "openai" and (
+            self.openai_api_key is None
+            or not self.openai_api_key.get_secret_value()
+        ):
+            raise ValueError(
+                "OPENAI_API_KEY is required when AI_GENERATION_PROVIDER=openai"
+            )
         if self.story_provider == "gms" and (
             self.gms_key is None or not self.gms_key.get_secret_value()
         ):
@@ -209,6 +216,36 @@ class Settings(BaseSettings):
         if self.gms_openai_base_url:
             return self.gms_openai_base_url.rstrip("/")
         return f"{self.gms_base_url.rstrip('/')}/api.openai.com/v1"
+
+    @property
+    def text_api_key(self) -> str:
+        if self.generation_provider == "openai":
+            assert self.openai_api_key is not None
+            return self.openai_api_key.get_secret_value()
+        if self.generation_provider == "gms":
+            assert self.gms_key is not None
+            return self.gms_key.get_secret_value()
+        raise RuntimeError("mock text generation does not use an API key")
+
+    @property
+    def text_base_url(self) -> str:
+        if self.generation_provider == "openai":
+            return self.openai_base_url.rstrip("/")
+        if self.generation_provider == "gms":
+            return self.gms_text_base_url
+        raise RuntimeError("mock text generation does not use an API URL")
+
+    @property
+    def text_timeout_seconds(self) -> float:
+        if self.generation_provider == "openai":
+            return self.model_timeout_seconds
+        return self.gms_text_timeout_seconds
+
+    @property
+    def text_max_output_tokens(self) -> int:
+        if self.generation_provider == "openai":
+            return self.openai_max_output_tokens
+        return self.gms_max_output_tokens
 
 
 @lru_cache

@@ -360,13 +360,29 @@ def test_short_story_character_line_must_be_direct_dialogue() -> None:
 class _QueuedProvider:
     model = "gpt-test"
 
-    def __init__(self, documents: list[dict]) -> None:
+    def __init__(
+        self,
+        documents: list[dict],
+        *,
+        provider_name: str = "gms",
+    ) -> None:
         self.documents = documents
+        self.provider_name = provider_name
         self.calls: list[dict] = []
 
     def generate_json(self, **kwargs):
         self.calls.append(kwargs)
         return self.documents.pop(0)
+
+
+class _LexiconValidator:
+    def __init__(self, unknown: list[str]) -> None:
+        self.unknown = unknown
+        self.texts: list[str] = []
+
+    def unknown_content_words(self, texts: list[str]) -> list[str]:
+        self.texts.extend(texts)
+        return [word for word in self.unknown if any(word in text for text in texts)]
 
 
 def test_short_passage_uses_a_second_llm_call_for_semantic_review() -> None:
@@ -395,7 +411,7 @@ def test_short_passage_uses_a_second_llm_call_for_semantic_review() -> None:
             for character in characters
         ],
     }
-    provider = _QueuedProvider([draft, reviewed])
+    provider = _QueuedProvider([draft, reviewed], provider_name="openai")
     request = _request("SHORT_PASSAGE_READING").model_copy(
         update={
             "useLexicon": False,
@@ -405,7 +421,9 @@ def test_short_passage_uses_a_second_llm_call_for_semantic_review() -> None:
 
     result = generate_training(request, provider)
 
-    assert result.provider == "gms:gpt-test"
+    assert result.provider == "openai:gpt-test"
+    assert result.value.generationMetadata is not None
+    assert result.value.generationMetadata.provider == "openai"
     assert len(provider.calls) == 2
     assert provider.calls[1]["schema_name"] == "iread_training_candidates_reviewed"
     assert result.value.data == reviewed["data"]
@@ -445,3 +463,59 @@ def test_local_validation_feedback_is_sent_on_the_single_retry() -> None:
     assert result.value.data == valid["data"]
     assert len(provider.calls) == 2
     assert "previousValidationFailure" in provider.calls[1]["user_prompt"]
+
+
+def test_sentence_generation_retries_when_registered_word_validation_finds_nonword() -> None:
+    invalid = {
+        "type": "SENTENCE_READING",
+        "data": [
+            {
+                "sentence": f"토끼가 까나를 {verb}.",
+                "tokens": ["토끼가", "까나를", f"{verb}."],
+            }
+            for verb in ["봐요", "들어요", "놓아요", "찾아요", "열어요"]
+        ],
+    }
+    valid_sentences = [
+        "토끼가 꽃을 봐요.",
+        "거북이가 책을 들어요.",
+        "아기가 공을 놓아요.",
+        "친구가 길을 찾아요.",
+        "엄마가 문을 열어요.",
+    ]
+    valid = {
+        "type": "SENTENCE_READING",
+        "data": [
+            {"sentence": sentence, "tokens": sentence.split()}
+            for sentence in valid_sentences
+        ],
+    }
+    provider = _QueuedProvider([invalid, valid])
+    lexicon = _LexiconValidator(["까나"])
+    request = _request("SENTENCE_READING").model_copy(
+        update={
+            "useLexicon": False,
+            "outputTemplate": {
+                "data": [{"sentence": "<string>", "tokens": ["<string>"]}]
+            },
+        }
+    )
+
+    result = generate_training(request, provider, lexicon_service=lexicon)
+
+    assert result.value.data == valid["data"]
+    assert len(provider.calls) == 2
+    assert "previousValidationFailure" in provider.calls[1]["user_prompt"]
+    assert result.value.generationMetadata is not None
+    assert result.value.generationMetadata.lexicalPolicy == "REAL_WORD_ONLY"
+
+
+def test_word_level_generation_does_not_apply_registered_word_validation() -> None:
+    request = _request("WORD_READING")
+    lexicon = _LexiconValidator(["까나"])
+
+    result = generate_training(request, provider=None, lexicon_service=lexicon)
+
+    assert lexicon.texts == []
+    assert result.value.generationMetadata is not None
+    assert result.value.generationMetadata.lexicalPolicy == "PSEUDOWORD_ALLOWED"

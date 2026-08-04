@@ -114,6 +114,13 @@ def test_basic_choice_type_uses_rule_database() -> None:
     assert response.status_code == 200
     assert response.headers["X-AI-Provider"] == "rule-db"
     assert len(response.json()["data"]) == 5
+    assert response.json()["generationMetadata"] == {
+        "provider": "rule-db",
+        "model": "korean-training-bank-v1",
+        "strategy": "RULE_DB",
+        "lexicalPolicy": "PSEUDOWORD_ALLOWED",
+        "lexiconApplied": False,
+    }
 
 
 def test_all_mechanical_training_types_use_rule_database() -> None:
@@ -142,6 +149,8 @@ def test_sentence_training_uses_curated_fallback_without_gms() -> None:
 
     assert response.status_code == 200
     assert response.headers["X-AI-Provider"] == "curated-fallback"
+    assert response.json()["generationMetadata"]["strategy"] == "CURATED_FALLBACK"
+    assert response.json()["generationMetadata"]["lexicalPolicy"] == "REAL_WORD_ONLY"
 
 
 def test_training_set_uses_five_different_activities_for_one_vowel_goal() -> None:

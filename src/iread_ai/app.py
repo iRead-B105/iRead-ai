@@ -76,13 +76,14 @@ idempotency_store = TrainingIdempotencyStore(
 )
 text_provider = (
     GMSTextProvider(
-        api_key=settings.gms_key.get_secret_value(),
-        model=settings.gms_text_model,
-        base_url=settings.gms_text_base_url,
-        timeout_seconds=settings.gms_text_timeout_seconds,
-        max_output_tokens=settings.gms_max_output_tokens,
+        api_key=settings.text_api_key,
+        model=settings.openai_model,
+        base_url=settings.text_base_url,
+        timeout_seconds=settings.text_timeout_seconds,
+        max_output_tokens=settings.text_max_output_tokens,
+        provider_name=settings.generation_provider,
     )
-    if settings.generation_provider == "gms" and settings.gms_key is not None
+    if settings.generation_provider in {"gms", "openai"}
     else None
 )
 legacy_image_generator = (
@@ -183,6 +184,7 @@ def training_candidates(
                 http_request.app.state.lexicon_service,
             ),
             text_provider,
+            lexicon_service=http_request.app.state.lexicon_service,
         ),
     )
     response.headers["X-AI-Provider"] = result.provider
