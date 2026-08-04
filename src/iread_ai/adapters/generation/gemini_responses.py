@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping, Sequence
 from typing import Any
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 
 class GeminiResponsesClient:
@@ -55,9 +58,32 @@ class GeminiResponsesClient:
         endpoint = f"{self._base_url}/v1beta/models/{model}:generateContent"
         async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.post(
-                endpoint, headers={"x-goog-api-key": self._api_key}, json=payload
+                endpoint,
+                headers={
+                    "x-goog-api-key": self._api_key,
+                    "Accept-Encoding": "identity",
+                },
+                json=payload,
             )
         if response.status_code >= 400:
+            error_code: object = None
+            error_status: object = None
+            try:
+                error_document = response.json()
+                error = error_document.get("error", {})
+                if isinstance(error, Mapping):
+                    error_code = error.get("code")
+                    error_status = error.get("status")
+            except (ValueError, TypeError):
+                pass
+            logger.warning(
+                "Gemini text request failed model=%s http_status=%s "
+                "error_code=%s error_status=%s",
+                model,
+                response.status_code,
+                error_code,
+                error_status,
+            )
             return response
         document = response.json()
         candidates = document.get("candidates", []) if isinstance(document, Mapping) else []

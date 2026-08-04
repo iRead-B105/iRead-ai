@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field, is_dataclass
@@ -15,6 +16,8 @@ from iread_ai.personalization.prompts import (
     PERSONALIZED_PROMPT_MODE,
     build_reading_policy_hints,
 )
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_CHAPTER_PROMPT_PATH = (
     Path(__file__).resolve().parents[1] / "prompts" / "chapter_personalized.md"
@@ -496,11 +499,19 @@ class OpenAIChapterCandidateGenerator:
                         json=payload,
                     )
         except (TimeoutError, httpx.TimeoutException) as exc:
+            logger.warning(
+                "Story chapter request timed out exception_type=%s",
+                type(exc).__name__,
+            )
             raise ChapterGenerationError(
                 "story-chapter generation timed out",
                 retryable=True,
             ) from exc
         except httpx.RequestError as exc:
+            logger.warning(
+                "Story chapter request failed exception_type=%s",
+                type(exc).__name__,
+            )
             raise ChapterGenerationError(
                 "story-chapter model is unavailable",
                 retryable=True,

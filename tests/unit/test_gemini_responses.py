@@ -72,7 +72,10 @@ async def test_gemini_35_flash_lite_uses_supported_generate_content_payload(
     assert captured["url"].endswith(
         "/v1beta/models/gemini-3.5-flash-lite:generateContent"
     )
-    assert captured["headers"] == {"x-goog-api-key": "gemini-test-key"}
+    assert captured["headers"] == {
+        "x-goog-api-key": "gemini-test-key",
+        "Accept-Encoding": "identity",
+    }
     generation_config = captured["payload"]["generationConfig"]
     assert generation_config["responseMimeType"] == "application/json"
     assert generation_config["maxOutputTokens"] == 8000
