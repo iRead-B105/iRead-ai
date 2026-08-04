@@ -199,6 +199,7 @@ def test_long_profile_prioritizes_reachable_foundation_over_larger_advanced_weak
 
     assert response.currentStage == 3
     assert response.maximumAllowedStage == 4
+    assert "SYLLABLE.COMPLEX_CODA" in response.stageRationale
     target_codes = {
         code
         for recommendation in response.recommendations
@@ -208,6 +209,17 @@ def test_long_profile_prioritizes_reachable_foundation_over_larger_advanced_weak
     assert all(
         not code.startswith(("PHONOLOGY.", "WORD.", "SENTENCE."))
         for code in target_codes
+    )
+    complex_coda_training = next(
+        item for item in response.recommendations if item.trainingTemplateId == 18
+    )
+    assert complex_coda_training.targetFeatureCodes == ["SYLLABLE.COMPLEX_CODA"]
+    final_sound_training = next(
+        item for item in response.recommendations if item.trainingTemplateId == 11
+    )
+    assert all(
+        code.startswith("GRAPHEME.CODA.")
+        for code in final_sound_training.targetFeatureCodes
     )
 
 

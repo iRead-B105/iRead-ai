@@ -204,7 +204,10 @@ def _current_stage(request: CurriculumRecommendRequest) -> tuple[int, str]:
     ]
     if struggling:
         stage = min(_profile_stage(profile) for profile in struggling)
-        feature = min(struggling, key=_profile_stage)
+        feature = max(
+            (profile for profile in struggling if _profile_stage(profile) == stage),
+            key=_profile_priority,
+        )
         return (
             stage,
             f"{feature.feature_code}의 기초 수행 근거를 우선해 현재 단계를 {stage}로 판정했습니다.",
@@ -259,10 +262,7 @@ def _score_candidate(
     current_stage: int,
     recent_count: int,
 ) -> _ScoredCandidate:
-    matched = [
-        profile for profile in profiles if _profile_category(profile) in spec.supported_categories
-    ]
-    matched.sort(key=_profile_priority, reverse=True)
+    matched = _matched_profiles(spec, profiles)
     strongest = _profile_priority(matched[0]) if matched else 0.15
     second = _profile_priority(matched[1]) if len(matched) > 1 else 0.0
     stage_bonus = 0.14 if spec.stage == current_stage else 0.08
@@ -297,6 +297,50 @@ def _score_candidate(
         target_feature_codes=tuple(profile.feature_code for profile in matched[:3]),
         reason_codes=tuple(dict.fromkeys(reasons)),
     )
+
+
+def _matched_profiles(
+    spec: CurriculumTemplateSpec,
+    profiles: list[CurriculumFeatureProfile],
+) -> list[CurriculumFeatureProfile]:
+    directly_related = [
+        profile
+        for profile in profiles
+        if _feature_affinity(spec.suggested_feature, profile.feature_code) > 0
+    ]
+    if directly_related:
+        return sorted(
+            directly_related,
+            key=lambda profile: (
+                _feature_affinity(spec.suggested_feature, profile.feature_code),
+                _profile_priority(profile),
+            ),
+            reverse=True,
+        )[:3]
+
+    category_fallback = [
+        profile
+        for profile in profiles
+        if _profile_category(profile) in spec.supported_categories
+    ]
+    return sorted(category_fallback, key=_profile_priority, reverse=True)[:3]
+
+
+def _feature_affinity(suggested_feature: str, profile_feature: str) -> int:
+    if suggested_feature == profile_feature:
+        return 4
+    suggested_parts = suggested_feature.split(".")
+    profile_parts = profile_feature.split(".")
+    common_parts = 0
+    for suggested_part, profile_part in zip(suggested_parts, profile_parts, strict=False):
+        if suggested_part != profile_part:
+            break
+        common_parts += 1
+    if common_parts >= 3:
+        return 3
+    if common_parts == 2:
+        return 2
+    return 0
 
 
 def _profile_priority(profile: CurriculumFeatureProfile) -> float:
