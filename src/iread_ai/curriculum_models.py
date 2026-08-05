@@ -22,6 +22,7 @@ DataSufficiency = Literal["SUFFICIENT", "PARTIAL", "INSUFFICIENT"]
 RecommendationProvider = Literal[
     "openai",
     "gms",
+    "gemini",
     "deterministic",
     "deterministic-fallback",
 ]
