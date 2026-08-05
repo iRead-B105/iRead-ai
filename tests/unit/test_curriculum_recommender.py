@@ -210,8 +210,8 @@ def test_long_profile_advances_one_stage_and_keeps_foundation_as_reinforcement()
 
     assert response.currentStage == 4
     assert response.maximumAllowedStage == 5
-    assert "최고 수행은 3단계" in response.stageRationale
-    assert "보강 훈련 근거" in response.stageRationale
+    assert "3단계까지 안정적으로 수행" in response.stageRationale
+    assert "복습 활동에 함께" in response.stageRationale
     target_codes = {
         code
         for recommendation in response.recommendations
@@ -232,6 +232,11 @@ def test_long_profile_advances_one_stage_and_keeps_foundation_as_reinforcement()
     assert all(
         code.startswith("GRAPHEME.CODA.")
         for code in final_sound_training.targetFeatureCodes
+    )
+    assert all(
+        "GRAPHEME." not in recommendation.rationale
+        and "SYLLABLE." not in recommendation.rationale
+        for recommendation in response.recommendations
     )
 
 
@@ -311,9 +316,9 @@ def test_tense_onset_does_not_masquerade_as_basic_stage_one_evidence() -> None:
 
     assert response.currentStage == 1
     assert response.maximumAllowedStage == 2
-    assert "세부 특징 2개를 종합" in response.stageRationale
+    assert "1단계 읽기 요소를 아직 어려워" in response.stageRationale
     assert "GRAPHEME.ONSET.TENSE.ㄲ" not in response.stageRationale
-    assert "상위 단계의 불안정 특징 1개" in response.stageRationale
+    assert "가벼운 도전 활동" in response.stageRationale
 
 
 def test_stable_advanced_evidence_is_not_dragged_down_by_one_foundation_weakness() -> None:
@@ -345,7 +350,8 @@ def test_stable_advanced_evidence_is_not_dragged_down_by_one_foundation_weakness
 
     assert response.currentStage == 8
     assert response.maximumAllowedStage == 8
-    assert "단계 하향 사유가 아니라 보강 훈련 근거" in response.stageRationale
+    assert "읽기 유창성을 높이는 훈련" in response.stageRationale
+    assert "복습 활동에 함께" in response.stageRationale
     reinforcement = next(
         item for item in response.recommendations if item.role == "REINFORCEMENT"
     )

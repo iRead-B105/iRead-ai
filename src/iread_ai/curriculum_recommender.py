@@ -199,7 +199,7 @@ def _current_stage(request: CurriculumRecommendRequest) -> tuple[int, str]:
     if request.currentStageHint is not None:
         return (
             request.currentStageHint,
-            f"요청에서 제공한 현재 단계 {request.currentStageHint}을 적용했습니다.",
+            f"교수자가 설정한 {request.currentStageHint}단계를 기준으로 다음 훈련을 구성했습니다.",
         )
 
     sufficient = [
@@ -224,23 +224,17 @@ def _current_stage(request: CurriculumRecommendRequest) -> tuple[int, str]:
 
     if not stable:
         stage = min((_profile_stage(profile) for profile in unsettled), default=1)
-        foundation_count = sum(
-            _profile_stage(profile) == stage for profile in unsettled
-        )
-        next_stage_count = sum(
-            _profile_stage(profile) > stage for profile in unsettled
-        )
+        next_stage_count = sum(_profile_stage(profile) > stage for profile in unsettled)
         next_stage_note = (
-            f" 상위 단계의 불안정 특징 {next_stage_count}개는 "
-            f"{min(8, stage + 1)}단계 도전 범위 안에서만 다룹니다."
+            " 아직 익숙하지 않은 다음 단계 요소는 부담이 되지 않도록 "
+            "가벼운 도전 활동으로만 포함했습니다."
             if next_stage_count
             else ""
         )
         return (
             stage,
-            f"신뢰 가능한 세부 특징 {len(stage_evidence)}개를 종합했으며, "
-            f"{stage}단계 특징 {foundation_count}개가 아직 안정되지 않아 "
-            f"현재 단계를 {stage}로 유지합니다.{next_stage_note}",
+            f"최근 학습 기록에서 {stage}단계 읽기 요소를 아직 어려워하고 있어, "
+            f"같은 단계를 충분히 연습하도록 구성했습니다.{next_stage_note}",
         )
 
     stable_frontier = max(_profile_stage(profile) for profile in stable)
@@ -251,39 +245,38 @@ def _current_stage(request: CurriculumRecommendRequest) -> tuple[int, str]:
     if observed_frontier > stable_frontier:
         stage = min(observed_frontier, stable_frontier + 1)
         progression = (
-            f"안정적으로 확인된 최고 수행은 {stable_frontier}단계이며, "
-            f"관찰된 상위 특징을 바로 따라가지 않고 {stage}단계까지만 확장합니다."
+            f"최근 학습 기록에서 {stable_frontier}단계까지 안정적으로 수행했습니다. "
+            f"아직 충분히 확인되지 않은 상위 활동은 한 번에 높이지 않고 "
+            f"{stage}단계 범위에서 천천히 연습하도록 구성했습니다."
         )
     elif unsettled_at_frontier:
         stage = stable_frontier
         progression = (
-            f"{stable_frontier}단계에 안정 근거와 불안정 근거가 함께 있어 "
-            f"현재 단계를 {stage}로 유지합니다."
+            f"{stable_frontier}단계에서 잘하는 부분과 어려워하는 부분이 함께 보여, "
+            "같은 단계를 유지하면서 부족한 부분을 보완하도록 구성했습니다."
         )
     elif stable_frontier == 8:
         stage = 8
-        progression = "8단계 수행 근거가 안정적으로 확인되어 현재 8단계를 유지합니다."
+        progression = (
+            "가장 높은 8단계 활동도 안정적으로 수행해, 현재 수준을 유지하면서 "
+            "읽기 유창성을 높이는 훈련으로 구성했습니다."
+        )
     else:
         stage = min(8, stable_frontier + 1)
         progression = (
-            f"{stable_frontier}단계까지 수행이 안정적으로 확인되어 "
-            f"다음 학습 단계인 {stage}단계를 적용합니다."
+            f"최근 학습 기록에서 {stable_frontier}단계까지 안정적으로 수행해, "
+            f"다음 단계인 {stage}단계 활동을 중심으로 구성했습니다."
         )
 
     reinforcement_count = sum(
         _profile_stage(profile) < stage for profile in unsettled
     )
     reinforcement_note = (
-        f" 현재 단계보다 낮은 불안정 특징 {reinforcement_count}개는 "
-        "단계 하향 사유가 아니라 보강 훈련 근거로 유지합니다."
+        " 이전 단계에서 아직 어려워하는 부분은 복습 활동에 함께 넣었습니다."
         if reinforcement_count
         else ""
     )
-    return (
-        stage,
-        f"신뢰 가능한 세부 특징 {len(stage_evidence)}개를 종합했습니다. "
-        f"{progression}{reinforcement_note}",
-    )
+    return stage, f"{progression}{reinforcement_note}"
 
 
 def _data_sufficiency(profiles: list[CurriculumFeatureProfile]) -> DataSufficiency:
@@ -618,7 +611,9 @@ def _llm_plan(
             "각 훈련에는 allowedRoles에 표시된 역할만 부여할 수 있습니다. "
             "각 역할의 후보는 minimumScoreByRole에 표시된 기준 점수보다 낮으면 안 됩니다. "
             "maximumAllowedStage를 넘거나 선수 단계를 건너뛰면 안 됩니다. "
-            "진단이나 치료 표현을 사용하지 말고, 입력 근거에 있는 사실만 간결하게 설명하세요."
+            "진단이나 치료 표현을 사용하지 말고, 입력 근거에 있는 사실만 간결하게 설명하세요. "
+            "rationale은 교수자가 바로 이해할 수 있는 자연스러운 한국어 한 문장으로 쓰고, "
+            "영문 코드·점수·내부 역할명(CORE 등)은 적지 마세요."
         ),
         user_prompt=json.dumps(document, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
     )
@@ -785,13 +780,49 @@ def _role_reason_codes(
 
 def _deterministic_rationale(candidate: _ScoredCandidate, role: RecommendationRole) -> str:
     target = (
-        candidate.target_feature_codes[0] if candidate.target_feature_codes else "기초 읽기 특징"
+        _feature_label(candidate.target_feature_codes[0])
+        if candidate.target_feature_codes
+        else "기초 읽기"
     )
     if role == "CORE":
-        return f"현재 단계에서 {target} 수행을 직접 보완하도록 배치했습니다."
+        return f"{target}을 집중적으로 연습해 현재 단계의 읽기 정확도를 높이도록 배치했습니다."
     if role == "REINFORCEMENT":
-        return f"{target}과 연결된 기초 기능을 안정적으로 반복하도록 배치했습니다."
-    return f"선수 단계를 넘지 않는 범위에서 {target}을 다음 단계로 확장하도록 배치했습니다."
+        return f"{target}의 기초를 다시 확인하고 안정적으로 읽을 수 있도록 배치했습니다."
+    return f"부담이 크지 않은 범위에서 {target}을 한 단계 확장해 연습하도록 배치했습니다."
+
+
+def _feature_label(feature_code: str) -> str:
+    exact_labels = {
+        "PHONOLOGY.LIAISON.CODA_TO_SILENT_ONSET": "받침 뒤에 모음이 이어질 때의 소리 연결",
+        "PHONOLOGY.LIAISON": "연음",
+        "PHONOLOGY.ASPIRATION": "거센소리 변화",
+        "PHONOLOGY.NASALIZATION": "비음화",
+        "PHONOLOGY.PALATALIZATION": "구개음화",
+        "PHONOLOGY.LIQUIDIZATION": "유음화",
+        "PHONOLOGY.TENSIFICATION": "된소리되기",
+        "PHONOLOGY.CODA_NEUTRALIZATION": "받침 대표음",
+        "SYLLABLE.COMPLEX_CODA": "겹받침 음절",
+        "WORD.DECODING": "낱말 읽기",
+        "SENTENCE.FLUENCY": "문장 유창성",
+    }
+    if feature_code in exact_labels:
+        return exact_labels[feature_code]
+    final_part = feature_code.rsplit(".", 1)[-1]
+    if feature_code.startswith("GRAPHEME.ONSET.TENSE."):
+        return f"된소리 초성 {final_part}"
+    if feature_code.startswith("GRAPHEME.ONSET.ASPIRATED."):
+        return f"거센소리 초성 {final_part}"
+    if feature_code.startswith("GRAPHEME.ONSET."):
+        return f"첫소리 {final_part}"
+    if feature_code.startswith("GRAPHEME.VOWEL."):
+        return f"모음 {final_part}"
+    if feature_code.startswith("GRAPHEME.CODA.COMPLEX."):
+        return f"겹받침 {final_part}"
+    if feature_code.startswith("GRAPHEME.CODA."):
+        return f"받침 {final_part}"
+    if feature_code.startswith("WORD.SYLLABLE_COUNT."):
+        return f"{final_part}음절 낱말"
+    return "읽기 요소"
 
 
 def _blocked_audit(spec: CurriculumTemplateSpec, reason: str) -> CurriculumCandidateAudit:
