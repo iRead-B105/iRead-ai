@@ -1,5 +1,6 @@
 from datetime import timedelta
 from types import SimpleNamespace
+from xml.etree import ElementTree
 
 import pytest
 
@@ -23,6 +24,7 @@ class _FakeSpeechSdk:
 
     def __init__(self) -> None:
         owner = self
+        self.last_ssml = ""
 
         class SpeechConfig:
             def __init__(self, **_: str) -> None:
@@ -37,8 +39,8 @@ class _FakeSpeechSdk:
                 del speech_config
                 assert audio_config is None
 
-            def speak_text_async(self, text: str):
-                assert text == "테스트 음성"
+            def speak_ssml_async(self, ssml: str):
+                owner.last_ssml = ssml
                 result = SimpleNamespace(
                     reason=owner.ResultReason.SynthesizingAudioCompleted,
                     audio_duration=123,
@@ -96,8 +98,28 @@ def test_azure_synthesis_returns_sdk_audio_without_a_temporary_file(monkeypatch)
     monkeypatch.setattr(provider, "_sdk", lambda: fake_sdk)
 
     result = provider.synthesize(
-        SpeechSynthesisRequest(requestId="tts-temp-cleanup", text="테스트 음성")
+        SpeechSynthesisRequest(
+            requestId="tts-temp-cleanup",
+            text="테스트 <음성> & 확인",
+            tempo=0.8,
+        )
     )
 
     assert result.audio == b"ID3-result-audio"
     assert result.duration_ms == 123
+    root = ElementTree.fromstring(fake_sdk.last_ssml)
+    namespace = {"s": "http://www.w3.org/2001/10/synthesis"}
+    voice = root.find("s:voice", namespace)
+    prosody = root.find(".//s:prosody", namespace)
+    assert root.attrib["{http://www.w3.org/XML/1998/namespace}lang"] == "ko-KR"
+    assert voice is not None
+    assert voice.attrib["name"] == "ko-KR-SunHiNeural"
+    assert prosody is not None
+    assert prosody.attrib["rate"] == "0.8"
+    assert prosody.text == "테스트 <음성> & 확인"
+
+
+@pytest.mark.parametrize("tempo", [0.49, 2.01])
+def test_synthesis_rejects_tempo_outside_supported_range(tempo: float) -> None:
+    with pytest.raises(ValueError):
+        SpeechSynthesisRequest(requestId="tts-invalid-tempo", text="가", tempo=tempo)

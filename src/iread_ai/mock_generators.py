@@ -755,5 +755,5 @@ def transcribe_speech_mock(
 
 
 def synthesize_speech_mock(request: SpeechSynthesisRequest) -> tuple[bytes, int]:
-    duration_ms = max(400, len(request.text) * 250)
+    duration_ms = max(400, round(len(request.text) * 250 / request.tempo))
     return _SILENT_AUDIO_PLACEHOLDER, duration_ms

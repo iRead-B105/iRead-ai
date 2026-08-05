@@ -1,0 +1,21 @@
+name: iread-training-playground
+
+services:
+  ui:
+    build:
+      context: .
+      dockerfile: Dockerfile.ui
+    ports:
+      - "127.0.0.1:8511:8501"
+    environment:
+      AI_INTERNAL_API_KEY: ${AI_API_KEY:-iread-local-ai-key}
+      IREAD_TRAINING_API_BASE_URL: http://host.docker.internal:8081
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command:
+      - streamlit
+      - run
+      - training_playground_app.py
+      - --server.address=0.0.0.0
+      - --server.port=8501
+      - --server.headless=true

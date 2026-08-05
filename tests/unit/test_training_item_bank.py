@@ -435,6 +435,25 @@ def test_word_training_types_use_verified_lexicon_units(
             assert set(candidate["words"]).issubset(palette)
 
 
+def test_syllable_delete_distributes_delete_positions_across_the_set(
+    tmp_path: Path,
+) -> None:
+    feature_code = "WORD.SYLLABLE_COUNT.2"
+    request = _request("SYLLABLE_DELETE", feature_code).model_copy(
+        update={
+            "recommendedWordsByFeature": {
+                feature_code: ["나무", "바다", "토끼", "모자", "사과", "나비"]
+            }
+        }
+    )
+
+    response = _generator(tmp_path / "syllable-delete-positions.sqlite3").generate(request)
+
+    assert response is not None
+    assert len({candidate["source"] for candidate in response.data}) == 5
+    assert [candidate["deleteIndex"] for candidate in response.data] == [0, 1, 0, 1, 0]
+
+
 def test_delegates_sentence_types_and_uncovered_targets(tmp_path: Path) -> None:
     generator = _generator(tmp_path / "delegation.sqlite3")
 
@@ -442,6 +461,47 @@ def test_delegates_sentence_types_and_uncovered_targets(tmp_path: Path) -> None:
     assert (
         generator.generate(_request("WORD_FINAL_SOUND_CHOICE", "GRAPHEME.CODA.COMPLEX.ㄳ")) is None
     )
+
+
+def test_final_consonant_delete_uses_varied_familiar_syllables(tmp_path: Path) -> None:
+    request = _request("FINAL_CONSONANT_DELETE", "SYLLABLE.CVC").model_copy(
+        update={"outputTemplate": output_template("FINAL_CONSONANT_DELETE")}
+    )
+
+    response = _generator(tmp_path / "final-delete-cvc.sqlite3").generate(request)
+
+    assert response is not None
+    assert len(response.data) == 5
+    assert len({candidate["source"] for candidate in response.data}) == 5
+    assert len({candidate["result"] for candidate in response.data}) == 5
+    for candidate in response.data:
+        source = decompose_text(candidate["source"])[0]
+        result = decompose_text(candidate["result"])[0]
+        assert source.coda
+        assert (source.onset, source.nucleus) == (result.onset, result.nucleus)
+        assert not result.coda
+        assert candidate["removableUnits"] == [
+            source.onset,
+            source.nucleus,
+            source.coda,
+        ]
+        assert candidate["answerIndex"] == 2
+
+
+def test_final_consonant_delete_honors_exact_coda_target(tmp_path: Path) -> None:
+    request = _request(
+        "FINAL_CONSONANT_DELETE",
+        "GRAPHEME.CODA.SIMPLE.ㄱ",
+    ).model_copy(update={"outputTemplate": output_template("FINAL_CONSONANT_DELETE")})
+
+    response = _generator(tmp_path / "final-delete-coda.sqlite3").generate(request)
+
+    assert response is not None
+    assert len(response.data) == 5
+    for candidate in response.data:
+        source = decompose_text(candidate["source"])[0]
+        assert source.coda == "ㄱ"
+        assert candidate["removableUnits"][candidate["answerIndex"]] == "ㄱ"
 
 
 @pytest.mark.parametrize(
@@ -521,8 +581,16 @@ def _assert_candidate_semantics(training_type: str, candidate: dict) -> None:
         if training_type != "BASIC_SYLLABLE_BUILD":
             assert candidate["finalChoices"][candidate["finalAnswerIndex"]] == result.coda
     elif training_type == "FINAL_CONSONANT_DELETE":
-        assert not decompose_text(candidate["result"])[0].coda
-        assert candidate["removableUnits"][candidate["answerIndex"]]
+        source = decompose_text(candidate["source"])[0]
+        result = decompose_text(candidate["result"])[0]
+        assert (source.onset, source.nucleus) == (result.onset, result.nucleus)
+        assert source.coda and not result.coda
+        assert candidate["removableUnits"] == [
+            source.onset,
+            source.nucleus,
+            source.coda,
+        ]
+        assert candidate["answerIndex"] == 2
     elif training_type == "SYLLABLE_DELETE":
         syllables = candidate["syllables"]
         expected = "".join(
