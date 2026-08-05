@@ -1,0 +1,24 @@
+name: iread-backend-profile-review
+
+services:
+  backend-profile-ui:
+    build:
+      context: .
+      dockerfile: Dockerfile.ui
+    command:
+      - streamlit
+      - run
+      - backend_profile_review_app.py
+      - --server.address=0.0.0.0
+      - --server.port=8501
+      - --server.headless=true
+    ports:
+      - "127.0.0.1:8512:8501"
+    env_file:
+      - path: ./.env
+        required: false
+    environment:
+      IREAD_TEACHER_REPORT_ENDPOINT: http://host.docker.internal:8081/api/v1/reports/analyze
+      IREAD_CURRICULUM_ENDPOINT: http://host.docker.internal:8081/api/v1/curricula/recommend
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
