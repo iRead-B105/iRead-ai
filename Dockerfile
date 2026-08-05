@@ -7,8 +7,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-RUN apt-get update \
-    && apt-get install --no-install-recommends -y \
+# 일부 사내망 프록시가 평문 HTTP apt 요청을 간섭해 400을 반환하므로 HTTPS 미러 + 재시도를 쓴다
+RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources \
+    && apt-get -o Acquire::Retries=5 update \
+    && apt-get -o Acquire::Retries=5 install --no-install-recommends -y \
         ffmpeg \
         gstreamer1.0-libav \
         gstreamer1.0-plugins-base \
