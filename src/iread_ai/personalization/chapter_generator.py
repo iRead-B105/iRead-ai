@@ -11,6 +11,7 @@ from typing import Any, Literal, Protocol, cast, runtime_checkable
 
 import httpx
 
+from iread_ai.personalization.hangul import normalize_dialogue_quotes
 from iread_ai.personalization.prompts import (
     BASELINE_PROMPT_MODE,
     PERSONALIZED_PROMPT_MODE,
@@ -729,7 +730,13 @@ def _parse_candidates(
         parsed.append(
             ChapterCandidate(
                 candidate_id=str(raw_candidate["candidate_id"]).strip(),
-                sentences=tuple(str(sentence).strip() for sentence in raw_sentences),
+                # 모델이 곧은따옴표 등으로 쓴 대화 표기를 품질 계약 형식으로 정규화한다.
+                # 문장 병합은 페이지 분할(문장 수·음절 예산)을 깨뜨리므로 하지 않고,
+                # 인용부 단독 문장의 화자 귀속은 검사기(repair_policy)가 인접 문장까지
+                # 보고 판정한다.
+                sentences=tuple(
+                    normalize_dialogue_quotes(str(sentence).strip()) for sentence in raw_sentences
+                ),
                 child_detour_end_sentence_index=detour_end,
                 question=(str(raw_candidate["question"]).strip() if branch_required else None),
                 subtitle=(str(raw_candidate["subtitle"]).strip() if branch_required else None),

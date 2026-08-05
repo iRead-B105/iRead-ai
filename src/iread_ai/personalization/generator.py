@@ -9,6 +9,7 @@ from typing import Any, Literal, Protocol, cast, runtime_checkable
 
 import httpx
 
+from iread_ai.personalization.hangul import normalize_dialogue_quotes
 from iread_ai.personalization.prompts import (
     build_repair_user_prompt,
     load_repair_prompt,
@@ -501,7 +502,8 @@ def _parse_repair(
     replacements = tuple(
         RepairReplacement(
             sentence_index=int(item["sentence_index"]),
-            sentence=str(item["sentence"]).strip(),
+            # 수리 문장도 대화 표기를 품질 계약 형식으로 정규화한다.
+            sentence=normalize_dialogue_quotes(str(item["sentence"]).strip()),
         )
         for item in raw_replacements
         if isinstance(item, dict)

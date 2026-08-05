@@ -24,18 +24,21 @@ from iread_ai.personalization.selector import (
 
 _CURLY_DIALOGUE_PATTERN = re.compile(r"“[^“”\r\n]+[.!?]”")
 _ANY_DIALOGUE_PATTERN = re.compile(r'("[^"\r\n]+"|“[^”\r\n]+”|‘[^’\r\n]+’)')
+# 어간 기반 매칭: 대사 귀속(누가 말했는지)이 확인되면 통과시킨다.
+# 종결형(말했어요)만이 아니라 연결형(물어보자, 외치며, 말하고)도 인정해야
+# 생성 모델의 자연스러운 문장이 표기 차이만으로 탈락하지 않는다.
 _REPORTING_VERB_PATTERN = re.compile(
-    r"(말(?:해요|했어요|하지요|했지요)|"
-    r"외(?:쳐요|쳤어요)|"
-    r"물(?:어요|었어요)|"
-    r"대답(?:해요|했어요)|"
-    r"속삭(?:여요|였어요)|"
-    r"되뇌(?:어요|었어요)|"
-    r"중얼(?:거려요|거렸어요)|"
-    r"노래(?:해요|했어요)|"
-    r"응원(?:해요|했어요)|"
-    r"웃(?:어요|었어요)|"
-    r"소리(?:쳐요|쳤어요))"
+    r"(?:말하|말했|말해|"
+    r"외치|외쳤|외쳐|"
+    r"묻|물어|물었|"
+    r"대답하|대답했|대답해|"
+    r"속삭이|속삭였|속삭여|"
+    r"되뇌|"
+    r"중얼거리|중얼거렸|중얼거려|"
+    r"노래하|노래했|노래해|"
+    r"응원하|응원했|응원해|"
+    r"웃어요|웃었어|웃으며|웃자|"
+    r"소리치|소리쳤|소리쳐)"
 )
 _HANGUL_WORD_PATTERN = re.compile(r"[가-힣]+")
 _META_CHILD_REFERENCE_PATTERN = re.compile(
@@ -525,11 +528,11 @@ def has_exact_spoken_dialogue(
     characters: tuple[str, ...] = (),
 ) -> bool:
     text = "\n".join(sentences)
-    matches: list[tuple[str, re.Match[str]]] = []
-    for sentence in sentences:
+    matches: list[tuple[int, str, re.Match[str]]] = []
+    for index, sentence in enumerate(sentences):
         match = _CURLY_DIALOGUE_PATTERN.search(sentence)
         if match is not None:
-            matches.append((sentence, match))
+            matches.append((index, sentence, match))
     if not (
         text.count("“") == 1
         and text.count("”") == 1
@@ -539,13 +542,26 @@ def has_exact_spoken_dialogue(
         and len(matches) == 1
     ):
         return False
-    sentence, match = matches[0]
+    quote_index, sentence, match = matches[0]
     outside = sentence[: match.start()] + sentence[match.end() :]
-    if _REPORTING_VERB_PATTERN.search(outside) is None:
-        return False
-    if characters:
-        return any(character in outside for character in characters)
-    return bool(re.search(r"[가-힣]{1,12}(?:은|는|이|가)", outside))
+    # 생성 모델은 대사를 단독 문장으로 쓰고 화자를 다음 문장에 두는 일이 잦다.
+    # 대사 귀속(인용 동사 + 인물)이 대사 문장 또는 바로 이웃한 문장에서
+    # 확인되면 통과시킨다. 동사와 인물은 같은 문장 안에 있어야 한다.
+    attribution_scopes = [outside]
+    if quote_index > 0:
+        attribution_scopes.append(sentences[quote_index - 1])
+    if quote_index + 1 < len(sentences):
+        attribution_scopes.append(sentences[quote_index + 1])
+    for scope in attribution_scopes:
+        if _REPORTING_VERB_PATTERN.search(scope) is None:
+            continue
+        if characters:
+            if any(character in scope for character in characters):
+                return True
+            continue
+        if re.search(r"[가-힣]{1,12}(?:은|는|이|가)", scope):
+            return True
+    return False
 
 
 def has_hard_repair_trigger(repair_plan: dict[str, Any]) -> bool:

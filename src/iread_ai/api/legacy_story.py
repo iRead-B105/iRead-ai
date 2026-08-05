@@ -197,9 +197,11 @@ async def _run_request(
         )
     except ValueError as exception:
         logger.warning(
-            "Legacy story mapping failed request_id=%s error_type=%s",
+            "Legacy story mapping failed request_id=%s error_type=%s message=%s",
             payload.requestId,
             type(exception).__name__,
+            exception,
+            exc_info=True,
         )
         _log_request_status(
             operation=operation,

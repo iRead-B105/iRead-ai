@@ -490,11 +490,16 @@ def _three_sentence_lines(sentences: Sequence[str], *, line_count: int) -> list[
     target_count = line_count * 3
     if len(cleaned) < target_count:
         raise ValueError("generated chapter does not contain enough sentences")
-    if len(cleaned) == target_count:
-        selected = cleaned
+    # 읽기 줄 길이(10~22음절)에 맞는 문장을 우선 선별한다. 모델이 범위를
+    # 벗어난 문장을 섞어 내도, 맞는 문장이 충분하면 그중에서 고르고
+    # 부족할 때만 전체에서 채워 이야기 생성 자체가 실패하지 않게 한다.
+    preferred = [sentence for sentence in cleaned if _is_preferred_line_sentence(sentence)]
+    pool = preferred if len(preferred) >= target_count else cleaned
+    if len(pool) == target_count:
+        selected = pool
     else:
         selected = [
-            cleaned[(index * (len(cleaned) - 1)) // (target_count - 1)]
+            pool[(index * (len(pool) - 1)) // (target_count - 1)]
             for index in range(target_count)
         ]
     lines: list[str] = []
@@ -513,13 +518,20 @@ def _hangul_count(value: str) -> int:
     return sum(1 for character in value if "가" <= character <= "힣")
 
 
+def _is_preferred_line_sentence(sentence: str) -> bool:
+    syllable_count = _hangul_count(sentence)
+    return 10 <= syllable_count <= 22 and not sentence.rstrip().endswith(("?", "？"))
+
+
 def _validate_page_sentences(sentences: Sequence[str]) -> None:
     if len(sentences) != 3:
         raise ValueError("each story page must contain exactly three sentences")
     for sentence in sentences:
         syllable_count = _hangul_count(sentence)
-        if syllable_count < 10 or syllable_count > 22:
-            raise ValueError("each story sentence must contain 10 to 22 Hangul syllables")
+        # 10~22음절은 선별(_is_preferred_line_sentence)에서 우선하고,
+        # 여기서는 읽기 화면을 깨뜨리는 극단 길이만 거부한다.
+        if syllable_count < 4 or syllable_count > 40:
+            raise ValueError("each story sentence must contain 4 to 40 Hangul syllables")
         if sentence.rstrip().endswith(("?", "？")):
             raise ValueError("story body must not contain a reader-facing branch question")
     normalized = [re.sub(r"[^가-힣 ]", "", sentence).strip() for sentence in sentences]

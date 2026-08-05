@@ -435,6 +435,13 @@ class PersonalizedStoryChapterService:
                         "model": batch.model or "unknown",
                         "generationAttemptCount": generation_api_call_count,
                         "quality": _chapter_quality_document(selected.pages),
+                        # 계약 위반 원인 추적용: 어떤 문장이 게이트에 걸렸는지 없이는
+                        # 반복 실패를 진단할 수 없다.
+                        "sentences": [
+                            sentence
+                            for page in selected.partition.pages
+                            for sentence in page.sentences
+                        ],
                     },
                     ensure_ascii=False,
                     separators=(",", ":"),
