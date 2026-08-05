@@ -112,7 +112,7 @@ def create_app(
             quality_retry_count=settings.chapter_quality_retry_count,
             require_contract_pass=settings.chapter_require_contract_pass,
             provider_name=settings.story_provider,
-            visual_scene_planner=MockVisualScenePlanner(),
+            visual_scene_planner=visual_scene_planner,
         )
 
     chapter_comparison_analyzer: KoreanReadingAnalyzer | None = None
