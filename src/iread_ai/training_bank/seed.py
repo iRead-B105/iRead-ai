@@ -10,7 +10,7 @@ from iread_ai.personalization.hangul import (
     decompose_text,
 )
 
-BANK_VERSION = "3"
+BANK_VERSION = "5"
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,19 +69,74 @@ VOWELS = (
     "ㅢ",
 )
 
-_TRACE_ASSET_KEYS = {
-    ("CONSONANT", "ㄱ"): "consonant_0",
-    ("CONSONANT", "ㄴ"): "consonant_1",
-    ("CONSONANT", "ㄷ"): "consonant_2",
-    ("CONSONANT", "ㄹ"): "consonant_3",
-    ("CONSONANT", "ㅁ"): "consonant_4",
-    ("VOWEL", "ㅏ"): "vowel_0",
-    ("VOWEL", "ㅓ"): "vowel_1",
-    ("VOWEL", "ㅗ"): "vowel_2",
-    ("VOWEL", "ㅜ"): "vowel_3",
-    ("VOWEL", "ㅣ"): "vowel_4",
-    ("SYLLABLE", "가"): "syllable_0",
+_CONSONANT_ASSET_NAMES = {
+    "ㄱ": "giyeok",
+    "ㄲ": "ssang_giyeok",
+    "ㄴ": "nieun",
+    "ㄷ": "digeut",
+    "ㄸ": "ssang_digeut",
+    "ㄹ": "rieul",
+    "ㅁ": "mieum",
+    "ㅂ": "bieup",
+    "ㅃ": "ssang_bieup",
+    "ㅅ": "siot",
+    "ㅆ": "ssang_siot",
+    "ㅇ": "ieung",
+    "ㅈ": "jieut",
+    "ㅉ": "ssang_jieut",
+    "ㅊ": "chieut",
+    "ㅋ": "kieuk",
+    "ㅌ": "tieut",
+    "ㅍ": "pieup",
+    "ㅎ": "hieut",
 }
+_VOWEL_ASSET_NAMES = {
+    "ㅏ": "a",
+    "ㅐ": "ae",
+    "ㅑ": "ya",
+    "ㅒ": "yae",
+    "ㅓ": "eo",
+    "ㅔ": "e",
+    "ㅕ": "yeo",
+    "ㅖ": "ye",
+    "ㅗ": "o",
+    "ㅘ": "wa",
+    "ㅙ": "wae",
+    "ㅚ": "oe",
+    "ㅛ": "yo",
+    "ㅜ": "u",
+    "ㅝ": "wo",
+    "ㅞ": "we",
+    "ㅟ": "wi",
+    "ㅠ": "yu",
+    "ㅡ": "eu",
+    "ㅢ": "ui",
+    "ㅣ": "i",
+}
+_TRACE_ASSET_KEYS = {
+    **{
+        ("CONSONANT", value): f"consonant_{name}"
+        for value, name in _CONSONANT_ASSET_NAMES.items()
+    },
+    **{
+        ("VOWEL", value): f"vowel_{name}"
+        for value, name in _VOWEL_ASSET_NAMES.items()
+    },
+}
+_TRACE_ASSET_KEYS.update(
+    {
+        ("CONSONANT", "ㄱ"): "consonant_0",
+        ("CONSONANT", "ㄴ"): "consonant_1",
+        ("CONSONANT", "ㄷ"): "consonant_2",
+        ("CONSONANT", "ㄹ"): "consonant_3",
+        ("CONSONANT", "ㅁ"): "consonant_4",
+        ("VOWEL", "ㅏ"): "vowel_0",
+        ("VOWEL", "ㅓ"): "vowel_1",
+        ("VOWEL", "ㅗ"): "vowel_2",
+        ("VOWEL", "ㅜ"): "vowel_3",
+        ("VOWEL", "ㅣ"): "vowel_4",
+    }
+)
 
 _SYLLABLE_DATA = (
     ("가", "가", 1),
@@ -115,6 +170,13 @@ _SYLLABLE_DATA = (
     ("닭", "닥", 4),
     ("삶", "삼", 4),
 )
+_TRACE_ASSET_KEYS.update(
+    {
+        ("SYLLABLE", surface): f"syllable_{ord(surface):x}"
+        for surface, _pronunciation, _difficulty in _SYLLABLE_DATA
+    }
+)
+_TRACE_ASSET_KEYS[("SYLLABLE", "가")] = "syllable_0"
 _WORD_DATA = (
     ("가방", 2),
     ("나무", 1),

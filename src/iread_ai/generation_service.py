@@ -47,6 +47,8 @@ HYBRID_LLM_TYPES = frozenset(
     }
 )
 
+WORD_LIST_TYPES = frozenset({"WORD_READING", "WORD_CHAIN_READING"})
+
 REAL_WORD_ONLY_TYPES = HYBRID_LLM_TYPES
 
 SEMANTIC_REVIEW_TYPES = frozenset(
@@ -398,6 +400,8 @@ def _validated_training_response(
         raise ValueError("training response type or count did not match request")
     _normalize_mechanical_fields(request, result)
     _validate_output_template(request, result)
+    _validate_mechanical_semantics(request, result)
+    _validate_word_list_semantics(request, result)
     _validate_hybrid_semantics(request, result)
     _validate_candidate_uniqueness(result)
     _reject_unsafe(result.model_dump_json())
@@ -543,27 +547,20 @@ def _training_prompt_document(request: TrainingCandidateRequest) -> dict[str, An
             "친구를 만나고 놀았다는 식의 사건 없는 나열로 끝내지 마세요.",
             "추천 단어를 나열하기 위해 부자연스러운 문장을 만들지 마세요.",
         ]
-    if {
+    if request.trainingType in HYBRID_LLM_TYPES and {
         "PHONOLOGY.NASALIZATION",
         "SYLLABLE.COMPLEX_CODA",
     }.issubset(target_codes):
         document["combinedFeatureGuide"] = {
             "requirement": (
-                "다섯 문장 각각에 비음화와 겹받침이 모두 있어야 합니다. "
-                "둘 중 하나만 있는 문장은 허용되지 않습니다."
+                "targetDistribution에서 각 dataIndex에 배정한 특징만 분명하게 포함하세요. "
+                "모든 문항에 비음화와 겹받침을 동시에 억지로 넣지 마세요."
             ),
-            "verifiedExpressions": [
-                "책을 읽는 아이",
-                "걱정 없는 하루",
-                "물건의 값만 적기",
-                "닭 먹이를 주기",
-                "흙놀이를 하기",
-                "내 몫만 챙기기",
-            ],
-            "usage": (
-                "각 문항마다 서로 다른 verifiedExpressions 하나 이상을 자연스럽게 활용하세요. "
-                "표현을 그대로 복사할 필요는 없지만 겹받침 표기는 유지하세요."
-            ),
+            "verifiedWordsByFeature": {
+                "PHONOLOGY.NASALIZATION": ["국물", "앞니", "막내", "읽는"],
+                "SYLLABLE.COMPLEX_CODA": ["몫", "앉다", "읽다", "닮다", "넓다", "없다"],
+            },
+            "usage": "배정된 특징의 낱말을 문맥에 맞을 때만 한두 개 사용하세요.",
         }
     if request.trainingType == "SENTENCE_ASSEMBLY":
         document["trainingTypeGuide"] = {
@@ -581,7 +578,7 @@ def _target_distribution(
     request: TrainingCandidateRequest,
 ) -> list[list[TrainingTargetFeature]]:
     targets = request.targetFeatures
-    if len(targets) <= 1:
+    if len(targets) <= 1 or request.trainingType in WORD_LIST_TYPES:
         return [targets for _ in range(request.count)]
     primary_count = (request.count + 1) // 2
     return [
@@ -757,7 +754,9 @@ def _reading_texts_for_lexicon(
 ) -> list[str]:
     texts: list[str] = []
     for item in response.data:
-        if training_type == "DIFFICULT_WORD_PREVIEW":
+        if training_type in WORD_LIST_TYPES:
+            texts.extend(str(word) for word in item.get("words", []))
+        elif training_type == "DIFFICULT_WORD_PREVIEW":
             texts.append(str(item.get("sentence", "")))
         elif training_type in {
             "SENTENCE_READING",
@@ -793,6 +792,101 @@ def _validate_output_template(
     required_keys = set(example)
     if required_keys and any(not required_keys.issubset(item) for item in response.data):
         raise ValueError("training candidate did not match outputTemplate keys")
+
+
+def _validate_word_list_semantics(
+    request: TrainingCandidateRequest,
+    response: TrainingCandidateResponse,
+) -> None:
+    if request.trainingType not in WORD_LIST_TYPES:
+        return
+    for item in response.data:
+        words = item.get("words", [])
+        if not 3 <= len(words) <= 6:
+            raise ValueError("word reading must contain three to six words")
+        normalized = [str(word).strip() for word in words]
+        if len(set(normalized)) != len(normalized):
+            raise ValueError("word reading words must not be duplicated")
+        if any(re.fullmatch(r"[가-힣]+", word) is None for word in normalized):
+            raise ValueError(
+                "word reading words must each be one Korean word without spaces"
+            )
+        if (
+            request.trainingType == "WORD_CHAIN_READING"
+            and item.get("requiredOrder") != "SEQUENTIAL"
+        ):
+            raise ValueError("word chain reading order must be SEQUENTIAL")
+
+
+def _validate_mechanical_semantics(
+    request: TrainingCandidateRequest,
+    response: TrainingCandidateResponse,
+) -> None:
+    if request.trainingType not in {
+        "PHONEME_BLEND",
+        "SYLLABLE_DELETE",
+        "SYLLABLE_REPLACE",
+    }:
+        return
+    from .personalization.hangul import decompose_text
+
+    for item in response.data:
+        if request.trainingType == "PHONEME_BLEND":
+            result = str(item.get("result", ""))
+            syllables = decompose_text(result)
+            if len(syllables) != 1:
+                raise ValueError("phoneme blend result must be one Korean syllable")
+            syllable = syllables[0]
+            expected = [
+                syllable.onset,
+                syllable.nucleus,
+                *([syllable.coda] if syllable.coda else []),
+            ]
+            cards = item.get("cards", [])
+            order = item.get("answerOrder", [])
+            try:
+                ordered = [cards[index] for index in order]
+            except (IndexError, TypeError):
+                raise ValueError("phoneme blend answerOrder was invalid") from None
+            if item.get("audioParts") != expected or ordered != expected:
+                raise ValueError("phoneme blend parts did not compose the result")
+        elif request.trainingType == "SYLLABLE_DELETE":
+            source = str(item.get("source", ""))
+            syllables = item.get("syllables", [])
+            index = item.get("deleteIndex")
+            if not re.fullmatch(r"[가-힣]{2,}", source) or syllables != list(source):
+                raise ValueError("syllable delete source must be one Korean word")
+            if not isinstance(index, int) or not 0 <= index < len(syllables):
+                raise ValueError("syllable delete index was invalid")
+            expected = "".join(
+                value
+                for position, value in enumerate(syllables)
+                if position != index
+            )
+            if item.get("result") != expected or item.get("targetAudioText") != expected:
+                raise ValueError("syllable delete result did not match deleteIndex")
+        else:
+            source = str(item.get("source", ""))
+            result = str(item.get("result", ""))
+            index = item.get("replaceIndex")
+            choices = item.get("choices", [])
+            answer_index = item.get("answerIndex")
+            if not re.fullmatch(r"[가-힣]{2,}", source) or len(source) != len(result):
+                raise ValueError("syllable replace source and result must have equal length")
+            if not isinstance(index, int) or not 0 <= index < len(source):
+                raise ValueError("syllable replace index was invalid")
+            if not isinstance(answer_index, int) or not 0 <= answer_index < len(choices):
+                raise ValueError("syllable replace answerIndex was invalid")
+            replacement = str(choices[answer_index])
+            expected = source[:index] + replacement + source[index + 1 :]
+            differences = sum(left != right for left, right in zip(source, result, strict=True))
+            if (
+                len(replacement) != 1
+                or differences != 1
+                or result != expected
+                or item.get("targetAudioText") != result
+            ):
+                raise ValueError("syllable replace result did not match replaceIndex")
 
 
 def _validate_hybrid_semantics(

@@ -14,12 +14,22 @@ _PHONOLOGY_ALIASES = {
     "PHONOLOGY.PALATALIZATION": "PHONO_PALATALIZATION",
     "PHONOLOGY.TENSIFICATION": "PHONO_TENSIFICATION",
     "PHONOLOGY.ASPIRATION": "PHONO_ASPIRATION",
+    "PHONOLOGY.FINAL_NEUTRALIZATION": "PHONO_CODA_NEUTRALIZATION",
+}
+
+_STRUCTURAL_ALIASES = {
+    "SYLLABLE.COMPLEX_VOWEL": "GRAPHEME.VOWEL.COMPOUND",
+    "SYLLABLE.TENSE_ONSET": "GRAPHEME.ONSET.TENSE",
 }
 
 
 def canonical_feature_code(code: str) -> str:
     normalized = code.strip()
-    normalized = _PHONOLOGY_ALIASES.get(normalized, normalized)
+    normalized = _STRUCTURAL_ALIASES.get(normalized, normalized)
+    for backend_code, analysis_code in _PHONOLOGY_ALIASES.items():
+        if normalized == backend_code or normalized.startswith(f"{backend_code}."):
+            normalized = analysis_code
+            break
     if normalized == "SYLLABLE.COMPLEX_CODA":
         return "HAS_COMPLEX_CODA"
     if normalized.startswith("GRAPHEME.") or normalized.startswith("PHONO_"):

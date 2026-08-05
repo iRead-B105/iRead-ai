@@ -280,7 +280,17 @@ def _structured_target_count(
     if training_type not in _STRUCTURED_TARGET_TYPES:
         return None
     units = _structured_target_units(candidate, training_type)
+    if training_type == "SYLLABLE_DELETE" and target.startswith("WORD.SYLLABLE_COUNT."):
+        expected = int(target.rsplit(".", 1)[-1])
+        source_count = len(decompose_text(str(candidate.get("source", ""))))
+        result_count = len(decompose_text(str(candidate.get("result", ""))))
+        return int(expected in {source_count, result_count})
     if target.startswith("GRAPHEME.ONSET."):
+        if target == "GRAPHEME.ONSET.TENSE":
+            return sum(
+                count_surface_features(unit).get("HAS_TENSE_ONSET", 0)
+                for unit in units
+            )
         value = target.rsplit(".", 1)[-1]
         return sum(
             sum(syllable.onset == value for syllable in decompose_text(unit))
@@ -289,6 +299,11 @@ def _structured_target_count(
             for unit in units
         )
     if target.startswith("GRAPHEME.VOWEL."):
+        if target == "GRAPHEME.VOWEL.COMPOUND":
+            return sum(
+                count_surface_features(unit).get("HAS_COMPOUND_VOWEL", 0)
+                for unit in units
+            )
         value = target.rsplit(".", 1)[-1]
         return sum(
             sum(syllable.nucleus == value for syllable in decompose_text(unit))

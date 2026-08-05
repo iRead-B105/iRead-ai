@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from iread_ai.devtools.training_profile_comparison_batch import answer_relation_issues
 from iread_ai.devtools.training_review_catalog import (
     TRAINING_REVIEW_CATALOG,
     output_template,
@@ -16,7 +17,7 @@ from iread_ai.training_bank import (
     RuleBasedBasicTrainingGenerator,
     SQLiteLearningUnitRepository,
 )
-from iread_ai.training_bank.seed import unit_seeds
+from iread_ai.training_bank.seed import CONSONANTS, VOWELS, unit_seeds
 
 
 def _request(training_type: str, feature_code: str) -> TrainingCandidateRequest:
@@ -53,6 +54,16 @@ def _generator(path: Path) -> RuleBasedBasicTrainingGenerator:
     return RuleBasedBasicTrainingGenerator(SQLiteLearningUnitRepository(path))
 
 
+def test_sentence_assembly_relation_ignores_only_terminal_punctuation() -> None:
+    candidate = {
+        "cards": ["토끼가", "천천히", "가요"],
+        "answerOrder": [0, 1, 2],
+        "completedSentence": "토끼가 천천히 가요.",
+    }
+
+    assert answer_relation_issues("SENTENCE_ASSEMBLY", candidate) == []
+
+
 def test_builds_versioned_sqlite_bank_with_verified_atoms(tmp_path: Path) -> None:
     repository = SQLiteLearningUnitRepository(tmp_path / "bank.sqlite3")
 
@@ -75,20 +86,12 @@ def test_builds_versioned_sqlite_bank_with_verified_atoms(tmp_path: Path) -> Non
     assert any(
         unit.surface == "산" and "GRAPHEME.CODA.SIMPLE.ㄴ" in unit.feature_codes for unit in units
     )
-    supported_trace_keys = {
-        "consonant_0",
-        "consonant_1",
-        "consonant_2",
-        "consonant_3",
-        "consonant_4",
-        "vowel_0",
-        "vowel_1",
-        "vowel_2",
-        "vowel_3",
-        "vowel_4",
-        "syllable_0",
-    }
-    assert {unit.trace_asset_key for unit in units if unit.trace_asset_key} == supported_trace_keys
+    trace_keys = {unit.trace_asset_key for unit in units if unit.trace_asset_key}
+    assert len(trace_keys) == 70
+    assert all(re.fullmatch(r"[a-z0-9_]+", key) for key in trace_keys)
+    assert "consonant_0" in trace_keys
+    assert "consonant_ssang_siot" in trace_keys
+    assert "vowel_0" in trace_keys
 
 
 def test_generates_five_distinct_consonant_questions_for_profile_target(
@@ -105,6 +108,41 @@ def test_generates_five_distinct_consonant_questions_for_profile_target(
         assert candidate["audioText"] == "ㄱ"
         assert len(candidate["choices"]) == 3
         assert candidate["choices"][candidate["answerIndex"]] == "ㄱ"
+
+
+def test_consonant_sound_choice_uses_bare_jamo_for_tense_target(
+    tmp_path: Path,
+) -> None:
+    request = _request("CONSONANT_SOUND_CHOICE", "GRAPHEME.ONSET.TENSE.ㅆ").model_copy(
+        update={"difficulty": 1}
+    )
+    response = _generator(tmp_path / "tense-consonant.sqlite3").generate(request)
+
+    assert response is not None
+    assert len(response.data) == 5
+    for candidate in response.data:
+        assert candidate["audioText"] == "ㅆ"
+        assert candidate["choices"][candidate["answerIndex"]] == "ㅆ"
+
+
+def test_final_syllable_build_synthesizes_a_simple_coda_for_onset_only_target(
+    tmp_path: Path,
+) -> None:
+    request = _request("FINAL_SYLLABLE_BUILD", "GRAPHEME.ONSET.TENSE.ㅆ").model_copy(
+        update={"difficulty": 1}
+    )
+
+    response = _generator(tmp_path / "final-build.sqlite3").generate(request)
+
+    assert response is not None
+    assert len(response.data) == 5
+    for candidate in response.data:
+        result = decompose_text(candidate["result"])[0]
+        assert result.onset == "ㅆ"
+        assert result.coda is not None
+        assert result.coda not in {"ㄳ", "ㄵ", "ㄶ", "ㄺ", "ㄻ", "ㄼ", "ㄽ", "ㄾ", "ㄿ", "ㅀ", "ㅄ"}
+        assert candidate["targetAudioText"] == candidate["result"]
+        assert candidate["finalChoices"][candidate["finalAnswerIndex"]] == result.coda
 
 
 def test_generates_word_final_questions_without_calling_an_llm(tmp_path: Path) -> None:
@@ -126,8 +164,11 @@ def test_keeps_the_requested_vowel_in_every_trace_candidate(tmp_path: Path) -> N
 
     assert response is not None
     assert {candidate["target"] for candidate in response.data} == {"ㅏ"}
-    assert {candidate["traceAssetKey"] for candidate in response.data} == {"vowel_0"}
-    assert len({candidate["soundText"] for candidate in response.data}) == 5
+    assert all(
+        re.fullmatch(r"vowel_0(?:_v[2-5])?", candidate["traceAssetKey"])
+        for candidate in response.data
+    )
+    assert {candidate["soundText"] for candidate in response.data} == {"ㅏ"}
 
 
 def test_incompatible_profile_feature_never_delegates_a_trace_item_to_llm(
@@ -139,7 +180,8 @@ def test_incompatible_profile_feature_never_delegates_a_trace_item_to_llm(
 
     assert response is not None
     assert len(response.data) == 5
-    assert all(candidate["target"] in {"ㅏ", "ㅓ", "ㅗ", "ㅜ", "ㅣ"} for candidate in response.data)
+    assert all(candidate["target"] in VOWELS for candidate in response.data)
+    assert len({candidate["target"] for candidate in response.data}) == 5
 
 
 def test_keeps_the_requested_grapheme_in_every_classification_candidate(
@@ -151,9 +193,11 @@ def test_keeps_the_requested_grapheme_in_every_classification_candidate(
 
     assert response is not None
     assert len({repr(candidate) for candidate in response.data}) == 5
+    assert response.data[0]["audioText"] == "ㄱ"
+    assert all(re.fullmatch(r"[ㄱ-ㅎㅏ-ㅣ]", candidate["audioText"]) for candidate in response.data)
     for candidate in response.data:
-        assert "ㄱ" in candidate["audioText"]
-        assert candidate["choices"][candidate["answerIndex"]] == "CONSONANT"
+        expected = "CONSONANT" if candidate["audioText"] in CONSONANTS else "VOWEL"
+        assert candidate["choices"][candidate["answerIndex"]] == expected
 
 
 def test_distributes_two_targets_across_five_rule_based_questions(tmp_path: Path) -> None:
@@ -176,16 +220,11 @@ def test_distributes_two_targets_across_five_rule_based_questions(tmp_path: Path
 
     assert response is not None
     assert len(response.data) == 5
-    assert all("ㄱ" in candidate["audioText"] for candidate in response.data[:3])
-    assert all("ㅏ" in candidate["audioText"] for candidate in response.data[3:])
-    assert all(
-        candidate["choices"][candidate["answerIndex"]] == "CONSONANT"
-        for candidate in response.data[:3]
-    )
-    assert all(
-        candidate["choices"][candidate["answerIndex"]] == "VOWEL"
-        for candidate in response.data[3:]
-    )
+    assert response.data[0]["audioText"] == "ㄱ"
+    assert response.data[3]["audioText"] == "ㅏ"
+    for candidate in response.data:
+        expected = "CONSONANT" if candidate["audioText"] in CONSONANTS else "VOWEL"
+        assert candidate["choices"][candidate["answerIndex"]] == expected
 
 
 def test_multi_target_nonword_training_keeps_real_and_meaningless_items(
@@ -435,13 +474,20 @@ def test_word_training_types_use_verified_lexicon_units(
             assert set(candidate["words"]).issubset(palette)
 
 
-def test_delegates_sentence_types_and_uncovered_targets(tmp_path: Path) -> None:
+def test_delegates_sentence_types_but_safely_handles_complex_word_final_targets(
+    tmp_path: Path,
+) -> None:
     generator = _generator(tmp_path / "delegation.sqlite3")
 
     assert generator.generate(_request("SENTENCE_READING", "SENTENCE.SIMPLE")) is None
-    assert (
-        generator.generate(_request("WORD_FINAL_SOUND_CHOICE", "GRAPHEME.CODA.COMPLEX.ㄳ")) is None
+    response = generator.generate(
+        _request("WORD_FINAL_SOUND_CHOICE", "GRAPHEME.CODA.COMPLEX.ㄳ")
     )
+    assert response is not None
+    for candidate in response.data:
+        coda = decompose_text(candidate["audioText"])[-1].coda
+        assert coda in {"ㄱ", "ㄴ", "ㄷ", "ㄹ", "ㅁ", "ㅂ", "ㅇ"}
+        assert candidate["choices"][candidate["answerIndex"]] == coda
 
 
 @pytest.mark.parametrize(
@@ -482,12 +528,46 @@ def test_all_rule_based_types_generate_five_semantically_valid_candidates(
         _assert_candidate_semantics(spec.training_type, candidate)
 
 
+@pytest.mark.parametrize(
+    ("training_type", "feature_code", "difficulty"),
+    [
+        ("PHONEME_BLEND", "GRAPHEME.ONSET.TENSE.ㅆ", 1),
+        ("PHONEME_BLEND", "SYLLABLE.COMPLEX_VOWEL", 3),
+        ("PHONEME_BLEND", "GRAPHEME.CODA.COMPLEX.ㅀ", 5),
+        ("SYLLABLE_DELETE", "WORD.SYLLABLE_COUNT.1", 1),
+        ("SYLLABLE_DELETE", "WORD.SYLLABLE_COUNT.5", 3),
+        ("SYLLABLE_REPLACE", "WORD.SYLLABLE_COUNT.5", 3),
+        ("SYLLABLE_REPLACE", "WORD.PHONOLOGICALLY_CHANGED", 5),
+    ],
+)
+def test_mechanical_types_never_delegate_profile_targets_to_llm(
+    tmp_path: Path,
+    training_type: str,
+    feature_code: str,
+    difficulty: int,
+) -> None:
+    request = _request(training_type, feature_code).model_copy(
+        update={"difficulty": difficulty}
+    )
+
+    response = _generator(tmp_path / f"mechanical-{training_type}.sqlite3").generate(request)
+
+    assert response is not None
+    assert len(response.data) == 5
+    for candidate in response.data:
+        _assert_candidate_semantics(training_type, candidate)
+
+
 def _assert_candidate_semantics(training_type: str, candidate: dict) -> None:
     if "choices" in candidate and "answerIndex" in candidate:
         answer_index = candidate["answerIndex"]
         assert 0 <= answer_index < len(candidate["choices"])
+        assert len(candidate["choices"]) == len(set(map(repr, candidate["choices"])))
 
-    if training_type in {"SYLLABLE_INITIAL_CHOICE", "WORD_INITIAL_CHOICE"}:
+    if training_type in {"VOWEL_TRACE", "CONSONANT_TRACE", "SYLLABLE_TRACE"}:
+        assert candidate["target"] == candidate["soundText"]
+        assert re.fullmatch(r"[a-z0-9_]+", candidate["traceAssetKey"])
+    elif training_type in {"SYLLABLE_INITIAL_CHOICE", "WORD_INITIAL_CHOICE"}:
         expected = decompose_text(candidate["audioText"])[0].onset
         assert candidate["choices"][candidate["answerIndex"]] == expected
     elif training_type == "SAME_INITIAL_WORD_CHOICE":
@@ -499,6 +579,10 @@ def _assert_candidate_semantics(training_type: str, candidate: dict) -> None:
         assert candidate["choices"][candidate["answerIndex"]] == expected
     elif training_type == "FINAL_CONSONANT_COMPARISON":
         assert candidate["choices"][candidate["answerIndex"]] == candidate["audioText"]
+        parts = [decompose_text(choice)[0] for choice in candidate["choices"]]
+        assert len({part.onset for part in parts}) == 1
+        assert len({part.nucleus for part in parts}) == 1
+        assert len({part.coda for part in parts}) == len(parts)
     elif training_type == "SIMILAR_SOUND_CHOICE":
         expected = decompose_text(candidate["audioText"])[0].onset
         assert candidate["choices"][candidate["answerIndex"]] == expected
@@ -510,6 +594,8 @@ def _assert_candidate_semantics(training_type: str, candidate: dict) -> None:
     elif training_type == "SYLLABLE_BLEND":
         selected = [candidate["cards"][index] for index in candidate["answerOrder"]]
         assert "".join(selected) == candidate["result"]
+        assert selected == candidate["audioParts"]
+        assert len(candidate["cards"]) == len(set(candidate["cards"]))
     elif training_type in {
         "BASIC_SYLLABLE_BUILD",
         "FINAL_SYLLABLE_BUILD",
@@ -518,11 +604,26 @@ def _assert_candidate_semantics(training_type: str, candidate: dict) -> None:
         result = decompose_text(candidate["result"])[0]
         assert candidate["initialChoices"][candidate["initialAnswerIndex"]] == result.onset
         assert candidate["medialChoices"][candidate["medialAnswerIndex"]] == result.nucleus
-        if training_type != "BASIC_SYLLABLE_BUILD":
+        if training_type == "BASIC_SYLLABLE_BUILD":
+            assert not result.coda
+        else:
             assert candidate["finalChoices"][candidate["finalAnswerIndex"]] == result.coda
+            if training_type == "FINAL_SYLLABLE_BUILD":
+                assert result.coda not in {
+                    "ㄳ", "ㄵ", "ㄶ", "ㄺ", "ㄻ", "ㄼ", "ㄽ", "ㄾ", "ㄿ", "ㅀ", "ㅄ"
+                }
+            else:
+                assert result.coda in {
+                    "ㄳ", "ㄵ", "ㄶ", "ㄺ", "ㄻ", "ㄼ", "ㄽ", "ㄾ", "ㄿ", "ㅀ", "ㅄ"
+                }
     elif training_type == "FINAL_CONSONANT_DELETE":
-        assert not decompose_text(candidate["result"])[0].coda
-        assert candidate["removableUnits"][candidate["answerIndex"]]
+        source = decompose_text(candidate["source"])[0]
+        result = decompose_text(candidate["result"])[0]
+        assert source.coda
+        assert not result.coda
+        assert candidate["removableUnits"] == [source.onset, source.nucleus, source.coda]
+        assert candidate["answerIndex"] == 2
+        assert candidate["targetAudioText"] == candidate["result"]
     elif training_type == "SYLLABLE_DELETE":
         syllables = candidate["syllables"]
         expected = "".join(
@@ -539,8 +640,13 @@ def _assert_candidate_semantics(training_type: str, candidate: dict) -> None:
         assert len(candidate["words"]) == 4
         assert all(re.fullmatch(r"[가-힣]+", word) for word in candidate["words"])
     elif training_type == "NONWORD_READING":
-        assert [item["isNonword"] for item in candidate["words"]] == [False, True]
-        assert candidate["words"][0]["text"] != candidate["words"][1]["text"]
+        assert [item["isNonword"] for item in candidate["words"]] == [
+            False,
+            True,
+            False,
+            True,
+        ]
+        assert len({item["text"] for item in candidate["words"]}) == 4
     elif training_type == "WORD_CHAIN_READING":
         assert candidate["requiredOrder"] == "SEQUENTIAL"
         assert len(candidate["words"]) == 4

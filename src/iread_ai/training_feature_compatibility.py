@@ -27,7 +27,9 @@ _SUPPORTED_FAMILIES: dict[str, frozenset[str]] = {
     "SYLLABLE_DELETE": frozenset(
         {"ONSET", "VOWEL", "CODA", "SYLLABLE", "WORD", "PHONOLOGY"}
     ),
-    "SYLLABLE_REPLACE": frozenset({"WORD"}),
+    "SYLLABLE_REPLACE": frozenset(
+        {"ONSET", "VOWEL", "CODA", "SYLLABLE", "WORD", "PHONOLOGY"}
+    ),
     "WORD_READING": frozenset(
         {"ONSET", "VOWEL", "CODA", "SYLLABLE", "WORD", "PHONOLOGY"}
     ),

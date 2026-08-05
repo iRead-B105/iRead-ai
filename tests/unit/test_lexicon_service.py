@@ -69,6 +69,16 @@ def test_feature_codes_use_project_taxonomy_and_exact_leaf_matching() -> None:
     assert canonical_feature_code("ONSET_ㄲ") == "GRAPHEME.ONSET.TENSE.ㄲ"
     assert feature_matches("GRAPHEME.ONSET.TENSE.ㄲ", "GRAPHEME.ONSET.TENSE")
     assert not feature_matches("GRAPHEME.ONSET.TENSE", "GRAPHEME.ONSET.TENSE.ㄲ")
+    assert canonical_feature_code("SYLLABLE.COMPLEX_VOWEL") == "GRAPHEME.VOWEL.COMPOUND"
+    assert canonical_feature_code("SYLLABLE.TENSE_ONSET") == "GRAPHEME.ONSET.TENSE"
+    assert (
+        canonical_feature_code("PHONOLOGY.LIAISON.CODA_TO_SILENT_ONSET")
+        == "PHONO_LIAISON"
+    )
+    assert (
+        canonical_feature_code("PHONOLOGY.FINAL_NEUTRALIZATION.TO_ㄷ")
+        == "PHONO_CODA_NEUTRALIZATION"
+    )
 
 
 def test_palette_hard_filters_excluded_features_and_requires_target(tmp_path: Path) -> None:

@@ -9,8 +9,11 @@ from iread_ai.generation_models import (
 )
 from iread_ai.generation_service import (
     _normalize_mechanical_fields,
+    _target_distribution,
     _validate_candidate_uniqueness,
     _validate_hybrid_semantics,
+    _validate_mechanical_semantics,
+    _validate_word_list_semantics,
     enrich_training_request_with_lexicon,
     generate_training,
 )
@@ -519,3 +522,114 @@ def test_word_level_generation_does_not_apply_registered_word_validation() -> No
     assert lexicon.texts == []
     assert result.value.generationMetadata is not None
     assert result.value.generationMetadata.lexicalPolicy == "PSEUDOWORD_ALLOWED"
+
+
+def test_word_chain_rejects_phrases_inside_word_cards() -> None:
+    request = _request("WORD_CHAIN_READING")
+    response = TrainingCandidateResponse(
+        type="WORD_CHAIN_READING",
+        data=[
+            {
+                "words": ["닭 먹이를 주기", "국물", "앞니"],
+                "requiredOrder": "SEQUENTIAL",
+            }
+            for _ in range(5)
+        ],
+    )
+
+    with pytest.raises(ValueError, match="without spaces"):
+        _validate_word_list_semantics(request, response)
+
+
+def test_word_list_multi_target_distribution_applies_every_target_to_every_set() -> None:
+    targets = [
+        TrainingTargetFeature(
+            featureCode="GRAPHEME.ONSET.TENSE.ㄲ",
+            weaknessScore=0.8,
+            confidence=0.9,
+            evidenceCount=10,
+        ),
+        TrainingTargetFeature(
+            featureCode="WORD.SYLLABLE_COUNT.2",
+            weaknessScore=0.7,
+            confidence=0.9,
+            evidenceCount=10,
+        ),
+    ]
+    request = _request("WORD_READING").model_copy(
+        update={"targetFeatures": targets}
+    )
+
+    distribution = _target_distribution(request)
+
+    assert distribution == [targets, targets, targets, targets, targets]
+
+
+def test_sentence_multi_target_distribution_splits_candidates_three_and_two() -> None:
+    first = TrainingTargetFeature(
+        featureCode="PHONOLOGY.NASALIZATION",
+        weaknessScore=0.8,
+        confidence=0.9,
+        evidenceCount=10,
+    )
+    second = TrainingTargetFeature(
+        featureCode="SYLLABLE.COMPLEX_CODA",
+        weaknessScore=0.7,
+        confidence=0.9,
+        evidenceCount=10,
+    )
+    request = _request("SENTENCE_READING").model_copy(
+        update={"targetFeatures": [first, second]}
+    )
+
+    distribution = _target_distribution(request)
+
+    assert distribution == [[first], [first], [first], [second], [second]]
+
+
+@pytest.mark.parametrize(
+    ("training_type", "candidate"),
+    [
+        (
+            "PHONEME_BLEND",
+            {
+                "audioParts": ["ㅅ", "ㅝ", "ㄹ"],
+                "cards": ["ㅅ", "ㅝ", "ㄹ"],
+                "answerOrder": [0, 1, 2],
+                "result": "설",
+            },
+        ),
+        (
+            "SYLLABLE_DELETE",
+            {
+                "source": "토끼가 뛰어요.",
+                "targetAudioText": "토끼 뛰어요.",
+                "syllables": ["토", "끼", "가", "뛰", "어", "요"],
+                "deleteIndex": 2,
+                "result": "토끼 뛰어요.",
+            },
+        ),
+        (
+            "SYLLABLE_REPLACE",
+            {
+                "source": "호랑이",
+                "targetAudioText": "호랑이",
+                "replaceIndex": 1,
+                "choices": ["라", "루", "리"],
+                "answerIndex": 0,
+                "result": "호랑이",
+            },
+        ),
+    ],
+)
+def test_rejects_invalid_mechanical_relations(
+    training_type: str,
+    candidate: dict,
+) -> None:
+    response = TrainingCandidateResponse(
+        type=training_type,
+        data=[candidate for _ in range(5)],
+    )
+
+    with pytest.raises(ValueError):
+        _validate_mechanical_semantics(_request(training_type), response)

@@ -15,11 +15,27 @@ class TrainingLengthPolicy:
 
 
 _SENTENCE_RANGES = {
-    1: (5, 9),
-    2: (7, 12),
-    3: (10, 19),
-    4: (13, 21),
-    5: (16, 26),
+    1: (5, 16),
+    2: (6, 15),
+    3: (8, 20),
+    4: (9, 24),
+    5: (9, 28),
+}
+
+_PASSAGE_SENTENCE_RANGES = {
+    1: (4, 12),
+    2: (5, 15),
+    3: (7, 20),
+    4: (8, 23),
+    5: (9, 26),
+}
+
+_STORY_SENTENCE_RANGES = {
+    1: (3, 16),
+    2: (4, 18),
+    3: (4, 22),
+    4: (4, 24),
+    5: (4, 28),
 }
 
 _SINGLE_SENTENCE_TYPES = frozenset(
@@ -36,19 +52,19 @@ _SINGLE_SENTENCE_TYPES = frozenset(
 )
 
 _STORY_TOTAL_RANGES = {
-    1: (15, 27),
-    2: (21, 36),
-    3: (36, 60),
-    4: (45, 75),
-    5: (55, 90),
+    1: (20, 48),
+    2: (24, 56),
+    3: (30, 64),
+    4: (34, 72),
+    5: (36, 80),
 }
 
 _PASSAGE_TOTAL_RANGES = {
-    1: (12, 22),
-    2: (18, 30),
-    3: (24, 42),
-    4: (32, 54),
-    5: (40, 68),
+    1: (10, 24),
+    2: (15, 34),
+    3: (20, 46),
+    4: (25, 58),
+    5: (30, 72),
 }
 
 
@@ -60,9 +76,11 @@ def training_length_policy(
     if training_type in _SINGLE_SENTENCE_TYPES:
         return TrainingLengthPolicy(sentence_min, sentence_max)
     if training_type == "SHORT_STORY_READING":
+        sentence_min, sentence_max = _STORY_SENTENCE_RANGES[difficulty]
         total_min, total_max = _STORY_TOTAL_RANGES[difficulty]
         return TrainingLengthPolicy(sentence_min, sentence_max, total_min, total_max)
     if training_type == "SHORT_PASSAGE_READING":
+        sentence_min, sentence_max = _PASSAGE_SENTENCE_RANGES[difficulty]
         total_min, total_max = _PASSAGE_TOTAL_RANGES[difficulty]
         return TrainingLengthPolicy(sentence_min, sentence_max, total_min, total_max)
     return None

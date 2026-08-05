@@ -64,6 +64,7 @@ def test_direct_openai_story_provider_remains_supported() -> None:
 def test_gemini_35_flash_lite_story_provider_is_supported() -> None:
     settings = Settings(
         _env_file=None,
+        generation_provider="mock",
         story_provider="gemini",
         openai_model="gemini-3.5-flash-lite",
         gemini_api_key="gemini-test-key",

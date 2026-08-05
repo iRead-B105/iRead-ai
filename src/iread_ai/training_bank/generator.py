@@ -5,7 +5,7 @@ import re
 from collections.abc import Callable, Iterable
 
 from iread_ai.generation_models import TrainingCandidateRequest, TrainingCandidateResponse
-from iread_ai.personalization.hangul import COMPLEX_CODA_PARTS
+from iread_ai.personalization.hangul import COMPLEX_CODA_PARTS, decompose_text
 from iread_ai.training_feature_compatibility import compatible_features
 
 from .models import LearningUnit
@@ -38,6 +38,7 @@ RULE_BASED_TYPES = frozenset(
         "WORD_READING",
         "NONWORD_READING",
         "WORD_CHAIN_READING",
+        "FILL_IN_THE_BLANK",
     }
 )
 SUPPORTED_TYPES = RULE_BASED_TYPES
@@ -116,6 +117,7 @@ _CODAS = (
     "ㅍ",
     "ㅎ",
 )
+_SIMPLE_CODAS = ("ㄱ", "ㄴ", "ㄷ", "ㄹ", "ㅁ", "ㅂ", "ㅇ")
 _SIMILAR_GROUPS = (
     ("PLAIN_ASPIRATED", "ㄱ", "ㅋ"),
     ("PLAIN_TENSE", "ㄱ", "ㄲ"),
@@ -133,6 +135,38 @@ _REPLACEMENTS = (
     ("모자", "과자", 0),
     ("기차", "기린", 1),
     ("다리", "머리", 0),
+)
+_TENSE_ONSETS = ("ㄲ", "ㄸ", "ㅃ", "ㅆ", "ㅉ")
+_COMPOUND_VOWELS = ("ㅘ", "ㅙ", "ㅚ", "ㅝ", "ㅞ", "ㅟ", "ㅢ")
+_COMPLEX_CODAS = ("ㄳ", "ㄵ", "ㄶ", "ㄺ", "ㄻ", "ㄼ", "ㄽ", "ㄾ", "ㄿ", "ㅀ", "ㅄ")
+_MECHANICAL_WORDS = (
+    "나무",
+    "바다",
+    "토끼",
+    "모자",
+    "사과",
+    "나비",
+    "강아지",
+    "무지개",
+    "해바라기",
+    "아기고양이",
+    "의자",
+    "과자",
+    "돼지",
+)
+_REPLACEMENT_SYLLABLES = ("가", "나", "도", "라", "미", "보", "수", "지")
+
+_FILL_BLANK_ITEMS = (
+    ("아이는 {{blank}}를 먹어요.", "포도", ("우표", "모자")),
+    ("편지에 {{blank}}를 붙여요.", "우표", ("포도", "모자")),
+    ("화분에 {{blank}}를 심어요.", "씨", ("해", "비")),
+    ("아빠가 {{blank}}를 보내요.", "소포", ("모자", "나무")),
+    ("파도가 {{blank}}를 적셔요.", "모래", ("바다", "나비")),
+    ("아이가 {{blank}}를 써요.", "연필", ("수박", "구름")),
+    ("새가 {{blank}}에서 노래해요.", "나무", ("바다", "버스")),
+    ("비가 오면 {{blank}}을 써요.", "우산", ("연필", "가방")),
+    ("여름에 {{blank}}을 시원하게 먹어요.", "수박", ("연필", "가방")),
+    ("깡충 뛰는 {{blank}}와 놀아요.", "토끼", ("여우", "나비")),
 )
 
 
@@ -169,6 +203,7 @@ class RuleBasedBasicTrainingGenerator:
                     slot_request,
                     units,
                     variant + (slot * 80) + attempt,
+                    slot,
                 )
                 if candidate is None:
                     return None
@@ -248,8 +283,43 @@ class RuleBasedBasicTrainingGenerator:
         request: TrainingCandidateRequest,
         units: tuple[LearningUnit, ...],
         variant: int,
+        slot: int,
     ) -> dict[str, object] | None:
         training_type = request.trainingType
+        if training_type == "FILL_IN_THE_BLANK":
+            return self._fill_blank(request, variant, slot)
+        if training_type in {"VOWEL_TRACE", "CONSONANT_TRACE", "SYLLABLE_TRACE"}:
+            return self._trace_candidate(request, units, training_type, variant, slot)
+        if training_type == "CONSONANT_VOWEL_CLASSIFICATION":
+            return self._classification(request, variant, slot)
+        if training_type == "CONSONANT_SOUND_CHOICE":
+            return self._consonant_sound_choice(request, variant)
+        if training_type == "SYLLABLE_INITIAL_CHOICE":
+            return self._syllable_initial_choice(request, variant, slot)
+        if training_type == "FINAL_CONSONANT_CHOICE":
+            return self._final_consonant_choice(request, variant, slot)
+        if training_type == "WORD_FINAL_SOUND_CHOICE":
+            return self._word_final_sound_choice(request, variant, slot)
+        if training_type == "FINAL_CONSONANT_COMPARISON":
+            return self._final_consonant_comparison(request, variant, slot)
+        if training_type == "SIMILAR_SOUND_CHOICE":
+            return self._similar_sound_choice(request, variant, slot)
+        if training_type == "SYLLABLE_BLEND":
+            return self._syllable_blend(request, units, variant, slot)
+        if training_type == "BASIC_SYLLABLE_BUILD":
+            return self._basic_syllable_build(request, variant)
+        if training_type == "FINAL_SYLLABLE_BUILD":
+            return self._final_syllable_build(request, units, variant)
+        if training_type == "DOUBLE_FINAL_BUILD":
+            return self._double_final_build(request, variant)
+        if training_type == "FINAL_CONSONANT_DELETE":
+            return self._final_consonant_delete(request, variant, slot)
+        if training_type == "PHONEME_BLEND":
+            return self._phoneme_blend(request, variant, slot)
+        if training_type == "SYLLABLE_DELETE":
+            return self._syllable_delete(request, units, variant, slot)
+        if training_type == "SYLLABLE_REPLACE":
+            return self._syllable_replace(request, units, variant, slot)
         palette_candidate = self._word_palette_candidate(
             request,
             training_type,
@@ -262,30 +332,14 @@ class RuleBasedBasicTrainingGenerator:
         if not eligible:
             return None
         correct = eligible[variant % len(eligible)]
-        if training_type in {"VOWEL_TRACE", "CONSONANT_TRACE", "SYLLABLE_TRACE"}:
-            return self._trace(training_type, correct, variant)
         if training_type in {"CONSONANT_SOUND_CHOICE", "VOWEL_SOUND_CHOICE"}:
             options = [unit for unit in units if unit.unit_type == correct.unit_type]
-            return self._choice(
+            candidate = self._choice(
                 correct, correct.surface, options, lambda unit: unit.surface, units, variant
             )
-        if training_type == "CONSONANT_VOWEL_CLASSIFICATION":
-            choices = ["CONSONANT", "VOWEL"]
-            answer = "CONSONANT" if correct.unit_type == "CONSONANT" else "VOWEL"
-            if variant % 2:
-                choices.reverse()
-            audio_variants = (
-                correct.spoken_text,
-                f"{correct.spoken_text}, {correct.spoken_text}",
-                f"{correct.spoken_text} 소리",
-                f"{correct.spoken_text}를 들어요",
-                f"천천히 {correct.spoken_text}",
-            )
-            return {
-                "audioText": audio_variants[variant % len(audio_variants)],
-                "choices": choices,
-                "answerIndex": choices.index(answer),
-            }
+            if candidate is not None:
+                candidate["audioText"] = correct.surface
+            return candidate
         if training_type in {"SYLLABLE_INITIAL_CHOICE", "WORD_INITIAL_CHOICE"}:
             options = [unit for unit in units if unit.unit_type == "CONSONANT"]
             return self._choice(
@@ -320,7 +374,7 @@ class RuleBasedBasicTrainingGenerator:
                 "choices": [{"text": value, "imagePrompt": ""} for value in choices],
                 "answerIndex": choices.index(correct_word.surface),
             }
-        if training_type in {"FINAL_CONSONANT_CHOICE", "WORD_FINAL_SOUND_CHOICE"}:
+        if training_type == "WORD_FINAL_SOUND_CHOICE":
             options = [
                 unit
                 for unit in units
@@ -361,16 +415,6 @@ class RuleBasedBasicTrainingGenerator:
                 "choices": choices,
                 "answerIndex": choices.index(answer),
             }
-        if training_type == "PHONEME_BLEND":
-            parts = [correct.onset, correct.vowel, *([correct.coda] if correct.coda else [])]
-            distractor = self._different(_ONSETS if variant % 2 else _VOWELS, parts, variant)
-            cards = self._rotate([*parts, distractor], variant)
-            return {
-                "audioParts": parts,
-                "cards": cards,
-                "answerOrder": [cards.index(part) for part in parts],
-                "result": correct.surface,
-            }
         if training_type == "SYLLABLE_BLEND":
             parts = list(correct.surface)
             distractor = self._different(
@@ -396,28 +440,6 @@ class RuleBasedBasicTrainingGenerator:
                 "answerIndex": 2,
                 "result": result,
             }
-        if training_type == "SYLLABLE_DELETE":
-            index = variant % len(correct.surface)
-            result = correct.surface[:index] + correct.surface[index + 1 :]
-            return {
-                "source": correct.surface,
-                "targetAudioText": result,
-                "syllables": list(correct.surface),
-                "deleteIndex": index,
-                "result": result,
-            }
-        if training_type == "SYLLABLE_REPLACE":
-            source, result, index = _REPLACEMENTS[variant % len(_REPLACEMENTS)]
-            answer = result[index]
-            choices = self._rotate([answer, "가", "도"], variant)
-            return {
-                "source": source,
-                "targetAudioText": result,
-                "replaceIndex": index,
-                "choices": choices,
-                "answerIndex": choices.index(answer),
-                "result": result,
-            }
         if training_type == "WORD_READING":
             words = self._word_set(
                 correct,
@@ -427,17 +449,22 @@ class RuleBasedBasicTrainingGenerator:
             )
             return {"readingOrder": "SEQUENTIAL", "words": words}
         if training_type == "NONWORD_READING":
-            words = [unit.surface for unit in units if unit.unit_type == "WORD"]
-            first = correct.surface[0]
-            second = words[(variant + 1) % len(words)][-1]
-            nonword = first + second
-            while nonword in words:
-                second = words[(variant + len(nonword) + 3) % len(words)][-1]
-                nonword = first + second
+            words = list(dict.fromkeys(unit.surface for unit in eligible))
+            real_words = self._rotate(words, variant)
+            selected_real = [correct.surface]
+            for word in real_words:
+                if word != correct.surface:
+                    selected_real.append(word)
+                    break
+            nonwords = self._nonwords(words, correct.surface, variant, 2)
+            if len(selected_real) != 2 or len(nonwords) != 2:
+                return None
             return {
                 "words": [
-                    {"text": correct.surface, "isNonword": False},
-                    {"text": nonword, "isNonword": True},
+                    {"text": selected_real[0], "isNonword": False},
+                    {"text": nonwords[0], "isNonword": True},
+                    {"text": selected_real[1], "isNonword": False},
+                    {"text": nonwords[1], "isNonword": True},
                 ]
             }
         if training_type == "WORD_CHAIN_READING":
@@ -449,6 +476,583 @@ class RuleBasedBasicTrainingGenerator:
             )
             return {"words": words, "requiredOrder": "SEQUENTIAL"}
         return None
+
+    @staticmethod
+    def _classification(
+        request: TrainingCandidateRequest,
+        variant: int,
+        slot: int,
+    ) -> dict[str, object]:
+        targets = compatible_features(request.trainingType, request.targetFeatures)
+        target = next(
+            (
+                feature.featureCode.rsplit(".", 1)[-1]
+                for feature in targets
+                if feature.featureCode.rsplit(".", 1)[-1] in _ONSETS + _VOWELS
+            ),
+            "ㄱ",
+        )
+        target_pool = _ONSETS if target in _ONSETS else _VOWELS
+        contrast_pool = _VOWELS if target in _ONSETS else _ONSETS
+        if slot in {0, 3}:
+            glyph = target
+        elif slot % 2:
+            glyph = contrast_pool[(variant + slot) % len(contrast_pool)]
+        else:
+            alternatives = [value for value in target_pool if value != target]
+            glyph = alternatives[(variant + slot) % len(alternatives)]
+        answer = "CONSONANT" if glyph in _ONSETS else "VOWEL"
+        choices = ["CONSONANT", "VOWEL"]
+        if slot % 2:
+            choices.reverse()
+        return {
+            "audioText": glyph,
+            "choices": choices,
+            "answerIndex": choices.index(answer),
+        }
+
+    @staticmethod
+    def _consonant_sound_choice(
+        request: TrainingCandidateRequest,
+        variant: int,
+    ) -> dict[str, object]:
+        targets = compatible_features(request.trainingType, request.targetFeatures)
+        answer = next(
+            (
+                feature.featureCode.rsplit(".", 1)[-1]
+                for feature in targets
+                if feature.featureCode.rsplit(".", 1)[-1] in _ONSETS
+            ),
+            _ONSETS[variant % len(_ONSETS)],
+        )
+        distractors = [value for value in _ONSETS if value != answer]
+        choices = [
+            answer,
+            distractors[variant % len(distractors)],
+            distractors[(variant + 5) % len(distractors)],
+        ]
+        choices = RuleBasedBasicTrainingGenerator._rotate(choices, variant)
+        return {
+            "audioText": answer,
+            "choices": choices,
+            "answerIndex": choices.index(answer),
+        }
+
+    def _trace_candidate(
+        self,
+        request: TrainingCandidateRequest,
+        units: tuple[LearningUnit, ...],
+        training_type: str,
+        variant: int,
+        slot: int,
+    ) -> dict[str, object]:
+        compatible = compatible_features(training_type, request.targetFeatures)
+        trace_request = request.model_copy(update={"targetFeatures": compatible})
+        eligible = self._eligible(trace_request, units, training_type)
+        if not eligible:
+            eligible = self._eligible(
+                trace_request.model_copy(update={"difficulty": 5}),
+                units,
+                training_type,
+            )
+        if not eligible:
+            unit_type = {
+                "VOWEL_TRACE": "VOWEL",
+                "CONSONANT_TRACE": "CONSONANT",
+                "SYLLABLE_TRACE": "SYLLABLE",
+            }[training_type]
+            eligible = [
+                unit
+                for unit in units
+                if unit.unit_type == unit_type and unit.trace_asset_key is not None
+            ]
+        unit = eligible[slot % len(eligible)]
+        return self._trace(training_type, unit, slot)
+
+    @classmethod
+    def _syllable_initial_choice(
+        cls,
+        request: TrainingCandidateRequest,
+        variant: int,
+        slot: int,
+    ) -> dict[str, object]:
+        targets = compatible_features(request.trainingType, request.targetFeatures)
+        onset = next(
+            (
+                feature.featureCode.rsplit(".", 1)[-1]
+                for feature in targets
+                if feature.featureCode.rsplit(".", 1)[-1] in _ONSETS
+            ),
+            _ONSETS[(variant + slot) % len(_ONSETS)],
+        )
+        vowel = ("ㅏ", "ㅓ", "ㅗ", "ㅜ", "ㅣ")[(variant + slot) % 5]
+        audio_text = cls._compose(onset, vowel)
+        choices = cls._option_values(onset, _ONSETS, variant + slot)
+        return {
+            "audioText": audio_text,
+            "choices": choices,
+            "answerIndex": choices.index(onset),
+        }
+
+    @classmethod
+    def _final_consonant_choice(
+        cls,
+        request: TrainingCandidateRequest,
+        variant: int,
+        slot: int,
+    ) -> dict[str, object]:
+        targets = compatible_features(request.trainingType, request.targetFeatures)
+        coda = next(
+            (
+                feature.featureCode.rsplit(".", 1)[-1]
+                for feature in targets
+                if feature.featureCode.rsplit(".", 1)[-1] in _SIMPLE_CODAS
+            ),
+            _SIMPLE_CODAS[slot % len(_SIMPLE_CODAS)],
+        )
+        onsets = ("ㄱ", "ㄴ", "ㄷ", "ㅁ", "ㅂ")
+        vowels = ("ㅏ", "ㅓ", "ㅗ", "ㅜ", "ㅣ")
+        syllable = cls._compose(onsets[slot % len(onsets)], vowels[slot % len(vowels)], coda)
+        choice_pool = (coda, *[value for value in _SIMPLE_CODAS if value != coda])
+        choices = cls._option_values(coda, choice_pool, variant + slot)
+        return {
+            "audioText": syllable,
+            "choices": choices,
+            "answerIndex": choices.index(coda),
+        }
+
+    @classmethod
+    def _word_final_sound_choice(
+        cls,
+        request: TrainingCandidateRequest,
+        variant: int,
+        slot: int,
+    ) -> dict[str, object]:
+        targets = compatible_features(request.trainingType, request.targetFeatures)
+        coda = next(
+            (
+                feature.featureCode.rsplit(".", 1)[-1]
+                for feature in targets
+                if feature.featureCode.rsplit(".", 1)[-1] in _SIMPLE_CODAS
+            ),
+            _SIMPLE_CODAS[slot % len(_SIMPLE_CODAS)],
+        )
+        palette = [
+            word
+            for words in request.recommendedWordsByFeature.values()
+            for word in words
+        ]
+        palette.extend(request.recommendedWords)
+        matching_words = [
+            word
+            for word in dict.fromkeys(palette)
+            if re.fullmatch(r"[가-힣]+", word)
+            and decompose_text(word)[-1].coda == coda
+        ]
+        if matching_words:
+            word = matching_words[(variant + slot) % len(matching_words)]
+        else:
+            onset = ("ㄱ", "ㄴ", "ㅁ", "ㅂ", "ㅅ")[(variant + slot) % 5]
+            vowel = ("ㅏ", "ㅓ", "ㅗ", "ㅜ", "ㅣ")[(variant + slot) % 5]
+            word = cls._compose(onset, vowel, coda)
+        choices = cls._option_values(coda, _SIMPLE_CODAS, variant + slot)
+        return {
+            "audioText": word,
+            "choices": choices,
+            "answerIndex": choices.index(coda),
+        }
+
+    @classmethod
+    def _final_consonant_comparison(
+        cls,
+        request: TrainingCandidateRequest,
+        variant: int,
+        slot: int,
+    ) -> dict[str, object]:
+        targets = compatible_features(request.trainingType, request.targetFeatures)
+        coda = next(
+            (
+                feature.featureCode.rsplit(".", 1)[-1]
+                for feature in targets
+                if feature.featureCode.rsplit(".", 1)[-1] in _SIMPLE_CODAS
+            ),
+            _SIMPLE_CODAS[slot % len(_SIMPLE_CODAS)],
+        )
+        onset = ("ㄱ", "ㄴ", "ㅁ", "ㅂ", "ㅅ")[(variant + slot) % 5]
+        vowel = ("ㅏ", "ㅓ", "ㅗ", "ㅜ", "ㅣ")[(variant + slot) % 5]
+        codas = cls._option_values(coda, _SIMPLE_CODAS, variant + slot)
+        choices = [cls._compose(onset, vowel, value) for value in codas]
+        answer = cls._compose(onset, vowel, coda)
+        return {
+            "audioText": answer,
+            "choices": choices,
+            "answerIndex": choices.index(answer),
+        }
+
+    @classmethod
+    def _similar_sound_choice(
+        cls,
+        request: TrainingCandidateRequest,
+        variant: int,
+        slot: int,
+    ) -> dict[str, object]:
+        targets = compatible_features(request.trainingType, request.targetFeatures)
+        requested = next(
+            (
+                feature.featureCode.rsplit(".", 1)[-1]
+                for feature in targets
+                if any(
+                    feature.featureCode.rsplit(".", 1)[-1] in pair[1:]
+                    for pair in _SIMILAR_GROUPS
+                )
+            ),
+            None,
+        )
+        matching = [pair for pair in _SIMILAR_GROUPS if requested in pair[1:]]
+        groups = matching or list(_SIMILAR_GROUPS)
+        group, first, second = groups[(variant + slot) % len(groups)]
+        answer = requested if requested in {first, second} else (first, second)[slot % 2]
+        choices = [first, second]
+        if variant % 2:
+            choices.reverse()
+        vowel = ("ㅏ", "ㅓ", "ㅗ", "ㅜ", "ㅣ")[(variant + slot) % 5]
+        return {
+            "soundGroup": group,
+            "audioText": cls._compose(answer, vowel),
+            "choices": choices,
+            "answerIndex": choices.index(answer),
+        }
+
+    def _syllable_blend(
+        self,
+        request: TrainingCandidateRequest,
+        units: tuple[LearningUnit, ...],
+        variant: int,
+        slot: int,
+    ) -> dict[str, object]:
+        palette = [
+            word
+            for words in request.recommendedWordsByFeature.values()
+            for word in words
+        ]
+        palette.extend(request.recommendedWords)
+
+        def valid(word: str) -> bool:
+            return re.fullmatch(r"[가-힣]{2,4}", word) is not None and len(set(word)) == len(word)
+
+        preferred_words = list(dict.fromkeys(word for word in palette if valid(word)))
+        fallback_words = list(
+            dict.fromkeys(
+                unit.surface
+                for unit in units
+                if unit.unit_type == "WORD" and valid(unit.surface)
+            )
+        )
+        words = preferred_words or fallback_words
+        word = words[(variant + slot) % len(words)]
+        parts = list(word)
+        distractors = (
+            "가", "나", "다", "라", "마", "바", "사", "아", "자", "차", "카", "타", "파", "하"
+        )
+        distractor = next(
+            value for value in self._rotate(distractors, variant) if value not in parts
+        )
+        cards = self._rotate([*parts, distractor], variant + slot)
+        return {
+            "audioParts": parts,
+            "cards": cards,
+            "answerOrder": [cards.index(part) for part in parts],
+            "result": word,
+        }
+
+    def _basic_syllable_build(
+        self,
+        request: TrainingCandidateRequest,
+        variant: int,
+    ) -> dict[str, object]:
+        targets = compatible_features(request.trainingType, request.targetFeatures)
+        onset = next(
+            (
+                feature.featureCode.rsplit(".", 1)[-1]
+                for feature in targets
+                if feature.featureCode.rsplit(".", 1)[-1] in _ONSETS
+            ),
+            _ONSETS[variant % len(_ONSETS)],
+        )
+        vowel = next(
+            (
+                feature.featureCode.rsplit(".", 1)[-1]
+                for feature in targets
+                if feature.featureCode.rsplit(".", 1)[-1] in _VOWELS
+            ),
+            ("ㅏ", "ㅓ", "ㅗ", "ㅜ", "ㅣ")[variant % 5],
+        )
+        return self._syllable_build_parts(
+            "BASIC_SYLLABLE_BUILD", onset, vowel, "", variant
+        )
+
+    def _double_final_build(
+        self,
+        request: TrainingCandidateRequest,
+        variant: int,
+    ) -> dict[str, object]:
+        targets = compatible_features(request.trainingType, request.targetFeatures)
+        coda = next(
+            (
+                feature.featureCode.rsplit(".", 1)[-1]
+                for feature in targets
+                if feature.featureCode.rsplit(".", 1)[-1] in _COMPLEX_CODAS
+            ),
+            _COMPLEX_CODAS[variant % len(_COMPLEX_CODAS)],
+        )
+        onset = ("ㄱ", "ㄴ", "ㅁ", "ㅂ", "ㅅ")[variant % 5]
+        vowel = ("ㅏ", "ㅓ", "ㅗ", "ㅜ", "ㅣ")[variant % 5]
+        return self._syllable_build_parts(
+            "DOUBLE_FINAL_BUILD", onset, vowel, coda, variant
+        )
+
+    @classmethod
+    def _final_consonant_delete(
+        cls,
+        request: TrainingCandidateRequest,
+        variant: int,
+        slot: int,
+    ) -> dict[str, object]:
+        targets = compatible_features(request.trainingType, request.targetFeatures)
+        coda = next(
+            (
+                feature.featureCode.rsplit(".", 1)[-1]
+                for feature in targets
+                if feature.featureCode.rsplit(".", 1)[-1] in _SIMPLE_CODAS
+            ),
+            _SIMPLE_CODAS[slot % len(_SIMPLE_CODAS)],
+        )
+        onset = ("ㄱ", "ㄴ", "ㅁ", "ㅂ", "ㅅ")[(variant + slot) % 5]
+        vowel = ("ㅏ", "ㅓ", "ㅗ", "ㅜ", "ㅣ")[(variant + slot) % 5]
+        source = cls._compose(onset, vowel, coda)
+        result = cls._compose(onset, vowel)
+        return {
+            "source": source,
+            "targetAudioText": result,
+            "removableUnits": [onset, vowel, coda],
+            "answerIndex": 2,
+            "result": result,
+        }
+
+    @staticmethod
+    def _fill_blank(
+        request: TrainingCandidateRequest,
+        variant: int,
+        slot: int,
+    ) -> dict[str, object]:
+        del request
+        sentence, answer, distractors = _FILL_BLANK_ITEMS[slot % len(_FILL_BLANK_ITEMS)]
+        choices = RuleBasedBasicTrainingGenerator._rotate(
+            [answer, *distractors], variant + slot
+        )
+        return {
+            "sentence": sentence,
+            "inputType": "CHOICE",
+            "choices": choices,
+            "answerIndex": choices.index(answer),
+            "acceptedAnswers": [answer],
+            "completedSentence": sentence.replace("{{blank}}", answer),
+        }
+
+    @classmethod
+    def _phoneme_blend(
+        cls,
+        request: TrainingCandidateRequest,
+        variant: int,
+        slot: int,
+    ) -> dict[str, object]:
+        targets = [
+            feature.featureCode
+            for feature in compatible_features(request.trainingType, request.targetFeatures)
+        ]
+        onset = _ONSETS[(variant + slot) % len(_ONSETS)]
+        vowel = _VOWELS[(variant + slot * 3) % len(_VOWELS)]
+        coda: str | None = None
+        for target in targets:
+            if target.startswith("GRAPHEME.ONSET."):
+                onset = target.rsplit(".", 1)[-1]
+            elif target.startswith("GRAPHEME.VOWEL."):
+                vowel = target.rsplit(".", 1)[-1]
+            elif target.startswith("GRAPHEME.CODA."):
+                coda = target.rsplit(".", 1)[-1]
+            elif target == "SYLLABLE.TENSE_ONSET":
+                onset = _TENSE_ONSETS[(variant + slot) % len(_TENSE_ONSETS)]
+            elif target == "SYLLABLE.COMPLEX_VOWEL":
+                vowel = _COMPOUND_VOWELS[(variant + slot) % len(_COMPOUND_VOWELS)]
+            elif target == "SYLLABLE.COMPLEX_CODA":
+                coda = _COMPLEX_CODAS[(variant + slot) % len(_COMPLEX_CODAS)]
+            elif target == "SYLLABLE.CVC":
+                coda = _SIMPLE_CODAS[(variant + slot) % len(_SIMPLE_CODAS)]
+            elif target == "SYLLABLE.CV":
+                coda = None
+        if coda == onset:
+            onset = next(value for value in _ONSETS if value != coda)
+        result = cls._compose(onset, vowel, coda) if coda else cls._compose(onset, vowel)
+        parts = [onset, vowel, *([coda] if coda else [])]
+        distractor_pool = _VOWELS if slot % 2 == 0 else _ONSETS
+        distractor = cls._different(distractor_pool, parts, variant + slot)
+        cards = cls._rotate([*parts, distractor], variant + slot)
+        unused_indices = list(range(len(cards)))
+        answer_order: list[int] = []
+        for part in parts:
+            index = next(index for index in unused_indices if cards[index] == part)
+            answer_order.append(index)
+            unused_indices.remove(index)
+        return {
+            "audioParts": parts,
+            "cards": cards,
+            "answerOrder": answer_order,
+            "result": result,
+        }
+
+    @classmethod
+    def _syllable_delete(
+        cls,
+        request: TrainingCandidateRequest,
+        units: tuple[LearningUnit, ...],
+        variant: int,
+        slot: int,
+    ) -> dict[str, object]:
+        target_length = cls._requested_word_length(request)
+        preferred_length = max(target_length or 2, 2)
+        words = cls._mechanical_word_pool(request, units, preferred_length)
+        source = words[(variant + slot) % len(words)]
+        delete_index = (variant + slot) % len(source)
+        result = source[:delete_index] + source[delete_index + 1 :]
+        return {
+            "source": source,
+            "targetAudioText": result,
+            "syllables": list(source),
+            "deleteIndex": delete_index,
+            "result": result,
+        }
+
+    @classmethod
+    def _syllable_replace(
+        cls,
+        request: TrainingCandidateRequest,
+        units: tuple[LearningUnit, ...],
+        variant: int,
+        slot: int,
+    ) -> dict[str, object]:
+        target_length = cls._requested_word_length(request)
+        words = cls._mechanical_word_pool(request, units, max(target_length or 2, 2))
+        source = words[(variant + slot) % len(words)]
+        replace_index = (variant + slot) % len(source)
+        replacements = [
+            value
+            for value in cls._rotate(_REPLACEMENT_SYLLABLES, variant + slot)
+            if value != source[replace_index]
+        ]
+        answer = replacements[0]
+        result = source[:replace_index] + answer + source[replace_index + 1 :]
+        choices = cls._rotate([answer, replacements[1], replacements[2]], variant + slot)
+        return {
+            "source": source,
+            "targetAudioText": result,
+            "replaceIndex": replace_index,
+            "choices": choices,
+            "answerIndex": choices.index(answer),
+            "result": result,
+        }
+
+    @staticmethod
+    def _requested_word_length(request: TrainingCandidateRequest) -> int | None:
+        for feature in request.targetFeatures:
+            match = re.fullmatch(r"WORD\.SYLLABLE_COUNT\.([1-5])", feature.featureCode)
+            if match:
+                return int(match.group(1))
+        return None
+
+    @classmethod
+    def _mechanical_word_pool(
+        cls,
+        request: TrainingCandidateRequest,
+        units: tuple[LearningUnit, ...],
+        preferred_length: int,
+    ) -> list[str]:
+        target_codes = [feature.featureCode for feature in request.targetFeatures]
+        focused_recommended = [
+            word.strip()
+            for code in target_codes
+            for word in request.recommendedWordsByFeature.get(code, [])
+            if re.fullmatch(r"[가-힣]+", word.strip())
+        ]
+        recommended = [
+            word.strip()
+            for words in request.recommendedWordsByFeature.values()
+            for word in words
+            if re.fullmatch(r"[가-힣]+", word.strip())
+        ]
+        bank_words = [
+            unit.surface
+            for unit in units
+            if unit.unit_type == "WORD"
+            and unit.difficulty <= request.difficulty
+            and re.fullmatch(r"[가-힣]+", unit.surface)
+        ]
+        focused_preferred = [
+            word
+            for word in dict.fromkeys(focused_recommended)
+            if len(word) == preferred_length
+        ]
+        if focused_preferred:
+            return focused_preferred
+        target_matched = [
+            unit.surface
+            for unit in units
+            if unit.unit_type == "WORD"
+            and len(unit.surface) == preferred_length
+            and any(unit.matches_feature(code) for code in target_codes)
+        ]
+        if target_matched:
+            return list(dict.fromkeys(target_matched))
+        if any(code == "SYLLABLE.COMPLEX_VOWEL" for code in target_codes):
+            compound_words = [
+                word
+                for word in [*recommended, *bank_words, *_MECHANICAL_WORDS]
+                if len(word) == preferred_length
+                and any(
+                    syllable.nucleus in _COMPOUND_VOWELS
+                    for syllable in decompose_text(word)
+                )
+            ]
+            if compound_words:
+                return list(dict.fromkeys(compound_words))
+        recommended_preferred = [
+            word for word in dict.fromkeys(recommended) if len(word) == preferred_length
+        ]
+        if recommended_preferred:
+            return recommended_preferred
+        all_words = list(dict.fromkeys([*recommended, *bank_words, *_MECHANICAL_WORDS]))
+        preferred = [word for word in all_words if len(word) == preferred_length]
+        usable = preferred or [word for word in all_words if len(word) >= 2]
+        return usable or list(_MECHANICAL_WORDS)
+
+    @staticmethod
+    def _nonwords(
+        known_words: list[str],
+        target_word: str,
+        variant: int,
+        count: int,
+    ) -> list[str]:
+        known = set(known_words)
+        beginnings = [target_word[0], *[word[0] for word in known_words if word]]
+        endings = ("누", "보", "루", "머", "디", "푸", "쏘", "깨")
+        candidates: list[str] = []
+        for beginning in RuleBasedBasicTrainingGenerator._rotate(beginnings, variant):
+            for ending in RuleBasedBasicTrainingGenerator._rotate(endings, variant):
+                candidate = beginning + ending
+                if candidate not in known and candidate not in candidates:
+                    candidates.append(candidate)
+                if len(candidates) == count:
+                    return candidates
+        return candidates
 
     def _word_palette_candidate(
         self,
@@ -670,14 +1274,12 @@ class RuleBasedBasicTrainingGenerator:
         unit: LearningUnit,
         variant: int,
     ) -> dict[str, object]:
-        sound_variants = (
-            unit.spoken_text,
-            f"{unit.spoken_text}, {unit.spoken_text}",
-            f"{unit.spoken_text} 소리",
-            f"{unit.spoken_text}를 따라 써요",
-            f"천천히 {unit.spoken_text}",
+        sound_text = unit.surface
+        trace_asset_key = (
+            unit.trace_asset_key
+            if variant == 0
+            else f"{unit.trace_asset_key}_v{(variant % 5) + 1}"
         )
-        sound_text = sound_variants[variant % len(sound_variants)]
         if training_type == "VOWEL_TRACE":
             kind = (
                 "COMPLEX" if "GRAPHEME.VOWEL.COMPOUND" in ".".join(unit.feature_codes) else "BASIC"
@@ -686,7 +1288,7 @@ class RuleBasedBasicTrainingGenerator:
                 "vowelType": kind,
                 "target": unit.surface,
                 "soundText": sound_text,
-                "traceAssetKey": unit.trace_asset_key,
+                "traceAssetKey": trace_asset_key,
             }
         if training_type == "CONSONANT_TRACE":
             kind = (
@@ -700,7 +1302,7 @@ class RuleBasedBasicTrainingGenerator:
                 "consonantType": kind,
                 "target": unit.surface,
                 "soundText": sound_text,
-                "traceAssetKey": unit.trace_asset_key,
+                "traceAssetKey": trace_asset_key,
             }
         kind = "WITH_FINAL" if unit.coda else "WITHOUT_FINAL"
         if unit.coda in COMPLEX_CODA_PARTS:
@@ -709,7 +1311,7 @@ class RuleBasedBasicTrainingGenerator:
             "syllableType": kind,
             "target": unit.surface,
             "soundText": sound_text,
-            "traceAssetKey": unit.trace_asset_key,
+            "traceAssetKey": trace_asset_key,
         }
 
     def _choice(
@@ -766,20 +1368,87 @@ class RuleBasedBasicTrainingGenerator:
     def _syllable_build(
         self, training_type: str, unit: LearningUnit, variant: int
     ) -> dict[str, object]:
-        initial = unit.onset or "ㅇ"
-        medial = unit.vowel or "ㅏ"
+        return self._syllable_build_parts(
+            training_type,
+            unit.onset or "ㅇ",
+            unit.vowel or "ㅏ",
+            unit.coda or "",
+            variant,
+        )
+
+    def _final_syllable_build(
+        self,
+        request: TrainingCandidateRequest,
+        units: tuple[LearningUnit, ...],
+        variant: int,
+    ) -> dict[str, object]:
+        eligible = self._eligible(request, units, "FINAL_SYLLABLE_BUILD")
+        if eligible:
+            return self._syllable_build(
+                "FINAL_SYLLABLE_BUILD",
+                eligible[variant % len(eligible)],
+                variant,
+            )
+
+        target_codes = [feature.featureCode for feature in request.targetFeatures]
+        onset = next(
+            (
+                code.rsplit(".", 1)[-1]
+                for code in target_codes
+                if code.startswith("GRAPHEME.ONSET.")
+                and code.rsplit(".", 1)[-1] in _ONSETS
+            ),
+            _ONSETS[variant % len(_ONSETS)],
+        )
+        vowel = next(
+            (
+                code.rsplit(".", 1)[-1]
+                for code in target_codes
+                if code.startswith("GRAPHEME.VOWEL.")
+                and code.rsplit(".", 1)[-1] in _VOWELS
+            ),
+            ("ㅏ", "ㅓ", "ㅗ", "ㅜ", "ㅣ")[variant % 5],
+        )
+        simple_codas = tuple(
+            coda for coda in _CODAS[1:] if coda not in _COMPLEX_CODAS
+        )
+        coda = next(
+            (
+                code.rsplit(".", 1)[-1]
+                for code in target_codes
+                if code.startswith("GRAPHEME.CODA.SIMPLE.")
+                and code.rsplit(".", 1)[-1] in simple_codas
+            ),
+            simple_codas[(variant // 5) % len(simple_codas)],
+        )
+        return self._syllable_build_parts(
+            "FINAL_SYLLABLE_BUILD",
+            onset,
+            vowel,
+            coda,
+            variant,
+        )
+
+    def _syllable_build_parts(
+        self,
+        training_type: str,
+        initial: str,
+        medial: str,
+        final: str,
+        variant: int,
+    ) -> dict[str, object]:
         initial_choices = self._option_values(initial, _ONSETS, variant)
         medial_choices = self._option_values(medial, _VOWELS, variant + 1)
+        surface = self._compose(initial, medial, final)
         result: dict[str, object] = {
-            "targetAudioText": unit.surface,
+            "targetAudioText": surface,
             "initialChoices": initial_choices,
             "medialChoices": medial_choices,
             "initialAnswerIndex": initial_choices.index(initial),
             "medialAnswerIndex": medial_choices.index(medial),
-            "result": unit.surface,
+            "result": surface,
         }
         if training_type != "BASIC_SYLLABLE_BUILD":
-            final = unit.coda or "ㄱ"
             final_choices = self._option_values(final, _CODAS[1:], variant + 2)
             result["finalChoices"] = final_choices
             result["finalAnswerIndex"] = final_choices.index(final)
