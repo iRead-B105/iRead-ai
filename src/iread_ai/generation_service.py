@@ -1,4 +1,8 @@
-"""Validated GMS generation with deterministic child-safe fallback content."""
+"""Validated LLM training generation with a rule-db item bank and mock-mode curated content.
+
+Real-provider failures propagate as GenerationProviderError so endpoints can
+answer 502/503 instead of silently substituting curated items.
+"""
 
 from __future__ import annotations
 
@@ -6,7 +10,6 @@ import json
 import logging
 import re
 import sqlite3
-from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -154,7 +157,6 @@ _HYBRID_TYPE_GUIDES = {
 class ProviderResult:
     value: Any
     provider: str
-    fallback: bool
 
 
 def enrich_training_request_with_lexicon(
@@ -327,21 +329,20 @@ def generate_training(
             ProviderResult(
                 _validated_training_response(request, rule_based.model_dump(mode="json")),
                 "rule-db",
-                False,
             ),
         )
     if provider is None:
-        fallback = _validated_training_response(
+        # Mock generation mode: the curated item bank is the intended provider.
+        curated = _validated_training_response(
             request,
             mock_training_candidates(request).model_dump(mode="json"),
         )
-        _validate_registered_vocabulary(request, fallback, lexicon_service)
+        _validate_registered_vocabulary(request, curated, lexicon_service)
         return _with_generation_metadata(
             request,
             ProviderResult(
-                fallback,
+                curated,
                 "curated-fallback",
-                True,
             ),
         )
 
@@ -381,12 +382,27 @@ def generate_training(
             feedback = f"{type(exception).__name__}: {exception}"
             return generate(feedback)
 
-    result = _with_fallback(
-        generate_with_one_validation_retry,
-        lambda: _validated_fallback_response(request, lexicon_service),
-        f"{getattr(provider, 'provider_name', 'gms')}:{provider.model}",
+    # GenerationProviderError from the provider propagates unchanged; local
+    # validation failures are wrapped so callers can answer 502/503 without
+    # exposing generated content.
+    try:
+        response = generate_with_one_validation_retry()
+    except (ValidationError, TypeError, ValueError) as exception:
+        logger.warning(
+            "Training generation failed local validation after one retry: %s",
+            type(exception).__name__,
+        )
+        raise GenerationProviderError(
+            "training generation output failed local validation after one retry",
+            retryable=True,
+        ) from exception
+    return _with_generation_metadata(
+        request,
+        ProviderResult(
+            response,
+            f"{getattr(provider, 'provider_name', 'gms')}:{provider.model}",
+        ),
     )
-    return _with_generation_metadata(request, result)
 
 
 def _validated_training_response(
@@ -665,34 +681,6 @@ def _schema_from_template(value: Any) -> dict[str, Any]:
     return {"type": "string"}
 
 
-def _with_fallback(
-    generate: Callable[[], Any],
-    fallback: Callable[[], Any],
-    provider_name: str,
-) -> ProviderResult:
-    try:
-        return ProviderResult(generate(), provider_name, False)
-    except (GenerationProviderError, ValidationError, TypeError, ValueError) as exception:
-        logger.warning(
-            "Training generation provider failed; using safe fallback: %s: %s",
-            type(exception).__name__,
-            exception,
-        )
-        return ProviderResult(fallback(), "curated-fallback", True)
-
-
-def _validated_fallback_response(
-    request: TrainingCandidateRequest,
-    lexicon_service: LexiconPaletteService | None,
-) -> TrainingCandidateResponse:
-    response = _validated_training_response(
-        request,
-        mock_training_candidates(request).model_dump(mode="json"),
-    )
-    _validate_registered_vocabulary(request, response, lexicon_service)
-    return response
-
-
 def _with_generation_metadata(
     request: TrainingCandidateRequest,
     result: ProviderResult,
@@ -726,7 +714,6 @@ def _with_generation_metadata(
     return ProviderResult(
         result.value.model_copy(update={"generationMetadata": metadata}),
         result.provider,
-        result.fallback,
     )
 
 

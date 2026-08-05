@@ -32,6 +32,9 @@ def configured_internal_key(monkeypatch) -> None:
         "settings",
         configured,
     )
+    # Contract tests must stay deterministic: never call a live text provider
+    # even when the developer's .env configures one.
+    monkeypatch.setattr(app_module, "text_provider", None)
     monkeypatch.setattr(app_module, "legacy_image_generator", None)
     monkeypatch.setattr(app_module.app.state, "settings", configured)
     monkeypatch.setattr(

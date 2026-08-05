@@ -52,7 +52,7 @@ from .pronunciation import (
     GMSPronunciationProvider,
     PronunciationProviderError,
 )
-from .providers import GMSTextProvider
+from .providers import GenerationProviderError, GMSTextProvider
 from .speech import (
     AzureSpeechProvider,
     DeterministicSpeechProvider,
@@ -187,22 +187,26 @@ def training_candidates(
 ) -> TrainingCandidateResponse:
     _require_api_key(x_api_key)
     key = _validate_idempotency(request.requestId, idempotency_key)
-    result, replayed = _execute_idempotent(
-        scope="training-candidates",
-        key=key,
-        payload=request.model_dump(mode="json"),
-        action=lambda: generate_training(
-            enrich_training_request_with_lexicon(
-                request,
-                http_request.app.state.lexicon_service,
+    try:
+        result, replayed = _execute_idempotent(
+            scope="training-candidates",
+            key=key,
+            payload=request.model_dump(mode="json"),
+            action=lambda: generate_training(
+                enrich_training_request_with_lexicon(
+                    request,
+                    http_request.app.state.lexicon_service,
+                ),
+                text_provider,
+                lexicon_service=http_request.app.state.lexicon_service,
             ),
-            text_provider,
-            lexicon_service=http_request.app.state.lexicon_service,
-        ),
-    )
+        )
+    except GenerationProviderError as exception:
+        raise HTTPException(
+            status_code=503 if exception.retryable else 502,
+            detail=str(exception),
+        ) from exception
     response.headers["X-AI-Provider"] = result.provider
-    if result.fallback:
-        response.headers["X-AI-Fallback"] = "curated-fallback"
     if replayed:
         response.headers["Idempotent-Replayed"] = "true"
     return result.value
@@ -222,17 +226,23 @@ def training_set_generate(
 ) -> TrainingSetResponse:
     _require_api_key(x_api_key)
     key = _validate_idempotency(request.requestId, idempotency_key)
-    result, replayed = _execute_idempotent(
-        scope="training-set-generate",
-        key=key,
-        payload=request.model_dump(mode="json"),
-        action=lambda: generate_training_set(
-            request,
-            text_provider,
-            lexicon_service=app.state.lexicon_service,
-            analyzer=app.state.story_chapter_analyzer,
-        ),
-    )
+    try:
+        result, replayed = _execute_idempotent(
+            scope="training-set-generate",
+            key=key,
+            payload=request.model_dump(mode="json"),
+            action=lambda: generate_training_set(
+                request,
+                text_provider,
+                lexicon_service=app.state.lexicon_service,
+                analyzer=app.state.story_chapter_analyzer,
+            ),
+        )
+    except GenerationProviderError as exception:
+        raise HTTPException(
+            status_code=503 if exception.retryable else 502,
+            detail=str(exception),
+        ) from exception
     response.headers["X-AI-Provider"] = "mixed:" + ",".join(
         sorted(set(result.providers))
     )
@@ -283,17 +293,23 @@ def training_activity_generate(
 ) -> TrainingActivityResponse:
     _require_api_key(x_api_key)
     key = _validate_idempotency(request.requestId, idempotency_key)
-    result, replayed = _execute_idempotent(
-        scope="training-activity-generate",
-        key=key,
-        payload=request.model_dump(mode="json"),
-        action=lambda: generate_training_activity(
-            request,
-            text_provider,
-            lexicon_service=app.state.lexicon_service,
-            analyzer=app.state.story_chapter_analyzer,
-        ),
-    )
+    try:
+        result, replayed = _execute_idempotent(
+            scope="training-activity-generate",
+            key=key,
+            payload=request.model_dump(mode="json"),
+            action=lambda: generate_training_activity(
+                request,
+                text_provider,
+                lexicon_service=app.state.lexicon_service,
+                analyzer=app.state.story_chapter_analyzer,
+            ),
+        )
+    except GenerationProviderError as exception:
+        raise HTTPException(
+            status_code=503 if exception.retryable else 502,
+            detail=str(exception),
+        ) from exception
     response.headers["X-AI-Provider"] = result.activity.provider
     if replayed:
         response.headers["Idempotent-Replayed"] = "true"

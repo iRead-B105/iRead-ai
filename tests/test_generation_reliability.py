@@ -45,12 +45,15 @@ def _training_request(request_id: str = "reliable-training") -> dict:
 class FailingTextProvider:
     model = "gpt-5.4-mini"
 
+    def __init__(self, *, retryable: bool = True) -> None:
+        self._retryable = retryable
+
     def generate_json(self, **_: object) -> dict:
-        raise GenerationProviderError("provider unavailable", retryable=True)
+        raise GenerationProviderError("provider unavailable", retryable=self._retryable)
 
 
-def test_training_provider_failure_returns_safe_fallback(monkeypatch) -> None:
-    monkeypatch.setattr(app_module, "text_provider", FailingTextProvider())
+def test_training_provider_retryable_failure_returns_503(monkeypatch) -> None:
+    monkeypatch.setattr(app_module, "text_provider", FailingTextProvider(retryable=True))
     monkeypatch.setattr(
         app_module,
         "idempotency_store",
@@ -60,14 +63,60 @@ def test_training_provider_failure_returns_safe_fallback(monkeypatch) -> None:
 
     response = client.post(
         "/api/v1/trainings/candidates",
-        headers=_headers("fallback-training"),
-        json=_training_request("fallback-training"),
+        headers=_headers("failing-training"),
+        json=_training_request("failing-training"),
     )
 
-    assert response.status_code == 200
-    assert response.headers["X-AI-Provider"] == "curated-fallback"
-    assert response.headers["X-AI-Fallback"] == "curated-fallback"
-    assert len(response.json()["data"]) == 5
+    assert response.status_code == 503
+    assert "X-AI-Fallback" not in response.headers
+    assert response.json()["detail"] == "provider unavailable"
+
+
+def test_training_provider_permanent_failure_returns_502(monkeypatch) -> None:
+    monkeypatch.setattr(app_module, "text_provider", FailingTextProvider(retryable=False))
+    monkeypatch.setattr(
+        app_module,
+        "idempotency_store",
+        MemoryIdempotencyStore(ttl_seconds=60),
+    )
+    client = TestClient(app_module.app)
+
+    response = client.post(
+        "/api/v1/trainings/candidates",
+        headers=_headers("permanent-failure-training"),
+        json=_training_request("permanent-failure-training"),
+    )
+
+    assert response.status_code == 502
+    assert "X-AI-Fallback" not in response.headers
+
+
+def test_training_provider_failure_releases_idempotency_key(monkeypatch) -> None:
+    monkeypatch.setattr(app_module, "text_provider", FailingTextProvider(retryable=True))
+    monkeypatch.setattr(
+        app_module,
+        "idempotency_store",
+        MemoryIdempotencyStore(ttl_seconds=60),
+    )
+    client = TestClient(app_module.app)
+
+    failed = client.post(
+        "/api/v1/trainings/candidates",
+        headers=_headers("retryable-training"),
+        json=_training_request("retryable-training"),
+    )
+    assert failed.status_code == 503
+
+    monkeypatch.setattr(app_module, "text_provider", None)
+    recovered = client.post(
+        "/api/v1/trainings/candidates",
+        headers=_headers("retryable-training"),
+        json=_training_request("retryable-training"),
+    )
+
+    assert recovered.status_code == 200
+    assert recovered.headers["X-AI-Provider"] == "curated-fallback"
+    assert len(recovered.json()["data"]) == 5
 
 
 def test_training_idempotent_replay_and_body_conflict(monkeypatch) -> None:
