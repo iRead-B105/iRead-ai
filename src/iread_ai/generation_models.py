@@ -20,7 +20,7 @@ class TrainingCandidateRequest(ContractModel):
     requestId: str = Field(min_length=1, max_length=128)
     schemaVersion: int = Field(ge=1)
     trainingType: str = Field(min_length=1)
-    count: int = Field(default=5, ge=5, le=5)
+    count: int = Field(default=5, ge=1, le=9)
     difficulty: int = Field(ge=1, le=5)
     targetFeatures: list[TrainingTargetFeature] = Field(default_factory=list, max_length=2)
     excludedFeatures: list[str] = Field(default_factory=list)
