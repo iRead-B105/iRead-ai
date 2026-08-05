@@ -5,6 +5,39 @@ from pydantic import ValidationError
 
 from iread_ai.config import Settings
 
+# These tests construct Settings with _env_file=None and assume a clean
+# process environment. The Streamlit review apps call load_dotenv() at import
+# time (they are imported by tests/ui during collection), which copies the
+# developer's .env into os.environ, so provider variables must be stripped
+# here to keep these unit tests hermetic.
+_PROVIDER_ENV_VARS = (
+    "APP_ENV",
+    "AI_INTERNAL_API_KEY",
+    "INTERNAL_API_KEY",
+    "STORY_PROVIDER",
+    "STORY_TEXT_PROVIDER",
+    "STORY_TEXT_MODEL",
+    "AI_GENERATION_PROVIDER",
+    "STORY_IMAGE_PROVIDER",
+    "STORY_IMAGE_MODEL",
+    "OPENAI_API_KEY",
+    "OPENAI_MODEL",
+    "OPENAI_BASE_URL",
+    "GEMINI_API_KEY",
+    "GEMINI_BASE_URL",
+    "GEMINI_OPENAI_BASE_URL",
+    "GMS_KEY",
+    "GMS_BASE_URL",
+    "GMS_OPENAI_BASE_URL",
+    "GMS_GEMINI_IMAGE_MODEL",
+)
+
+
+@pytest.fixture(autouse=True)
+def clean_provider_environment(monkeypatch) -> None:
+    for name in _PROVIDER_ENV_VARS:
+        monkeypatch.delenv(name, raising=False)
+
 
 def test_gms_story_provider_uses_shared_key_and_derived_proxy_url() -> None:
     settings = Settings(
