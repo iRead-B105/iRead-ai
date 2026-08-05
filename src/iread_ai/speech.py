@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from xml.sax.saxutils import escape, quoteattr
 
 from .audio import AudioPreparationError, stage_azure_audio
 from .config import Settings
@@ -97,7 +98,12 @@ class AzureSpeechProvider:
         audio, duration_ms = self._synthesize_audio(
             speechsdk=speechsdk,
             speech_config=speech_config,
-            text=request.text,
+            ssml=_synthesis_ssml(
+                text=request.text,
+                voice=voice,
+                language=self._settings.azure_speech_language,
+                tempo=request.tempo,
+            ),
         )
         return SynthesizedSpeech(
             audio=audio,
@@ -110,13 +116,13 @@ class AzureSpeechProvider:
         *,
         speechsdk,
         speech_config,
-        text: str,
+        ssml: str,
     ) -> tuple[bytes, int]:
         synthesizer = speechsdk.SpeechSynthesizer(
             speech_config=speech_config,
             audio_config=None,
         )
-        result = synthesizer.speak_text_async(text).get()
+        result = synthesizer.speak_ssml_async(ssml).get()
         if result.reason != speechsdk.ResultReason.SynthesizingAudioCompleted:
             raise SpeechProviderError("Azure Speech synthesis failed")
         audio = bytes(getattr(result, "audio_data", b""))
@@ -143,6 +149,23 @@ class AzureSpeechProvider:
         except ImportError as exception:
             raise SpeechProviderError("Azure Speech SDK is not installed") from exception
         return speechsdk
+
+
+def _synthesis_ssml(
+    *,
+    text: str,
+    voice: str,
+    language: str,
+    tempo: float,
+) -> str:
+    rate = f"{tempo:.3f}".rstrip("0").rstrip(".")
+    return (
+        '<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" '
+        f"xml:lang={quoteattr(language)}>"
+        f"<voice name={quoteattr(voice)}>"
+        f"<prosody rate={quoteattr(rate)}>{escape(text)}</prosody>"
+        "</voice></speak>"
+    )
 
 
 class DeterministicSpeechProvider:

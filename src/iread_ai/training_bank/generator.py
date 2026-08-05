@@ -5,7 +5,7 @@ import re
 from collections.abc import Callable, Iterable
 
 from iread_ai.generation_models import TrainingCandidateRequest, TrainingCandidateResponse
-from iread_ai.personalization.hangul import COMPLEX_CODA_PARTS
+from iread_ai.personalization.hangul import COMPLEX_CODA_PARTS, decompose_text
 from iread_ai.training_feature_compatibility import compatible_features
 
 from .models import LearningUnit
@@ -135,6 +135,51 @@ _REPLACEMENTS = (
     ("다리", "머리", 0),
 )
 
+_FINAL_DELETE_SOURCES: dict[str, tuple[str, ...]] = {
+    "ㄱ": ("각", "국", "목", "북", "약"),
+    "ㄲ": ("밖", "볶", "섞", "깎", "엮"),
+    "ㄳ": ("넋", "몫", "삯"),
+    "ㄴ": ("간", "눈", "문", "산", "손"),
+    "ㄵ": ("앉", "얹"),
+    "ㄶ": ("많", "않", "끊"),
+    "ㄷ": ("곧", "낟", "맏", "믿", "닫"),
+    "ㄹ": ("달", "길", "물", "별", "돌"),
+    "ㄺ": ("닭", "흙", "읽", "맑", "밝"),
+    "ㄻ": ("삶", "젊", "닮", "굶", "옮"),
+    "ㄼ": ("넓", "밟", "짧", "얇", "떫"),
+    "ㄽ": ("곬",),
+    "ㄾ": ("핥", "훑"),
+    "ㄿ": ("읊",),
+    "ㅀ": ("잃", "싫", "닳", "옳", "끓"),
+    "ㅁ": ("감", "곰", "꿈", "밤", "솜"),
+    "ㅂ": ("밥", "집", "입", "컵", "법"),
+    "ㅄ": ("값", "없"),
+    "ㅅ": ("갓", "옷", "맛", "빗", "붓"),
+    "ㅆ": ("있", "했", "갔", "났", "봤"),
+    "ㅇ": ("강", "공", "방", "종", "창"),
+    "ㅈ": ("낮", "빚", "젖", "잦", "맺"),
+    "ㅊ": ("꽃", "빛", "숯", "낯", "쫓"),
+    "ㅋ": ("녘", "엌"),
+    "ㅌ": ("밭", "끝", "솥", "겉", "팥"),
+    "ㅍ": ("앞", "잎", "옆", "숲", "늪"),
+    "ㅎ": ("낳", "놓", "쌓", "좋", "찧"),
+}
+
+_FINAL_DELETE_FALLBACK_BASES = ("가", "너", "도", "무", "비", "소", "주", "처")
+
+_FINAL_DELETE_DEFAULT_SOURCES = (
+    "각",
+    "눈",
+    "달",
+    "밤",
+    "공",
+    "옷",
+    "집",
+    "꽃",
+    "밭",
+    "앞",
+)
+
 
 class RuleBasedBasicTrainingGenerator:
     def __init__(self, repository: SQLiteLearningUnitRepository) -> None:
@@ -169,10 +214,15 @@ class RuleBasedBasicTrainingGenerator:
                     slot_request,
                     units,
                     variant + (slot * 80) + attempt,
+                    slot=slot,
                 )
                 if candidate is None:
                     return None
-                signature = repr(candidate)
+                signature = (
+                    f"source:{candidate['source']}"
+                    if request.trainingType == "SYLLABLE_DELETE"
+                    else repr(candidate)
+                )
                 if signature in canonical:
                     continue
                 canonical.add(signature)
@@ -248,8 +298,12 @@ class RuleBasedBasicTrainingGenerator:
         request: TrainingCandidateRequest,
         units: tuple[LearningUnit, ...],
         variant: int,
+        *,
+        slot: int,
     ) -> dict[str, object] | None:
         training_type = request.trainingType
+        if training_type == "FINAL_CONSONANT_DELETE":
+            return self._final_consonant_delete(request, variant)
         palette_candidate = self._word_palette_candidate(
             request,
             training_type,
@@ -387,17 +441,8 @@ class RuleBasedBasicTrainingGenerator:
             }
         if training_type in {"BASIC_SYLLABLE_BUILD", "FINAL_SYLLABLE_BUILD", "DOUBLE_FINAL_BUILD"}:
             return self._syllable_build(training_type, correct, variant)
-        if training_type == "FINAL_CONSONANT_DELETE":
-            result = self._compose(correct.onset or "ㅇ", correct.vowel or "ㅏ")
-            return {
-                "source": correct.surface,
-                "targetAudioText": result,
-                "removableUnits": [correct.onset, correct.vowel, correct.coda],
-                "answerIndex": 2,
-                "result": result,
-            }
         if training_type == "SYLLABLE_DELETE":
-            index = variant % len(correct.surface)
+            index = slot % len(correct.surface)
             result = correct.surface[:index] + correct.surface[index + 1 :]
             return {
                 "source": correct.surface,
@@ -449,6 +494,76 @@ class RuleBasedBasicTrainingGenerator:
             )
             return {"words": words, "requiredOrder": "SEQUENTIAL"}
         return None
+
+    def _final_consonant_delete(
+        self,
+        request: TrainingCandidateRequest,
+        variant: int,
+    ) -> dict[str, object] | None:
+        target_codes = [feature.featureCode for feature in request.targetFeatures]
+        exact_codas = [
+            code.rsplit(".", 1)[-1]
+            for code in target_codes
+            if code.startswith("GRAPHEME.CODA.")
+            and code.rsplit(".", 1)[-1] in _FINAL_DELETE_SOURCES
+        ]
+        exact_coda = exact_codas[0] if exact_codas else None
+        wants_complex = bool(
+            {"SYLLABLE.COMPLEX_CODA", "GRAPHEME.CODA.COMPLEX"}.intersection(target_codes)
+        )
+
+        if exact_coda:
+            sources = [*_FINAL_DELETE_SOURCES.get(exact_coda, ())]
+            if len(sources) < request.count:
+                sources.extend(
+                    self._compose(
+                        decompose_text(base)[0].onset,
+                        decompose_text(base)[0].nucleus,
+                        exact_coda,
+                    )
+                    for base in _FINAL_DELETE_FALLBACK_BASES
+                )
+        elif wants_complex:
+            sources = [
+                source
+                for coda, coda_sources in _FINAL_DELETE_SOURCES.items()
+                if coda in COMPLEX_CODA_PARTS
+                for source in coda_sources
+            ]
+        else:
+            sources = list(_FINAL_DELETE_DEFAULT_SOURCES)
+
+        excluded = set(request.excludedFeatures)
+        eligible: list[str] = []
+        for source in dict.fromkeys(sources):
+            parts = decompose_text(source)
+            if len(parts) != 1 or not parts[0].coda:
+                continue
+            coda = parts[0].coda
+            if exact_coda and coda != exact_coda:
+                continue
+            if wants_complex and coda not in COMPLEX_CODA_PARTS:
+                continue
+            if f"GRAPHEME.CODA.COMPLEX.{coda}" in excluded:
+                continue
+            if f"GRAPHEME.CODA.SIMPLE.{coda}" in excluded:
+                continue
+            if "SYLLABLE.COMPLEX_CODA" in excluded and coda in COMPLEX_CODA_PARTS:
+                continue
+            eligible.append(source)
+
+        if len(eligible) < request.count:
+            return None
+        source = eligible[variant % len(eligible)]
+        syllable = decompose_text(source)[0]
+        result = self._compose(syllable.onset, syllable.nucleus)
+        return {
+            "source": source,
+            "targetAudioText": result,
+            "removableUnits": [syllable.onset, syllable.nucleus, syllable.coda],
+            "answerIndex": 2,
+            "result": result,
+        }
 
     def _word_palette_candidate(
         self,

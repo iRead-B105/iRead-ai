@@ -312,3 +312,4 @@ class SpeechSynthesisRequest(ContractModel):
     requestId: str = Field(min_length=1)
     text: str = Field(min_length=1)
     voice: str | None = None
+    tempo: float = Field(default=1.0, ge=0.5, le=2.0)
