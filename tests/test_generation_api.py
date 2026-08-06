@@ -49,7 +49,7 @@ def candidate_request(training_type: str) -> dict:
         "requestId": f"contract-{training_type}",
         "schemaVersion": 2,
         "trainingType": training_type,
-        "count": 5,
+        "count": 3,
         "difficulty": 2,
         "targetFeatures": [],
         "excludedFeatures": [],
@@ -58,7 +58,7 @@ def candidate_request(training_type: str) -> dict:
     }
 
 
-def test_all_training_types_generate_five_candidates() -> None:
+def test_all_training_types_generate_requested_three_candidates() -> None:
     training_types = [
         "VOWEL_TRACE",
         "CONSONANT_TRACE",
@@ -107,7 +107,7 @@ def test_all_training_types_generate_five_candidates() -> None:
         )
         assert response.status_code == 200, (training_type, response.text)
         assert response.json()["type"] == training_type
-        assert len(response.json()["data"]) == 5
+        assert len(response.json()["data"]) == 3
 
 
 def test_multiple_choice_contract_uses_three_choices() -> None:
@@ -141,7 +141,7 @@ def test_basic_choice_type_uses_rule_database() -> None:
 
     assert response.status_code == 200
     assert response.headers["X-AI-Provider"] == "rule-db"
-    assert len(response.json()["data"]) == 5
+    assert len(response.json()["data"]) == 3
     assert response.json()["generationMetadata"] == {
         "provider": "rule-db",
         "model": "korean-training-bank-v1",
@@ -163,7 +163,7 @@ def test_all_mechanical_training_types_use_rule_database() -> None:
 
         assert response.status_code == 200, (training_type, response.text)
         assert response.headers["X-AI-Provider"] == "rule-db"
-        assert len(response.json()["data"]) == 5
+        assert len(response.json()["data"]) == 3
 
 
 def test_sentence_training_uses_curated_fallback_without_gms() -> None:
@@ -211,7 +211,7 @@ def test_training_set_uses_five_different_activities_for_one_vowel_goal() -> Non
     assert body["focusFeatureCodes"] == ["GRAPHEME.VOWEL.BASIC.ㅏ"]
     assert len(body["activities"]) == 5
     assert len({activity["trainingType"] for activity in body["activities"]}) == 5
-    assert body["activities"][0]["item"]["soundText"] == "아"
+    assert body["activities"][0]["item"]["soundText"] == "ㅏ"
     assert response.headers["X-AI-Provider"].startswith("mixed:")
 
 

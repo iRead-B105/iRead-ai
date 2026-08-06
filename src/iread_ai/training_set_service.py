@@ -420,12 +420,7 @@ def _normalize_canonical_audio(training_type: str, item: dict[str, object]) -> N
     }:
         return
     target = str(item.get("target", ""))
-    if training_type == "VOWEL_TRACE":
-        item["soundText"] = _VOWEL_SOUNDS.get(target, target)
-    elif training_type == "CONSONANT_TRACE":
-        item["soundText"] = _CONSONANT_NAMES.get(target, target)
-    else:
-        item["soundText"] = target
+    item["soundText"] = target
 
 
 def _required_spec(training_type: str) -> TrainingReviewSpec:

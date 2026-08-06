@@ -113,7 +113,7 @@ def test_generates_vowel_training_set_with_canonical_trace_sound() -> None:
     assert trace.item == {
         "vowelType": "BASIC",
         "target": "ㅏ",
-        "soundText": "아",
+        "soundText": "ㅏ",
         "traceAssetKey": "vowel_0",
     }
 
