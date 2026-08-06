@@ -77,15 +77,18 @@ class Settings(BaseSettings):
         validation_alias="AI_BRANCH_REVIEW_MODEL",
     )
     branch_review_timeout_seconds: float = Field(
-        default=3.0,
+        default=12.0,
         gt=0,
-        le=10.0,
+        le=60.0,
         validation_alias="AI_BRANCH_REVIEW_TIMEOUT_SECONDS",
     )
+    # 추론 모델은 reasoning 토큰도 이 예산에서 쓴다. 값이 너무 작으면 판단이
+    # 애매한 입력(아이의 자유 발화 대부분)에서 추론 중 예산이 끊겨 본문이 비고
+    # 검토가 계약 위반으로 실패한다. 리뷰어가 안전 하한을 다시 적용한다.
     branch_review_max_output_tokens: int = Field(
-        default=80,
+        default=512,
         ge=32,
-        le=256,
+        le=2048,
         validation_alias="AI_BRANCH_REVIEW_MAX_OUTPUT_TOKENS",
     )
     visual_scene_timeout_seconds: float = Field(

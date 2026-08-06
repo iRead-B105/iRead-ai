@@ -8,7 +8,7 @@
 
 1. 아동 프로필 프리셋 선택
 2. `POST /api/v1/curricula/recommend`로 다음 회차 훈련 5개 추천
-3. 추천된 각 훈련에 `POST /api/v1/trainings/candidates`를 호출해 문항 5개 생성
+3. 추천된 각 훈련에 `POST /api/v1/trainings/candidates`를 호출해 제품 기준 문항 3개 생성
 4. 훈련 유형에 맞는 선택·조합·읽기·녹음 화면으로 문항 체험
 5. 정답, 진행률, provider, 생성 시간, 요청·응답 JSON 확인
 6. 전체 훈련 목록에서 특정 훈련 하나만 골라 재생성

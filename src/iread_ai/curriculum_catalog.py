@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from iread_ai.curriculum_models import ReadingFeatureCategory
 from iread_ai.devtools.training_review_catalog import TRAINING_REVIEW_CATALOG
 
-RETIRED_TEMPLATE_IDS = frozenset({6, 14, 24})
+RETIRED_TEMPLATE_IDS = frozenset({6, 14, 24, 26, 32, 34})
 
 
 @dataclass(frozen=True, slots=True)

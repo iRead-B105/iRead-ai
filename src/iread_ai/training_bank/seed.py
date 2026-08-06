@@ -10,7 +10,7 @@ from iread_ai.personalization.hangul import (
     decompose_text,
 )
 
-BANK_VERSION = "3"
+BANK_VERSION = "4"
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,6 +81,10 @@ _TRACE_ASSET_KEYS = {
     ("VOWEL", "ㅜ"): "vowel_3",
     ("VOWEL", "ㅣ"): "vowel_4",
     ("SYLLABLE", "가"): "syllable_0",
+    ("SYLLABLE", "너"): "syllable_1",
+    ("SYLLABLE", "도"): "syllable_2",
+    ("SYLLABLE", "모"): "syllable_3",
+    ("SYLLABLE", "비"): "syllable_4",
 }
 
 _SYLLABLE_DATA = (
@@ -98,6 +102,10 @@ _SYLLABLE_DATA = (
     ("타", "타", 2),
     ("파", "파", 2),
     ("하", "하", 2),
+    ("너", "너", 1),
+    ("도", "도", 1),
+    ("모", "모", 1),
+    ("비", "비", 1),
     ("거", "거", 1),
     ("고", "고", 1),
     ("구", "구", 1),

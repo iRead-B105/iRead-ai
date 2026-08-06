@@ -10,6 +10,7 @@ from iread_ai.generation_models import (
 from iread_ai.generation_service import (
     _normalize_mechanical_fields,
     _validate_candidate_uniqueness,
+    _validate_final_sound_choices,
     _validate_hybrid_semantics,
     enrich_training_request_with_lexicon,
     generate_training,
@@ -29,6 +30,83 @@ def _request(training_type: str) -> TrainingCandidateRequest:
         excludedFeatures=[],
         outputTemplate={"type": training_type, "data": [{}]},
     )
+
+
+def test_final_consonant_choice_rejects_sentence_audio_and_non_representative_choices() -> None:
+    request = _request("FINAL_CONSONANT_CHOICE").model_copy(update={"count": 1})
+    response = TrainingCandidateResponse(
+        type="FINAL_CONSONANT_CHOICE",
+        data=[
+            {
+                "audioText": "가방에 책이 없다.",
+                "choices": ["ㅊ", "ㅅ", "ㄷ"],
+                "answerIndex": 0,
+            }
+        ],
+    )
+
+    with pytest.raises(ValueError):
+        _validate_final_sound_choices(request, response)
+
+
+def test_final_sound_choice_uses_standard_spoken_end_sound() -> None:
+    request = _request("WORD_FINAL_SOUND_CHOICE").model_copy(update={"count": 2})
+    response = TrainingCandidateResponse(
+        type="WORD_FINAL_SOUND_CHOICE",
+        data=[
+            {"audioText": "꽃", "choices": ["ㄱ", "ㄷ", "ㅂ"], "answerIndex": 1},
+            {"audioText": "밖", "choices": ["ㄴ", "ㄹ", "ㄱ"], "answerIndex": 2},
+        ],
+    )
+
+    _validate_final_sound_choices(request, response)
+
+
+def test_word_final_sound_choice_rejects_duplicate_words() -> None:
+    request = _request("WORD_FINAL_SOUND_CHOICE").model_copy(update={"count": 2})
+    response = TrainingCandidateResponse(
+        type="WORD_FINAL_SOUND_CHOICE",
+        data=[
+            {"audioText": "하늘", "choices": ["ㄹ", "ㄱ", "ㄴ"], "answerIndex": 0},
+            {"audioText": "하늘", "choices": ["ㅁ", "ㄹ", "ㅇ"], "answerIndex": 1},
+        ],
+    )
+
+    with pytest.raises(ValueError):
+        _validate_final_sound_choices(request, response)
+
+
+def test_final_consonant_comparison_rejects_same_heard_final_sound() -> None:
+    request = _request("FINAL_CONSONANT_COMPARISON").model_copy(update={"count": 1})
+    response = TrainingCandidateResponse(
+        type="FINAL_CONSONANT_COMPARISON",
+        data=[
+            {
+                "audioText": "국",
+                "choices": ["국", "굮", "군"],
+                "answerIndex": 0,
+            }
+        ],
+    )
+
+    with pytest.raises(ValueError, match="different heard finals"):
+        _validate_final_sound_choices(request, response)
+
+
+def test_final_consonant_comparison_accepts_distinct_heard_final_sounds() -> None:
+    request = _request("FINAL_CONSONANT_COMPARISON").model_copy(update={"count": 1})
+    response = TrainingCandidateResponse(
+        type="FINAL_CONSONANT_COMPARISON",
+        data=[
+            {
+                "audioText": "국",
+                "choices": ["군", "국", "굳"],
+                "answerIndex": 1,
+            }
+        ],
+    )
+
+    _validate_final_sound_choices(request, response)
 
 
 class _LexiconService:
@@ -233,6 +311,24 @@ def test_sentence_assembly_is_deterministically_shuffled_before_validation() -> 
 
     assert response.data[0]["cards"] == ["놀아요.", "민수는", "공원에서"]
     assert response.data[0]["answerOrder"] == [1, 2, 0]
+
+
+def test_trace_sound_text_is_always_normalized_to_the_displayed_target() -> None:
+    response = TrainingCandidateResponse(
+        type="SYLLABLE_TRACE",
+        data=[
+            {
+                "syllableType": "WITH_FINAL",
+                "target": "읽",
+                "soundText": "나는 짧은 글을 읽어요.",
+                "traceAssetKey": "syllable_read",
+            }
+        ],
+    )
+
+    _normalize_mechanical_fields(_request("SYLLABLE_TRACE"), response)
+
+    assert response.data[0]["soundText"] == "읽"
 
 
 def test_fill_blank_rejects_incorrect_korean_particle_agreement() -> None:

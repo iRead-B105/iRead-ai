@@ -53,7 +53,7 @@ def test_letter_level_student_cannot_receive_passage_or_fluency_training() -> No
     assert 26 not in {item.trainingTemplateId for item in response.recommendations}
     short_passage = next(item for item in response.candidateAudit if item.trainingTemplateId == 26)
     assert short_passage.status == "BLOCKED"
-    assert short_passage.reasonCode == "PREREQUISITE_STAGE_NOT_REACHED"
+    assert short_passage.reasonCode == "RETIRED_TEMPLATE"
 
 
 def test_recommendation_has_three_core_one_reinforcement_and_one_stretch() -> None:
@@ -64,7 +64,9 @@ def test_recommendation_has_three_core_one_reinforcement_and_one_stretch() -> No
     assert roles.count("REINFORCEMENT") == 1
     assert roles.count("STRETCH") == 1
     assert len({item.trainingTemplateId for item in response.recommendations}) == 5
-    assert {6, 14, 24}.isdisjoint(item.trainingTemplateId for item in response.recommendations)
+    assert {6, 14, 24, 26, 32, 34}.isdisjoint(
+        item.trainingTemplateId for item in response.recommendations
+    )
 
 
 def test_no_evidence_starts_with_conservative_foundation_plan() -> None:

@@ -23,6 +23,10 @@ STT 원문을 절대 교정, 재작성, 보충하지 마세요. 설명문도 만
 모호하면 CONFIRM, 명백히 무관하면 RETRY를 반환하세요. JSON Schema만 따르세요."""
 
 
+MIN_REVIEW_OUTPUT_TOKENS = 512
+MIN_REVIEW_TIMEOUT_SECONDS = 12.0
+
+
 class BranchInputReviewProviderError(RuntimeError):
     def __init__(self, message: str, *, retryable: bool, timeout: bool = False) -> None:
         super().__init__(message)
@@ -92,8 +96,13 @@ class OpenAICompatibleBranchInputReviewer:
         self._api_key = api_key
         self._model = model
         self._url = f"{base_url.rstrip('/')}/responses"
-        self._timeout_seconds = timeout_seconds
-        self._max_output_tokens = max_output_tokens
+        # 추론 시간이 필요한 요청은 몇 초로는 끝나지 않는다. 하한을 보장해
+        # 정상 응답이 타임아웃으로 버려지지 않게 한다.
+        self._timeout_seconds = max(timeout_seconds, MIN_REVIEW_TIMEOUT_SECONDS)
+        # 추론 모델은 reasoning 토큰도 출력 예산에서 소비한다. 예산이 작으면
+        # 애매한 발화(아이 자유 발화의 대부분)에서 추론 도중 잘려 본문이 비고
+        # 검토가 계약 위반으로 실패한다. 운영 설정이 낮아도 하한을 보장한다.
+        self._max_output_tokens = max(max_output_tokens, MIN_REVIEW_OUTPUT_TOKENS)
         self._client = client
 
     async def review(self, request: BranchInputReviewRequest) -> BranchInputReviewResponse:
