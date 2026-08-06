@@ -62,7 +62,21 @@ def feature_is_compatible(training_type: str, feature_code: str) -> bool:
     supported = _SUPPORTED_FAMILIES.get(training_type)
     if supported is None:
         return True
-    return feature_family(feature_code) in supported
+    if feature_family(feature_code) not in supported:
+        return False
+    if training_type == "BASIC_SYLLABLE_BUILD":
+        return not (
+            feature_code.startswith("GRAPHEME.CODA.")
+            or feature_code in {"SYLLABLE.CVC", "SYLLABLE.COMPLEX_CODA"}
+        )
+    if training_type == "FINAL_SYLLABLE_BUILD":
+        return not (
+            feature_code.startswith("GRAPHEME.CODA.COMPLEX.")
+            or feature_code == "SYLLABLE.COMPLEX_CODA"
+        )
+    if training_type == "DOUBLE_FINAL_BUILD":
+        return not feature_code.startswith("GRAPHEME.CODA.SIMPLE.")
+    return True
 
 
 def compatible_features[Feature](

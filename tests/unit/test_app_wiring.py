@@ -29,5 +29,5 @@ def test_legacy_story_disables_visual_scene_llm() -> None:
     )
 
 
-def test_chapter_quality_retry_defaults_to_one_retry() -> None:
-    assert Settings.model_fields["chapter_quality_retry_count"].default == 1
+def test_chapter_quality_retry_is_disabled_by_default() -> None:
+    assert Settings.model_fields["chapter_quality_retry_count"].default == 0

@@ -10,7 +10,7 @@ from iread_ai.devtools.training_review_catalog import (
     output_template,
 )
 from iread_ai.generation_models import TrainingCandidateRequest, TrainingTargetFeature
-from iread_ai.personalization.hangul import decompose_text
+from iread_ai.personalization.hangul import COMPLEX_CODA_PARTS, decompose_text
 from iread_ai.training_bank import (
     RULE_BASED_TYPES,
     RuleBasedBasicTrainingGenerator,
@@ -60,10 +60,10 @@ def test_builds_versioned_sqlite_bank_with_verified_atoms(tmp_path: Path) -> Non
     counts = repository.counts()
     units = repository.find_all_active()
 
-    assert counts["units"] == 154
+    assert counts["units"] == 156
     assert counts["features"] >= 200
     assert counts["confusions"] == 38
-    assert len(units) == 154
+    assert len(units) == 156
     assert {unit.unit_type for unit in units} == {
         "CONSONANT",
         "VOWEL",
@@ -630,9 +630,19 @@ def _assert_candidate_semantics(training_type: str, candidate: dict) -> None:
         "DOUBLE_FINAL_BUILD",
     }:
         result = decompose_text(candidate["result"])[0]
+        assert candidate["targetAudioText"] == candidate["result"]
         assert candidate["initialChoices"][candidate["initialAnswerIndex"]] == result.onset
         assert candidate["medialChoices"][candidate["medialAnswerIndex"]] == result.nucleus
-        if training_type != "BASIC_SYLLABLE_BUILD":
+        if training_type == "BASIC_SYLLABLE_BUILD":
+            assert not result.coda
+            assert "finalChoices" not in candidate
+        elif training_type == "FINAL_SYLLABLE_BUILD":
+            assert result.coda and result.coda not in COMPLEX_CODA_PARTS
+            assert all(choice not in COMPLEX_CODA_PARTS for choice in candidate["finalChoices"])
+            assert candidate["finalChoices"][candidate["finalAnswerIndex"]] == result.coda
+        else:
+            assert result.coda in COMPLEX_CODA_PARTS
+            assert all(choice in COMPLEX_CODA_PARTS for choice in candidate["finalChoices"])
             assert candidate["finalChoices"][candidate["finalAnswerIndex"]] == result.coda
     elif training_type == "FINAL_CONSONANT_DELETE":
         source = decompose_text(candidate["source"])[0]

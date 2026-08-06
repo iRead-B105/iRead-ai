@@ -29,6 +29,27 @@ SENTENCES = [
     "아이가 모자를 쓴다.",
     "강아지가 문을 닫는다.",
 ]
+SENTENCES_LEVEL_1 = [
+    "새가 날아요.",
+    "아이가 웃어요.",
+    "바람이 불어요.",
+    "꽃이 피어요.",
+    "해가 떠요.",
+]
+SENTENCES_LEVEL_3 = [
+    "예쁜 나비가 꽃에 앉았어요.",
+    "동생이 아침에 사과를 먹어요.",
+    "친구와 함께 신나게 놀아요.",
+    "시원한 바람이 창문으로 불어요.",
+    "귀여운 강아지가 들판을 뛰어요.",
+]
+SENTENCES_LEVEL_5 = [
+    "맑은 하늘 위에 하얀 구름이 둥실 떠다녀요.",
+    "시원한 바람이 불어와 나뭇잎이 살포시 흔들려요.",
+    "우리는 함께 힘을 모아 예쁜 그림을 완성했어요.",
+    "따뜻한 햇살 아래 길가에 작은 꽃들이 피어났어요.",
+    "산새들이 지저귀는 소리에 기분 좋게 하루를 시작해요.",
+]
 SYLLABLES = ["가", "너", "도", "무", "비"]
 FINALS = ["감", "눈", "달", "밤", "집"]
 
@@ -106,6 +127,8 @@ CODAS = [
     "ㅍ",
     "ㅎ",
 ]
+COMPLEX_CODAS = ["ㄳ", "ㄵ", "ㄶ", "ㄺ", "ㄻ", "ㄼ", "ㄽ", "ㄾ", "ㄿ", "ㅀ", "ㅄ"]
+SIMPLE_CODAS = [coda for coda in CODAS if coda and coda not in COMPLEX_CODAS]
 
 
 def _rotate(values: list[str], index: int) -> list[str]:
@@ -283,7 +306,12 @@ def _candidate(training_type: str, index: int) -> dict[str, Any]:
             initial, ["ㄱ", "ㄴ", "ㄷ", "ㄹ", "ㅁ", "ㅂ", "ㅅ", "ㅇ"], 0
         )
         medial_choices = _choice_values(medial, ["ㅏ", "ㅓ", "ㅗ", "ㅜ", "ㅡ", "ㅣ"], 0)
-        final_choices = _choice_values(final, ["ㄱ", "ㄴ", "ㄹ", "ㅁ", "ㅂ", "ㅅ", "ㅇ"], 0)
+        final_pool = (
+            COMPLEX_CODAS
+            if training_type == "DOUBLE_FINAL_BUILD"
+            else SIMPLE_CODAS
+        )
+        final_choices = _choice_values(final, final_pool, 0)
         return {
             "targetAudioText": result,
             "initialChoices": initial_choices,
@@ -396,13 +424,18 @@ def _candidate(training_type: str, index: int) -> dict[str, Any]:
     if training_type == "SENTENCE_REPEAT":
         return {"sentence": SENTENCES[index], "emotion": "HAPPY" if index % 2 == 0 else "CALM"}
     if training_type == "WORD_CHAIN_READING":
-        return {"words": _rotate(WORDS, index)[:3], "requiredOrder": "SEQUENTIAL"}
+        return {"words": _rotate(WORDS, index)[:4], "requiredOrder": "SEQUENTIAL"}
     if training_type == "PHRASE_READING":
         sentence = SENTENCES[index]
         tokens = sentence[:-1].split(" ")
         return {"sentence": sentence, "phrases": [tokens[0], " ".join(tokens[1:]) + "."]}
     if training_type == "REPEATED_SENTENCE_READING":
-        return {"sentence": SENTENCES[index], "repeatCount": 2 + index % 2}
+        pool = (
+            SENTENCES_LEVEL_1
+            if request.difficulty <= 1
+            else (SENTENCES_LEVEL_5 if request.difficulty >= 4 else SENTENCES_LEVEL_3)
+        )
+        return {"sentence": pool[index % len(pool)], "repeatCount": 2 + index % 2}
     if training_type == "SHORT_STORY_READING":
         return {
             "title": f"{WORDS[index]} 이야기",

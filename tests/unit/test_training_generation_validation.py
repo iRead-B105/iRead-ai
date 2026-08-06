@@ -12,6 +12,7 @@ from iread_ai.generation_service import (
     _validate_candidate_uniqueness,
     _validate_final_sound_choices,
     _validate_hybrid_semantics,
+    _validate_syllable_builds,
     enrich_training_request_with_lexicon,
     generate_training,
 )
@@ -30,6 +31,70 @@ def _request(training_type: str) -> TrainingCandidateRequest:
         excludedFeatures=[],
         outputTemplate={"type": training_type, "data": [{}]},
     )
+
+
+def _build_response(training_type: str, result: str, final_choices=None):
+    from iread_ai.personalization.hangul import decompose_text
+
+    part = decompose_text(result)[0]
+    item = {
+        "targetAudioText": "틀린소리",
+        "initialChoices": [part.onset, "ㄴ", "ㅁ"],
+        "medialChoices": [part.nucleus, "ㅓ", "ㅗ"],
+        "initialAnswerIndex": 0,
+        "medialAnswerIndex": 0,
+        "result": result,
+    }
+    if final_choices is not None:
+        item["finalChoices"] = final_choices
+        item["finalAnswerIndex"] = (
+            final_choices.index(part.coda) if part.coda in final_choices else 0
+        )
+    return TrainingCandidateResponse(type=training_type, data=[item])
+
+
+@pytest.mark.parametrize(
+    ("training_type", "result", "final_choices"),
+    [
+        ("BASIC_SYLLABLE_BUILD", "가", None),
+        ("FINAL_SYLLABLE_BUILD", "감", ["ㅁ", "ㄴ", "ㅇ"]),
+        ("DOUBLE_FINAL_BUILD", "값", ["ㅄ", "ㄳ", "ㄵ"]),
+    ],
+)
+def test_syllable_build_accepts_only_its_required_shape(
+    training_type: str,
+    result: str,
+    final_choices: list[str] | None,
+) -> None:
+    request = _request(training_type).model_copy(update={"count": 1})
+    response = _build_response(training_type, result, final_choices)
+
+    _normalize_mechanical_fields(request, response)
+    _validate_syllable_builds(request, response)
+
+    assert response.data[0]["targetAudioText"] == result
+
+
+@pytest.mark.parametrize(
+    ("training_type", "result", "final_choices"),
+    [
+        ("BASIC_SYLLABLE_BUILD", "감", None),
+        ("FINAL_SYLLABLE_BUILD", "가", ["ㄱ", "ㄴ", "ㅁ"]),
+        ("FINAL_SYLLABLE_BUILD", "값", ["ㅄ", "ㄳ", "ㄵ"]),
+        ("DOUBLE_FINAL_BUILD", "감", ["ㅁ", "ㄴ", "ㅇ"]),
+    ],
+)
+def test_syllable_build_rejects_other_shapes(
+    training_type: str,
+    result: str,
+    final_choices: list[str] | None,
+) -> None:
+    request = _request(training_type).model_copy(update={"count": 1})
+    response = _build_response(training_type, result, final_choices)
+    _normalize_mechanical_fields(request, response)
+
+    with pytest.raises(ValueError):
+        _validate_syllable_builds(request, response)
 
 
 def test_final_consonant_choice_rejects_sentence_audio_and_non_representative_choices() -> None:
@@ -331,31 +396,13 @@ def test_trace_sound_text_is_always_normalized_to_the_displayed_target() -> None
     assert response.data[0]["soundText"] == "읽"
 
 
-def test_fill_blank_rejects_incorrect_korean_particle_agreement() -> None:
+def test_fill_blank_accepts_answers_with_choices_containing_particles() -> None:
     item = {
-        "sentence": "민수는 {{blank}}를 들고 왔어요.",
+        "sentence": "민수는 {{blank}} 들고 왔어요.",
         "inputType": "CHOICE",
-        "choices": ["연필", "책상", "창문"],
+        "choices": ["연필을", "신발을", "구름을"],
         "answerIndex": 0,
-        "acceptedAnswers": ["연필"],
-        "completedSentence": "민수는 연필를 들고 왔어요.",
-    }
-    response = TrainingCandidateResponse(
-        type="FILL_IN_THE_BLANK",
-        data=[dict(item) for _ in range(5)],
-    )
-
-    with pytest.raises(ValueError, match="Korean particle"):
-        _validate_hybrid_semantics(_request("FILL_IN_THE_BLANK"), response)
-
-
-def test_fill_blank_accepts_answers_with_matching_korean_particle() -> None:
-    item = {
-        "sentence": "민수는 {{blank}}을 들고 왔어요.",
-        "inputType": "CHOICE",
-        "choices": ["연필", "책상", "창문"],
-        "answerIndex": 0,
-        "acceptedAnswers": ["연필"],
+        "acceptedAnswers": ["연필을"],
         "completedSentence": "민수는 연필을 들고 왔어요.",
     }
     response = TrainingCandidateResponse(
@@ -364,24 +411,6 @@ def test_fill_blank_accepts_answers_with_matching_korean_particle() -> None:
     )
 
     _validate_hybrid_semantics(_request("FILL_IN_THE_BLANK"), response)
-
-
-def test_fill_blank_rejects_a_missing_particle_after_the_blank() -> None:
-    item = {
-        "sentence": "민지는 {{blank}} 접고 창가로 갔어요.",
-        "inputType": "CHOICE",
-        "choices": ["종이", "편지", "수건"],
-        "answerIndex": 0,
-        "acceptedAnswers": ["종이"],
-        "completedSentence": "민지는 종이 접고 창가로 갔어요.",
-    }
-    response = TrainingCandidateResponse(
-        type="FILL_IN_THE_BLANK",
-        data=[dict(item) for _ in range(5)],
-    )
-
-    with pytest.raises(ValueError, match="followed by a Korean particle"):
-        _validate_hybrid_semantics(_request("FILL_IN_THE_BLANK"), response)
 
 
 def test_korean_sentence_validator_rejects_particle_and_name_suffix_errors() -> None:

@@ -24,6 +24,7 @@ from .generation_models import (
 from .lexicon.contracts import LexiconPaletteRequest, LexiconTargetFeature
 from .lexicon.service import LexiconPaletteService, LexiconUnavailableError
 from .mock_generators import generate_training_candidates as mock_training_candidates
+from .personalization.hangul import COMPLEX_CODA_PARTS, decompose_text
 from .providers import GenerationProviderError, GMSTextProvider
 from .training_bank import default_basic_training_generator
 from .training_feature_compatibility import compatible_features
@@ -95,7 +96,7 @@ _UNSAFE_TERMS = (
 _FEATURE_GUIDES = {
     "PHONOLOGY.NASALIZATION": (
         "비음화: 받침의 대표음 ㄱ·ㄷ·ㅂ 뒤에 초성 ㄴ·ㅁ이 와서 "
-        "각각 ㅇ·ㄴ·ㅁ으로 발음되는 배열. 한 낱말 예: 국물, 앞니, 막내, 읽는."
+        "각각 ㅇ·ㄴ·ㅁ으로 발음되는 배열. 한 낱말 예: 작문, 앞니, 막내, 신발, 학년."
     ),
     "SYLLABLE.COMPLEX_CODA": (
         "겹받침: 표기에 ㄳ·ㄵ·ㄶ·ㄺ·ㄻ·ㄼ·ㄽ·ㄾ·ㄿ·ㅀ·ㅄ 중 하나가 "
@@ -108,7 +109,7 @@ _HYBRID_TYPE_GUIDES = {
         "아이 수준에 맞는 자연스러운 한 문장을 만들고, 문장에 실제로 포함된 어려운 "
         "낱말을 골라 한글 음절 단위로 정확히 분해하세요. difficultWords의 word에는 "
         "공백이나 문장부호가 없는 한 개의 한국어 낱말만 넣으세요. '밥 먹기'처럼 "
-        "띄어 쓴 구는 금지하며, 비음화 목표라면 '국물' 또는 '앞니' 같은 한 낱말을 쓰세요."
+        "띄어 쓴 구는 금지하며, 비음화 목표라면 '작문' 또는 '앞니' 같은 한 낱말을 쓰세요."
     ),
     "SENTENCE_READING": (
         "한 가지 분명한 사건을 담은 자연스러운 문장을 만들고 tokens에는 문장을 읽는 "
@@ -124,26 +125,28 @@ _HYBRID_TYPE_GUIDES = {
         "answerOrder는 원문 순서를 복원하는 0 기반 인덱스여야 합니다."
     ),
     "FILL_IN_THE_BLANK": (
-        "문맥만으로 답을 고를 수 있는 문장 하나를 만들고 {{blank}}를 정확히 한 번 "
-        "사용하세요. inputType은 CHOICE만 사용하세요. 빈칸에는 명사만 들어가며, 빈칸 "
-        "바로 뒤에 조사를 반드시 붙이세요. 오답은 같은 품사이되 문맥에는 맞지 않아야 "
-        "합니다. 정답과 모든 오답에 동일하게 맞는 조사만 사용하세요. 예를 들어 "
-        "받침 있는 명사 뒤에는 을·은·이·과를, 받침 없는 명사 뒤에는 를·는·가·와를 씁니다."
+        "아동이 문맥을 이해하여 오직 하나의 정답만 고를 수 있는 자연스러운 문장을 만드세요. "
+        "sentence에는 {{blank}}를 조명이나 조사 없이 단독으로 사용하세요(예: '토끼가 {{blank}} 꺼냈어요.', '민지가 {{blank}} 먹어요.'). 문장 속에 (을/를) 같은 괄호 조사는 절대 쓰지 마세요. "
+        "choices 3개는 '단어+조사' 형태(예: ['상자를', '신발을', '구름을'])로 작성하고, 각 단어마다 본인의 받침 유무에 맞는 올바른 조사를 붙이세요. "
+        "choices 3개 중 1개만 문맥상 통하는 정답이고, 나머지 오답 2개는 문맥상 상식적으로 전혀 들어맞지 않는 엉뚱한 단어(예: '먹다' 문맥 -> ['사과를', '신발을', '자동차를'])로 만드세요. "
+        "completedSentence는 sentence의 {{blank}}를 정답 선택지 단어로 띄어쓰기 자연스럽게 그대로 대입하여 완성하세요(예: '토끼가 상자를 꺼냈어요.')."
     ),
     "IMAGE_SENTENCE_MATCH": (
         "한 장면으로 명확히 그릴 수 있는 imagePrompt와 그 장면을 정확히 설명하는 문장 "
         "하나, 핵심 행동이나 대상이 다른 오답 두 개를 만드세요."
     ),
     "SENTENCE_REPEAT": (
-        "짧고 말하기 자연스러운 문장을 만들고 내용에 맞는 감정을 NEUTRAL, HAPPY, "
-        "SAD, ANGRY, EXCITED, CALM 중 하나로 지정하세요."
+        "아동 난이도에 맞는 소리 내어 말하기 자연스러운 한 문장과 감정(NEUTRAL, HAPPY, SAD, ANGRY, EXCITED, CALM 중 하나)을 지정하세요. "
+        "난이도 1~2(기초형)는 2~3어절 10자 이내의 매우 단순한 초단문, "
+        "난이도 3(진행형)은 3~4어절 13~16자 문장, "
+        "난이도 4~5(숙달형)는 4~5어절 18~24자의 길고 완성도 높은 문장으로 100% 엄격히 구별하여 만드세요."
     ),
     "PHRASE_READING": (
         "자연스러운 한 문장을 조사와 수식 관계를 깨뜨리지 않는 2~4개의 의미 단위로 "
         "나누세요. phrases를 순서대로 합치면 sentence와 같아야 합니다."
     ),
     "REPEATED_SENTENCE_READING": (
-        "반복해 읽기 좋은 자연스러운 한 문장과 2~4 사이의 repeatCount를 만드세요."
+        "소리 내어 한 번에 유창하게 읽기 좋은 완결된 1개의 자연스러운 문장(sentence)과 2~4 사이의 repeatCount를 포함한 문항을 만드세요. 여러 문장이 연결된 하나의 이야기를 나누어 넣지 마시고, 3개의 문항(data[0], data[1], data[2])은 서로 주인공, 배경, 사건이 100% 다른 완전히 독립된 문장이어야 합니다."
     ),
     "SHORT_STORY_READING": (
         "한 사건이 시작되고 변화한 뒤 마무리되는 짧은 이야기로 만드세요. 설명과 짧은 "
@@ -375,30 +378,33 @@ def generate_training(
         _validate_registered_vocabulary(request, result, lexicon_service)
         return result
 
-    def generate_with_one_validation_retry() -> TrainingCandidateResponse:
-        try:
-            return generate()
-        except (ValidationError, TypeError, ValueError) as exception:
-            logger.warning(
-                "Training generation validation failed; retrying once: %s: %s",
-                type(exception).__name__,
-                exception,
-            )
-            feedback = f"{type(exception).__name__}: {exception}"
-            return generate(feedback)
+    def generate_with_validation_retries(max_retries: int = 3) -> TrainingCandidateResponse:
+        last_exception = None
+        feedback = None
+        for attempt in range(max_retries):
+            try:
+                return generate(feedback)
+            except (ValidationError, TypeError, ValueError) as exception:
+                last_exception = exception
+                logger.warning(
+                    "Training generation validation failed (attempt %d/%d): %s: %s",
+                    attempt + 1,
+                    max_retries,
+                    type(exception).__name__,
+                    exception,
+                )
+                feedback = f"{type(exception).__name__}: {exception}"
+        raise last_exception
 
-    # GenerationProviderError from the provider propagates unchanged; local
-    # validation failures are wrapped so callers can answer 502/503 without
-    # exposing generated content.
     try:
-        response = generate_with_one_validation_retry()
+        response = generate_with_validation_retries(max_retries=5)
     except (ValidationError, TypeError, ValueError) as exception:
         logger.warning(
-            "Training generation failed local validation after one retry: %s",
+            "Training generation failed local validation after 5 retries: %s",
             type(exception).__name__,
         )
         raise GenerationProviderError(
-            "training generation output failed local validation after one retry",
+            "training generation output failed local validation after 3 retries",
             retryable=True,
         ) from exception
     return _with_generation_metadata(
@@ -419,6 +425,7 @@ def _validated_training_response(
         raise ValueError("training response type or count did not match request")
     _normalize_mechanical_fields(request, result)
     _validate_output_template(request, result)
+    _validate_syllable_builds(request, result)
     _validate_final_sound_choices(request, result)
     _validate_hybrid_semantics(request, result)
     _validate_candidate_uniqueness(result)
@@ -438,8 +445,8 @@ def _review_training_response(
             "어색한 조사, 잘못된 활용, 주어와 서술어 호응을 바로잡으세요.",
             "짧은 글과 이야기의 문장들은 같은 사건의 원인, 행동, 결과 순서로 이어지게 하세요.",
             "추천 단어를 모두 넣기 위해 주인공이나 소재를 바꾸지 말고, 문맥을 깨는 단어는 빼세요.",
-            "'수아는 국물이 먹고 싶었어요'처럼 목적어에 이/가를 붙이지 말고 "
-            "'수아는 국물을 먹고 싶었어요'처럼 조사와 서술어의 관계를 바로잡으세요.",
+            "'아이가 음식을 먹고 싶었어요'처럼 목적어 조사를 올바르게 사용하고 "
+            "'아이가 음식을 먹고 싶었어요'처럼 조사와 서술어의 관계를 바로잡으세요.",
             "SHORT_STORY_READING의 CHARACTER 문장은 큰따옴표 안의 직접 대사여야 합니다.",
             "그림 문항은 imagePrompt와 정확히 일치하는 선택지가 answerIndex에 오게 하세요.",
             "빈칸 문항은 정답만 문맥상 자연스럽고 오답은 분명히 틀리게 하세요.",
@@ -484,13 +491,23 @@ def _training_prompt_document(request: TrainingCandidateRequest) -> dict[str, An
         }
         for index, features in enumerate(target_plan)
     ]
+    difficulty_rule = (
+        "기초형(난이도 1): 각 문장은 2~3어절, 10자 이내의 매우 쉽고 명확한 단문이어야 합니다."
+        if request.difficulty <= 1
+        else (
+            "숙달형(난이도 4~5): 각 문장은 4~5어절, 18~24자 이내의 길고 완성도 높은 문장이어야 합니다."
+            if request.difficulty >= 4
+            else "진행형(난이도 2~3): 각 문장은 3~4어절, 13~16자 이내의 자연스러운 문장이어야 합니다."
+        )
+    )
     document["generationRules"] = [
+        difficulty_rule,
         "각 data 문항에는 targetDistribution의 같은 dataIndex에 배정된 목표만 "
         "최소 한 번 포함하세요.",
         "한 문항에 모든 targetFeatures를 억지로 동시에 넣지 마세요.",
         "첫 번째 목표는 3문항, 두 번째 목표는 2문항에 분산하세요.",
         "featureCode 문자열을 문장에 그대로 쓰지 말고 실제 한국어 예시로 구현하세요.",
-        "다섯 문항은 서로 다른 자연스러운 문장으로 만드세요.",
+        "모든 문항(data[0], data[1], data[2])은 서로 주인공, 장소, 사건이 100% 다른 독자적인 개별 문장이어야 합니다.",
     ]
     if request.trainingType in REAL_WORD_ONLY_TYPES:
         document["lexicalPolicy"] = {
@@ -850,22 +867,18 @@ def _validate_hybrid_semantics(
                 raise ValueError("fill-in sentence must contain one blank")
             if item.get("inputType") != "CHOICE":
                 raise ValueError("fill-in inputType must be CHOICE")
-            if _BLANK_PARTICLE_PATTERN.search(sentence) is None:
-                raise ValueError("fill-in blank must be followed by a Korean particle")
+
             choices = item.get("choices", [])
             answer_index = int(item.get("answerIndex", -1))
             if len(choices) != 3 or len(set(choices)) != len(choices):
                 raise ValueError("fill-in choices must contain three unique answers")
-            if choices and answer_index >= 0:
-                completed = sentence.replace("{{blank}}", str(choices[answer_index]))
-                if _compact(completed) != _compact(str(item.get("completedSentence", ""))):
-                    raise ValueError("blank answer did not reconstruct the sentence")
-                answers = [*choices, *item.get("acceptedAnswers", [])]
-                if any(not _particle_agrees(sentence, str(answer)) for answer in answers):
-                    raise ValueError("blank answer did not agree with its Korean particle")
-                if str(choices[answer_index]) not in item.get("acceptedAnswers", []):
-                    raise ValueError("blank correct choice must be an accepted answer")
-                validate_complete_korean_sentence(completed)
+            
+            if choices and 0 <= answer_index < len(choices):
+                correct_choice = str(choices[answer_index])
+                completed_text = sentence.replace("{{blank}}", correct_choice).replace("  ", " ")
+                item["completedSentence"] = completed_text
+                item["acceptedAnswers"] = [correct_choice]
+                validate_complete_korean_sentence(item["completedSentence"])
         elif training_type == "IMAGE_SENTENCE_MATCH":
             choices = item.get("choices", [])
             if len(choices) != 3:
@@ -932,6 +945,13 @@ def _validate_candidate_uniqueness(response: TrainingCandidateResponse) -> None:
     }
     if len(canonical_candidates) != len(response.data):
         raise ValueError("training candidates must not be duplicated")
+    sentences = [
+        str(item.get("sentence", "")).strip()
+        for item in response.data
+        if "sentence" in item and str(item.get("sentence", "")).strip()
+    ]
+    if sentences and len(set(sentences)) != len(sentences):
+        raise ValueError("training candidate sentences must be unique")
 
 
 def _validate_answer_index(item: dict[str, Any]) -> None:
@@ -1020,6 +1040,64 @@ def _is_one_hangul_syllable(value: str) -> bool:
     return len(value) == 1 and "가" <= value <= "힣"
 
 
+def _selected_build_part(item: dict[str, Any], choices_key: str, index_key: str) -> str:
+    choices = item.get(choices_key, [])
+    if not isinstance(choices, list) or len(choices) != 3 or len(set(choices)) != 3:
+        raise ValueError(f"{choices_key} must contain three unique values")
+    index = item.get(index_key)
+    if not isinstance(index, int) or not 0 <= index < len(choices):
+        raise ValueError(f"{index_key} is outside {choices_key}")
+    return str(choices[index])
+
+
+def _validate_syllable_builds(
+    request: TrainingCandidateRequest,
+    response: TrainingCandidateResponse,
+) -> None:
+    training_type = request.trainingType
+    if training_type not in {
+        "BASIC_SYLLABLE_BUILD",
+        "FINAL_SYLLABLE_BUILD",
+        "DOUBLE_FINAL_BUILD",
+    }:
+        return
+
+    for item in response.data:
+        result = str(item.get("result", "")).strip()
+        audio = str(item.get("targetAudioText", "")).strip()
+        if not _is_one_hangul_syllable(result) or audio != result:
+            raise ValueError("syllable build audio and result must be the same Hangul syllable")
+        part = decompose_text(result)[0]
+        if _selected_build_part(item, "initialChoices", "initialAnswerIndex") != part.onset:
+            raise ValueError("initial answer does not reconstruct the result")
+        if _selected_build_part(item, "medialChoices", "medialAnswerIndex") != part.nucleus:
+            raise ValueError("medial answer does not reconstruct the result")
+
+        if training_type == "BASIC_SYLLABLE_BUILD":
+            if part.coda:
+                raise ValueError("basic syllable build result must not have a final consonant")
+            if item.get("finalChoices") or item.get("finalAnswerIndex") is not None:
+                raise ValueError("basic syllable build must not contain final consonant controls")
+            continue
+
+        final_choices = item.get("finalChoices", [])
+        selected_final = _selected_build_part(
+            item, "finalChoices", "finalAnswerIndex"
+        )
+        if selected_final != part.coda:
+            raise ValueError("final answer does not reconstruct the result")
+        if training_type == "FINAL_SYLLABLE_BUILD":
+            if not part.coda or part.coda in COMPLEX_CODA_PARTS:
+                raise ValueError("final syllable build result must have one simple final consonant")
+            if any(choice in COMPLEX_CODA_PARTS for choice in final_choices):
+                raise ValueError("final syllable build choices must contain simple finals only")
+        else:
+            if part.coda not in COMPLEX_CODA_PARTS:
+                raise ValueError("double-final build result must have a complex final consonant")
+            if any(choice not in COMPLEX_CODA_PARTS for choice in final_choices):
+                raise ValueError("double-final build choices must contain complex finals only")
+
+
 def _normalize_mechanical_fields(
     request: TrainingCandidateRequest,
     response: TrainingCandidateResponse,
@@ -1033,6 +1111,16 @@ def _normalize_mechanical_fields(
             target = str(item.get("target", "")).strip()
             if target:
                 item["soundText"] = target
+        return
+    if request.trainingType in {
+        "BASIC_SYLLABLE_BUILD",
+        "FINAL_SYLLABLE_BUILD",
+        "DOUBLE_FINAL_BUILD",
+    }:
+        for item in response.data:
+            result = str(item.get("result", "")).strip()
+            if result:
+                item["targetAudioText"] = result
         return
     if request.trainingType != "SENTENCE_ASSEMBLY":
         return
@@ -1052,7 +1140,7 @@ def _compact(value: str) -> str:
 
 
 _BLANK_PARTICLE_PATTERN = re.compile(
-    r"\{\{blank\}\}\s*(으로|로|은|는|이|가|을|를|과|와)(?=\s|[,.!?]|$)"
+    r"\{\{blank\}\}\s*(\(을/를\)|\(이/가\)|\(은/는\)|\(과/와\)|\(으로/로\)|을/를|이/가|은/는|과/와|으로|로|은|는|이|가|을|를|과|와|에|에서|에게|한테|하고|도|만|까지|부터)(?=\s|[,.!?]|$)"
 )
 _PARTICLE_BY_CODA = {
     "은": True,
@@ -1070,14 +1158,17 @@ def _particle_agrees(sentence_template: str, answer: str) -> bool:
     match = _BLANK_PARTICLE_PATTERN.search(sentence_template)
     if match is None:
         return True
+    particle = match.group(1)
+    if "/" in particle or "(" in particle or particle not in _PARTICLE_BY_CODA and particle not in {"으로", "로"}:
+        return True
     syllables = [character for character in answer.strip() if "가" <= character <= "힣"]
     if not syllables:
         return False
     coda_index = (ord(syllables[-1]) - 0xAC00) % 28
-    particle = match.group(1)
     if particle in {"으로", "로"}:
         has_non_rieul_coda = coda_index not in {0, 8}
         return (particle == "으로") == has_non_rieul_coda
+    return _PARTICLE_BY_CODA[particle] == (coda_index != 0)
     return _PARTICLE_BY_CODA[particle] == (coda_index != 0)
 
 
