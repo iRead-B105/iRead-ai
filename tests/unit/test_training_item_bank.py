@@ -59,10 +59,10 @@ def test_builds_versioned_sqlite_bank_with_verified_atoms(tmp_path: Path) -> Non
     counts = repository.counts()
     units = repository.find_all_active()
 
-    assert counts["units"] == 150
+    assert counts["units"] == 154
     assert counts["features"] >= 200
     assert counts["confusions"] == 38
-    assert len(units) == 150
+    assert len(units) == 154
     assert {unit.unit_type for unit in units} == {
         "CONSONANT",
         "VOWEL",
@@ -87,6 +87,10 @@ def test_builds_versioned_sqlite_bank_with_verified_atoms(tmp_path: Path) -> Non
         "vowel_3",
         "vowel_4",
         "syllable_0",
+        "syllable_1",
+        "syllable_2",
+        "syllable_3",
+        "syllable_4",
     }
     assert {unit.trace_asset_key for unit in units if unit.trace_asset_key} == supported_trace_keys
 
@@ -114,20 +118,53 @@ def test_generates_word_final_questions_without_calling_an_llm(tmp_path: Path) -
 
     assert response is not None
     assert len(response.data) == 5
+    assert len({candidate["audioText"] for candidate in response.data}) == 5
     for candidate in response.data:
         assert decompose_text(candidate["audioText"])[-1].coda == "ㄴ"
         assert candidate["choices"][candidate["answerIndex"]] == "ㄴ"
 
 
-def test_keeps_the_requested_vowel_in_every_trace_candidate(tmp_path: Path) -> None:
+def test_final_consonant_choice_uses_distinct_syllables_and_spoken_final_sound(
+    tmp_path: Path,
+) -> None:
+    response = _generator(tmp_path / "final-consonant.sqlite3").generate(
+        _request("FINAL_CONSONANT_CHOICE", "GRAPHEME.CODA.SIMPLE.ㅊ")
+    )
+
+    assert response is not None
+    assert len(response.data) == 5
+    assert len({candidate["audioText"] for candidate in response.data}) == 5
+    for candidate in response.data:
+        assert len(candidate["audioText"]) == 1
+        assert decompose_text(candidate["audioText"])[-1].coda == "ㅊ"
+        assert set(candidate["choices"]) <= {"ㄱ", "ㄴ", "ㄷ", "ㄹ", "ㅁ", "ㅂ", "ㅇ"}
+        assert candidate["choices"][candidate["answerIndex"]] == "ㄷ"
+
+
+def test_keeps_the_requested_vowel_and_adds_distinct_review_trace_candidates(
+    tmp_path: Path,
+) -> None:
     response = _generator(tmp_path / "vowel-trace.sqlite3").generate(
         _request("VOWEL_TRACE", "GRAPHEME.VOWEL.BASIC.ㅏ")
     )
 
     assert response is not None
-    assert {candidate["target"] for candidate in response.data} == {"ㅏ"}
-    assert {candidate["traceAssetKey"] for candidate in response.data} == {"vowel_0"}
-    assert len({candidate["soundText"] for candidate in response.data}) == 5
+    assert response.data[0]["target"] == "ㅏ"
+    assert len({candidate["target"] for candidate in response.data}) == 5
+    assert all(candidate["soundText"] == candidate["target"] for candidate in response.data)
+
+
+def test_consonant_trace_sound_text_contains_only_the_pronunciation_target(
+    tmp_path: Path,
+) -> None:
+    response = _generator(tmp_path / "consonant-trace.sqlite3").generate(
+        _request("CONSONANT_TRACE", "GRAPHEME.ONSET.BASIC.ㅁ")
+    )
+
+    assert response is not None
+    assert response.data[0]["target"] == "ㅁ"
+    assert len({candidate["target"] for candidate in response.data}) == 5
+    assert all(candidate["soundText"] == candidate["target"] for candidate in response.data)
 
 
 def test_incompatible_profile_feature_never_delegates_a_trace_item_to_llm(

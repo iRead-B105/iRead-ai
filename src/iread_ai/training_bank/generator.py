@@ -7,6 +7,10 @@ from collections.abc import Callable, Iterable
 from iread_ai.generation_models import TrainingCandidateRequest, TrainingCandidateResponse
 from iread_ai.personalization.hangul import COMPLEX_CODA_PARTS, decompose_text
 from iread_ai.training_feature_compatibility import compatible_features
+from iread_ai.training_final_sounds import (
+    REPRESENTATIVE_FINAL_SOUNDS,
+    representative_final_sound,
+)
 
 from .models import LearningUnit
 from .repository import SQLiteLearningUnitRepository
@@ -127,6 +131,39 @@ _SIMILAR_GROUPS = (
     ("PLAIN_TENSE", "ㅈ", "ㅉ"),
     ("PLAIN_TENSE", "ㅅ", "ㅆ"),
 )
+
+_FINAL_CHOICE_WRITTEN_CODAS = REPRESENTATIVE_FINAL_SOUNDS
+
+_FINAL_CHOICE_BASES = (
+    ("ㄱ", "ㅏ"),
+    ("ㄴ", "ㅓ"),
+    ("ㄷ", "ㅗ"),
+    ("ㄹ", "ㅜ"),
+    ("ㅁ", "ㅣ"),
+    ("ㅂ", "ㅏ"),
+    ("ㅅ", "ㅓ"),
+    ("ㅈ", "ㅗ"),
+    ("ㅎ", "ㅏ"),
+)
+
+_FINAL_CHOICE_SYLLABLES: dict[str, tuple[str, ...]] = {
+    "ㄱ": ("각", "목", "북", "녹", "국"),
+    "ㄲ": ("밖", "엮", "볶", "닦", "묶"),
+    "ㄴ": ("간", "눈", "문", "산", "손"),
+    "ㄷ": ("곧", "닫", "믿", "받", "얻"),
+    "ㄹ": ("달", "길", "물", "별", "돌"),
+    "ㅁ": ("감", "몸", "밤", "봄", "꿈"),
+    "ㅂ": ("갑", "밥", "입", "컵", "법"),
+    "ㅅ": ("갓", "옷", "빗", "맛", "못"),
+    "ㅆ": ("있", "났", "했", "갔", "컸"),
+    "ㅇ": ("강", "공", "방", "빵", "콩"),
+    "ㅈ": ("낮", "빚", "젖", "잦", "맺"),
+    "ㅊ": ("꽃", "빛", "숯", "낯", "윷"),
+    "ㅋ": ("녘", "엌", "옼", "앜", "읔"),
+    "ㅌ": ("밭", "끝", "겉", "솥", "밑"),
+    "ㅍ": ("앞", "숲", "옆", "잎", "깊"),
+    "ㅎ": ("좋", "놓", "닿", "낳", "넣"),
+}
 _REPLACEMENTS = (
     ("나무", "나비", 1),
     ("바다", "바지", 1),
@@ -218,11 +255,15 @@ class RuleBasedBasicTrainingGenerator:
                 )
                 if candidate is None:
                     return None
-                signature = (
-                    f"source:{candidate['source']}"
-                    if request.trainingType == "SYLLABLE_DELETE"
-                    else repr(candidate)
-                )
+                if request.trainingType == "SYLLABLE_DELETE":
+                    signature = f"source:{candidate['source']}"
+                elif request.trainingType in {
+                    "FINAL_CONSONANT_CHOICE",
+                    "WORD_FINAL_SOUND_CHOICE",
+                }:
+                    signature = f"audioText:{candidate['audioText']}"
+                else:
+                    signature = repr(candidate)
                 if signature in canonical:
                     continue
                 canonical.add(signature)
@@ -286,6 +327,8 @@ class RuleBasedBasicTrainingGenerator:
         slot: int,
     ) -> list:
         targets = compatible_features(request.trainingType, request.targetFeatures)
+        if request.trainingType in {"VOWEL_TRACE", "CONSONANT_TRACE", "SYLLABLE_TRACE"}:
+            return [targets[slot]] if slot < len(targets) else []
         if request.trainingType in {"WORD_READING", "WORD_CHAIN_READING"}:
             return targets
         if len(targets) <= 1:
@@ -304,6 +347,8 @@ class RuleBasedBasicTrainingGenerator:
         training_type = request.trainingType
         if training_type == "FINAL_CONSONANT_DELETE":
             return self._final_consonant_delete(request, variant)
+        if training_type == "FINAL_CONSONANT_CHOICE":
+            return self._isolated_final_sound_choice(request, variant)
         palette_candidate = self._word_palette_candidate(
             request,
             training_type,
@@ -374,16 +419,26 @@ class RuleBasedBasicTrainingGenerator:
                 "choices": [{"text": value, "imagePrompt": ""} for value in choices],
                 "answerIndex": choices.index(correct_word.surface),
             }
-        if training_type in {"FINAL_CONSONANT_CHOICE", "WORD_FINAL_SOUND_CHOICE"}:
-            options = [
-                unit
-                for unit in units
-                if unit.unit_type == "CONSONANT"
-                and any(code.startswith("GRAPHEME.CODA.") for code in unit.feature_codes)
-            ]
-            return self._choice(
-                correct, correct.coda, options, lambda unit: unit.surface, units, variant
+        if training_type == "WORD_FINAL_SOUND_CHOICE":
+            answer = representative_final_sound(
+                correct.surface,
+                pronunciation=correct.pronunciation,
             )
+            if answer is None:
+                return None
+            distractors = [
+                sound for sound in REPRESENTATIVE_FINAL_SOUNDS if sound != answer
+            ]
+            rotated_distractors = self._rotate(distractors, variant)
+            choices = self._rotate(
+                [answer, rotated_distractors[0], rotated_distractors[1]],
+                variant,
+            )
+            return {
+                "audioText": correct.spoken_text,
+                "choices": choices,
+                "answerIndex": choices.index(answer),
+            }
         if training_type == "FINAL_CONSONANT_COMPARISON":
             options = [
                 unit
@@ -785,14 +840,7 @@ class RuleBasedBasicTrainingGenerator:
         unit: LearningUnit,
         variant: int,
     ) -> dict[str, object]:
-        sound_variants = (
-            unit.spoken_text,
-            f"{unit.spoken_text}, {unit.spoken_text}",
-            f"{unit.spoken_text} 소리",
-            f"{unit.spoken_text}를 따라 써요",
-            f"천천히 {unit.spoken_text}",
-        )
-        sound_text = sound_variants[variant % len(sound_variants)]
+        sound_text = unit.spoken_text
         if training_type == "VOWEL_TRACE":
             kind = (
                 "COMPLEX" if "GRAPHEME.VOWEL.COMPOUND" in ".".join(unit.feature_codes) else "BASIC"
@@ -845,6 +893,57 @@ class RuleBasedBasicTrainingGenerator:
             "audioText": correct_unit.spoken_text,
             "choices": choices,
             "answerIndex": choices.index(correct),
+        }
+
+    def _isolated_final_sound_choice(
+        self,
+        request: TrainingCandidateRequest,
+        variant: int,
+    ) -> dict[str, object] | None:
+        target_codes = [feature.featureCode for feature in request.targetFeatures]
+        exact_coda = next(
+            (
+                code.rsplit(".", 1)[-1]
+                for code in target_codes
+                if code.startswith("GRAPHEME.CODA.")
+            ),
+            None,
+        )
+        excluded_codas = {
+            code.rsplit(".", 1)[-1]
+            for code in request.excludedFeatures
+            if code.startswith("GRAPHEME.CODA.")
+        }
+        if exact_coda:
+            codas = [exact_coda]
+        else:
+            codas = [
+                coda for coda in _FINAL_CHOICE_WRITTEN_CODAS if coda not in excluded_codas
+            ]
+        if not codas:
+            return None
+        coda = codas[variant % len(codas)]
+        curated = _FINAL_CHOICE_SYLLABLES.get(coda, ())
+        if curated:
+            audio_text = curated[(variant // len(codas)) % len(curated)]
+        else:
+            onset, vowel = _FINAL_CHOICE_BASES[variant % len(_FINAL_CHOICE_BASES)]
+            audio_text = self._compose(onset, vowel, coda)
+        answer = representative_final_sound(audio_text)
+        if answer is None:
+            return None
+        distractors = [
+            sound for sound in REPRESENTATIVE_FINAL_SOUNDS if sound != answer
+        ]
+        rotated_distractors = self._rotate(distractors, variant)
+        choices = self._rotate(
+            [answer, rotated_distractors[0], rotated_distractors[1]],
+            variant,
+        )
+        return {
+            "audioText": audio_text,
+            "choices": choices,
+            "answerIndex": choices.index(answer),
         }
 
     def _choices(

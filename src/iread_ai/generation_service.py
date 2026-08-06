@@ -27,6 +27,10 @@ from .mock_generators import generate_training_candidates as mock_training_candi
 from .providers import GenerationProviderError, GMSTextProvider
 from .training_bank import default_basic_training_generator
 from .training_feature_compatibility import compatible_features
+from .training_final_sounds import (
+    REPRESENTATIVE_FINAL_SOUNDS,
+    representative_final_sound,
+)
 from .training_language_quality import (
     validate_complete_korean_sentence,
     validate_image_sentence_answer,
@@ -351,7 +355,8 @@ def generate_training(
         if validation_feedback:
             prompt_document["previousValidationFailure"] = validation_feedback
             prompt_document["generationRules"].append(
-                "이전 응답의 검증 실패 원인을 고쳐 완전히 새로운 후보 5개를 만드세요."
+                "이전 응답의 검증 실패 원인을 고쳐 완전히 새로운 후보 "
+                f"{request.count}개를 만드세요."
             )
         document = provider.generate_json(
             schema_name="iread_training_candidates",
@@ -414,6 +419,7 @@ def _validated_training_response(
         raise ValueError("training response type or count did not match request")
     _normalize_mechanical_fields(request, result)
     _validate_output_template(request, result)
+    _validate_final_sound_choices(request, result)
     _validate_hybrid_semantics(request, result)
     _validate_candidate_uniqueness(result)
     _reject_unsafe(result.model_dump_json())
@@ -937,10 +943,56 @@ def _validate_answer_index(item: dict[str, Any]) -> None:
         raise ValueError("answerIndex was outside the choice array")
 
 
+def _validate_final_sound_choices(
+    request: TrainingCandidateRequest,
+    response: TrainingCandidateResponse,
+) -> None:
+    if request.trainingType not in {
+        "FINAL_CONSONANT_CHOICE",
+        "WORD_FINAL_SOUND_CHOICE",
+    }:
+        return
+    audio_targets: set[str] = set()
+    allowed = set(REPRESENTATIVE_FINAL_SOUNDS)
+    for item in response.data:
+        _validate_answer_index(item)
+        audio_text = str(item.get("audioText", "")).strip()
+        choices = [str(choice) for choice in item.get("choices", [])]
+        hangul_syllables = re.findall(r"[가-힣]", audio_text)
+        if request.trainingType == "FINAL_CONSONANT_CHOICE":
+            if len(hangul_syllables) != 1 or audio_text != hangul_syllables[0]:
+                raise ValueError(
+                    "final consonant choice audioText must be one Hangul syllable"
+                )
+        elif not re.fullmatch(r"[가-힣]+", audio_text):
+            raise ValueError("word final sound choice audioText must be one Korean word")
+        if len(choices) != 3 or len(set(choices)) != 3 or not set(choices) <= allowed:
+            raise ValueError(
+                "final sound choices must contain three unique representative final sounds"
+            )
+        expected = representative_final_sound(audio_text)
+        answer_index = int(item["answerIndex"])
+        if expected is None or choices[answer_index] != expected:
+            raise ValueError("final sound answer did not match the standard final sound")
+        if audio_text in audio_targets:
+            raise ValueError("final sound candidates must use different audio targets")
+        audio_targets.add(audio_text)
+
+
 def _normalize_mechanical_fields(
     request: TrainingCandidateRequest,
     response: TrainingCandidateResponse,
 ) -> None:
+    if request.trainingType in {
+        "VOWEL_TRACE",
+        "CONSONANT_TRACE",
+        "SYLLABLE_TRACE",
+    }:
+        for item in response.data:
+            target = str(item.get("target", "")).strip()
+            if target:
+                item["soundText"] = target
+        return
     if request.trainingType != "SENTENCE_ASSEMBLY":
         return
     for item in response.data:
