@@ -219,6 +219,9 @@ def _build_branch_input_reviewer(settings: Settings) -> BranchInputReviewer:
         return DeterministicBranchInputReviewer()
     return OpenAICompatibleBranchInputReviewer(
         api_key=settings.story_api_key,
+        # 주의: 모델은 base_url(스토리 제공자)과 짝이 맞아야 한다. 그래서
+        # AI_BRANCH_REVIEW_MODEL 대신 제공자 모델을 쓴다. 별도 모델을 지정하려면
+        # 전용 base_url·키까지 함께 받도록 확장해야 한다.
         model=settings.openai_model,
         base_url=settings.story_api_base_url,
         timeout_seconds=settings.branch_review_timeout_seconds,
