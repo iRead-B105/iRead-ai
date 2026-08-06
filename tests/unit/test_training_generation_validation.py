@@ -519,3 +519,16 @@ def test_word_level_generation_does_not_apply_registered_word_validation() -> No
     assert lexicon.texts == []
     assert result.value.generationMetadata is not None
     assert result.value.generationMetadata.lexicalPolicy == "PSEUDOWORD_ALLOWED"
+
+
+def test_candidate_response_accepts_backend_question_count_of_three() -> None:
+    # 백엔드는 훈련당 문항 수를 3으로 보낸다. 요청(count)과 응답(data 길이) 모두
+    # 5 고정이 아니라 1~9 를 받아야 실제 생성 전환 시 계약 검증에서 거부되지 않는다.
+    request = _request("WORD_READING").model_copy(update={"count": 3})
+    assert request.count == 3
+
+    response = TrainingCandidateResponse(
+        type="WORD_READING",
+        data=[{"word": "가"}, {"word": "나"}, {"word": "다"}],
+    )
+    assert len(response.data) == 3
