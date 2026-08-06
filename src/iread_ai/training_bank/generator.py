@@ -120,6 +120,10 @@ _CODAS = (
     "ㅍ",
     "ㅎ",
 )
+_SIMPLE_CODAS = tuple(
+    coda for coda in _CODAS if coda and coda not in COMPLEX_CODA_PARTS
+)
+_COMPLEX_CODAS = tuple(coda for coda in _CODAS if coda in COMPLEX_CODA_PARTS)
 _SIMILAR_GROUPS = (
     ("PLAIN_ASPIRATED", "ㄱ", "ㅋ"),
     ("PLAIN_TENSE", "ㄱ", "ㄲ"),
@@ -263,6 +267,12 @@ class RuleBasedBasicTrainingGenerator:
                     "FINAL_CONSONANT_COMPARISON",
                 }:
                     signature = f"audioText:{candidate['audioText']}"
+                elif request.trainingType in {
+                    "BASIC_SYLLABLE_BUILD",
+                    "FINAL_SYLLABLE_BUILD",
+                    "DOUBLE_FINAL_BUILD",
+                }:
+                    signature = f"result:{candidate['result']}"
                 else:
                     signature = repr(candidate)
                 if signature in canonical:
@@ -716,8 +726,6 @@ class RuleBasedBasicTrainingGenerator:
                 ]
             )
         )
-        if len(words) < 4:
-            return None
         selected: list[str] = []
         practiced_features = [
             feature_code
@@ -729,9 +737,9 @@ class RuleBasedBasicTrainingGenerator:
         if len(practiced_features) > 1:
             per_feature = 2
         for feature_code in practiced_features:
-            feature_words = [word for word in palettes[feature_code] if allowed(word)]
+            feature_words = [word for word in palettes.get(feature_code, []) if allowed(word)]
             if not feature_words:
-                return None
+                continue
             preferred_words = [word for word in feature_words if word in curated_surfaces]
             fallback_words = [word for word in feature_words if word not in curated_surfaces]
             ordered_feature_words = [
@@ -762,6 +770,15 @@ class RuleBasedBasicTrainingGenerator:
                 selected.append(word)
             if len(selected) == 4:
                 break
+        if len(selected) < 4:
+            fallback_seeds = [
+                unit.surface for unit in units if unit.unit_type == "WORD" and allowed(unit.surface)
+            ]
+            for word in self._rotate(fallback_seeds, variant):
+                if word not in selected:
+                    selected.append(word)
+                if len(selected) == 4:
+                    break
         selected = selected[:4]
         if len(selected) < 4:
             return None
@@ -1079,7 +1096,12 @@ class RuleBasedBasicTrainingGenerator:
         }
         if training_type != "BASIC_SYLLABLE_BUILD":
             final = unit.coda or "ㄱ"
-            final_choices = self._option_values(final, _CODAS[1:], variant + 2)
+            final_pool = (
+                _COMPLEX_CODAS
+                if training_type == "DOUBLE_FINAL_BUILD"
+                else _SIMPLE_CODAS
+            )
+            final_choices = self._option_values(final, final_pool, variant + 2)
             result["finalChoices"] = final_choices
             result["finalAnswerIndex"] = final_choices.index(final)
         return result

@@ -106,6 +106,8 @@ CODAS = [
     "ㅍ",
     "ㅎ",
 ]
+COMPLEX_CODAS = ["ㄳ", "ㄵ", "ㄶ", "ㄺ", "ㄻ", "ㄼ", "ㄽ", "ㄾ", "ㄿ", "ㅀ", "ㅄ"]
+SIMPLE_CODAS = [coda for coda in CODAS if coda and coda not in COMPLEX_CODAS]
 
 
 def _rotate(values: list[str], index: int) -> list[str]:
@@ -283,7 +285,12 @@ def _candidate(training_type: str, index: int) -> dict[str, Any]:
             initial, ["ㄱ", "ㄴ", "ㄷ", "ㄹ", "ㅁ", "ㅂ", "ㅅ", "ㅇ"], 0
         )
         medial_choices = _choice_values(medial, ["ㅏ", "ㅓ", "ㅗ", "ㅜ", "ㅡ", "ㅣ"], 0)
-        final_choices = _choice_values(final, ["ㄱ", "ㄴ", "ㄹ", "ㅁ", "ㅂ", "ㅅ", "ㅇ"], 0)
+        final_pool = (
+            COMPLEX_CODAS
+            if training_type == "DOUBLE_FINAL_BUILD"
+            else SIMPLE_CODAS
+        )
+        final_choices = _choice_values(final, final_pool, 0)
         return {
             "targetAudioText": result,
             "initialChoices": initial_choices,
@@ -396,7 +403,7 @@ def _candidate(training_type: str, index: int) -> dict[str, Any]:
     if training_type == "SENTENCE_REPEAT":
         return {"sentence": SENTENCES[index], "emotion": "HAPPY" if index % 2 == 0 else "CALM"}
     if training_type == "WORD_CHAIN_READING":
-        return {"words": _rotate(WORDS, index)[:3], "requiredOrder": "SEQUENTIAL"}
+        return {"words": _rotate(WORDS, index)[:4], "requiredOrder": "SEQUENTIAL"}
     if training_type == "PHRASE_READING":
         sentence = SENTENCES[index]
         tokens = sentence[:-1].split(" ")

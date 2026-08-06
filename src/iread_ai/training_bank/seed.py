@@ -10,7 +10,7 @@ from iread_ai.personalization.hangul import (
     decompose_text,
 )
 
-BANK_VERSION = "4"
+BANK_VERSION = "5"
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,6 +122,8 @@ _SYLLABLE_DATA = (
     ("값", "갑", 4),
     ("닭", "닥", 4),
     ("삶", "삼", 4),
+    ("앉", "안", 4),
+    ("몫", "목", 4),
 )
 _WORD_DATA = (
     ("가방", 2),

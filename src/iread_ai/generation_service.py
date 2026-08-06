@@ -24,6 +24,7 @@ from .generation_models import (
 from .lexicon.contracts import LexiconPaletteRequest, LexiconTargetFeature
 from .lexicon.service import LexiconPaletteService, LexiconUnavailableError
 from .mock_generators import generate_training_candidates as mock_training_candidates
+from .personalization.hangul import COMPLEX_CODA_PARTS, decompose_text
 from .providers import GenerationProviderError, GMSTextProvider
 from .training_bank import default_basic_training_generator
 from .training_feature_compatibility import compatible_features
@@ -419,6 +420,7 @@ def _validated_training_response(
         raise ValueError("training response type or count did not match request")
     _normalize_mechanical_fields(request, result)
     _validate_output_template(request, result)
+    _validate_syllable_builds(request, result)
     _validate_final_sound_choices(request, result)
     _validate_hybrid_semantics(request, result)
     _validate_candidate_uniqueness(result)
@@ -1020,6 +1022,64 @@ def _is_one_hangul_syllable(value: str) -> bool:
     return len(value) == 1 and "가" <= value <= "힣"
 
 
+def _selected_build_part(item: dict[str, Any], choices_key: str, index_key: str) -> str:
+    choices = item.get(choices_key, [])
+    if not isinstance(choices, list) or len(choices) != 3 or len(set(choices)) != 3:
+        raise ValueError(f"{choices_key} must contain three unique values")
+    index = item.get(index_key)
+    if not isinstance(index, int) or not 0 <= index < len(choices):
+        raise ValueError(f"{index_key} is outside {choices_key}")
+    return str(choices[index])
+
+
+def _validate_syllable_builds(
+    request: TrainingCandidateRequest,
+    response: TrainingCandidateResponse,
+) -> None:
+    training_type = request.trainingType
+    if training_type not in {
+        "BASIC_SYLLABLE_BUILD",
+        "FINAL_SYLLABLE_BUILD",
+        "DOUBLE_FINAL_BUILD",
+    }:
+        return
+
+    for item in response.data:
+        result = str(item.get("result", "")).strip()
+        audio = str(item.get("targetAudioText", "")).strip()
+        if not _is_one_hangul_syllable(result) or audio != result:
+            raise ValueError("syllable build audio and result must be the same Hangul syllable")
+        part = decompose_text(result)[0]
+        if _selected_build_part(item, "initialChoices", "initialAnswerIndex") != part.onset:
+            raise ValueError("initial answer does not reconstruct the result")
+        if _selected_build_part(item, "medialChoices", "medialAnswerIndex") != part.nucleus:
+            raise ValueError("medial answer does not reconstruct the result")
+
+        if training_type == "BASIC_SYLLABLE_BUILD":
+            if part.coda:
+                raise ValueError("basic syllable build result must not have a final consonant")
+            if item.get("finalChoices") or item.get("finalAnswerIndex") is not None:
+                raise ValueError("basic syllable build must not contain final consonant controls")
+            continue
+
+        final_choices = item.get("finalChoices", [])
+        selected_final = _selected_build_part(
+            item, "finalChoices", "finalAnswerIndex"
+        )
+        if selected_final != part.coda:
+            raise ValueError("final answer does not reconstruct the result")
+        if training_type == "FINAL_SYLLABLE_BUILD":
+            if not part.coda or part.coda in COMPLEX_CODA_PARTS:
+                raise ValueError("final syllable build result must have one simple final consonant")
+            if any(choice in COMPLEX_CODA_PARTS for choice in final_choices):
+                raise ValueError("final syllable build choices must contain simple finals only")
+        else:
+            if part.coda not in COMPLEX_CODA_PARTS:
+                raise ValueError("double-final build result must have a complex final consonant")
+            if any(choice not in COMPLEX_CODA_PARTS for choice in final_choices):
+                raise ValueError("double-final build choices must contain complex finals only")
+
+
 def _normalize_mechanical_fields(
     request: TrainingCandidateRequest,
     response: TrainingCandidateResponse,
@@ -1033,6 +1093,16 @@ def _normalize_mechanical_fields(
             target = str(item.get("target", "")).strip()
             if target:
                 item["soundText"] = target
+        return
+    if request.trainingType in {
+        "BASIC_SYLLABLE_BUILD",
+        "FINAL_SYLLABLE_BUILD",
+        "DOUBLE_FINAL_BUILD",
+    }:
+        for item in response.data:
+            result = str(item.get("result", "")).strip()
+            if result:
+                item["targetAudioText"] = result
         return
     if request.trainingType != "SENTENCE_ASSEMBLY":
         return
