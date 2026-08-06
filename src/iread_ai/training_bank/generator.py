@@ -260,6 +260,7 @@ class RuleBasedBasicTrainingGenerator:
                 elif request.trainingType in {
                     "FINAL_CONSONANT_CHOICE",
                     "WORD_FINAL_SOUND_CHOICE",
+                    "FINAL_CONSONANT_COMPARISON",
                 }:
                     signature = f"audioText:{candidate['audioText']}"
                 else:
@@ -349,6 +350,8 @@ class RuleBasedBasicTrainingGenerator:
             return self._final_consonant_delete(request, variant)
         if training_type == "FINAL_CONSONANT_CHOICE":
             return self._isolated_final_sound_choice(request, variant)
+        if training_type == "FINAL_CONSONANT_COMPARISON":
+            return self._final_consonant_comparison(request, variant)
         palette_candidate = self._word_palette_candidate(
             request,
             training_type,
@@ -440,6 +443,12 @@ class RuleBasedBasicTrainingGenerator:
                 "answerIndex": choices.index(answer),
             }
         if training_type == "FINAL_CONSONANT_COMPARISON":
+            correct_sound = representative_final_sound(
+                correct.surface,
+                pronunciation=correct.pronunciation,
+            )
+            if correct_sound is None:
+                return None
             options = [
                 unit
                 for unit in units
@@ -447,10 +456,32 @@ class RuleBasedBasicTrainingGenerator:
                 and unit.coda
                 and unit.onset == correct.onset
                 and unit.vowel == correct.vowel
+                and representative_final_sound(
+                    unit.surface,
+                    pronunciation=unit.pronunciation,
+                )
+                != correct_sound
             ]
-            return self._choice(
-                correct, correct.surface, options, lambda unit: unit.surface, units, variant
+            distractors_by_sound: dict[str, LearningUnit] = {}
+            for unit in self._rotate(options, variant):
+                sound = representative_final_sound(
+                    unit.surface,
+                    pronunciation=unit.pronunciation,
+                )
+                if sound is not None and sound not in distractors_by_sound:
+                    distractors_by_sound[sound] = unit
+            if len(distractors_by_sound) < 2:
+                return None
+            distractors = list(distractors_by_sound.values())[:2]
+            choices = self._rotate(
+                [correct.surface, distractors[0].surface, distractors[1].surface],
+                variant,
             )
+            return {
+                "audioText": correct.spoken_text,
+                "choices": choices,
+                "answerIndex": choices.index(correct.surface),
+            }
         if training_type == "SIMILAR_SOUND_CHOICE":
             matching_groups = [
                 entry for entry in _SIMILAR_GROUPS if correct.surface in entry[1:]
@@ -944,6 +975,60 @@ class RuleBasedBasicTrainingGenerator:
             "audioText": audio_text,
             "choices": choices,
             "answerIndex": choices.index(answer),
+        }
+
+    def _final_consonant_comparison(
+        self,
+        request: TrainingCandidateRequest,
+        variant: int,
+    ) -> dict[str, object] | None:
+        target_codes = [feature.featureCode for feature in request.targetFeatures]
+        exact_coda = next(
+            (
+                code.rsplit(".", 1)[-1]
+                for code in target_codes
+                if code.startswith("GRAPHEME.CODA.")
+            ),
+            None,
+        )
+        excluded_codas = {
+            code.rsplit(".", 1)[-1]
+            for code in request.excludedFeatures
+            if code.startswith("GRAPHEME.CODA.")
+        }
+        codas = [exact_coda] if exact_coda else [
+            coda for coda in _FINAL_CHOICE_WRITTEN_CODAS if coda not in excluded_codas
+        ]
+        if not codas:
+            return None
+        coda = codas[variant % len(codas)]
+        curated = _FINAL_CHOICE_SYLLABLES.get(coda, ())
+        if curated:
+            audio_text = curated[(variant // len(codas)) % len(curated)]
+            syllable = decompose_text(audio_text)[0]
+            onset, vowel = syllable.onset, syllable.nucleus
+        else:
+            onset, vowel = _FINAL_CHOICE_BASES[variant % len(_FINAL_CHOICE_BASES)]
+            audio_text = self._compose(onset, vowel, coda)
+        answer_sound = representative_final_sound(audio_text)
+        if answer_sound is None:
+            return None
+        distractor_sounds = [
+            sound for sound in REPRESENTATIVE_FINAL_SOUNDS if sound != answer_sound
+        ]
+        distractor_sounds = self._rotate(distractor_sounds, variant)
+        choices = self._rotate(
+            [
+                audio_text,
+                self._compose(onset, vowel, distractor_sounds[0]),
+                self._compose(onset, vowel, distractor_sounds[1]),
+            ],
+            variant,
+        )
+        return {
+            "audioText": audio_text,
+            "choices": choices,
+            "answerIndex": choices.index(audio_text),
         }
 
     def _choices(

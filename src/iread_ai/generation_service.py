@@ -947,6 +947,43 @@ def _validate_final_sound_choices(
     request: TrainingCandidateRequest,
     response: TrainingCandidateResponse,
 ) -> None:
+    if request.trainingType == "FINAL_CONSONANT_COMPARISON":
+        audio_targets: set[str] = set()
+        for item in response.data:
+            _validate_answer_index(item)
+            audio_text = str(item.get("audioText", "")).strip()
+            choices = [str(choice).strip() for choice in item.get("choices", [])]
+            if not _is_one_hangul_syllable(audio_text):
+                raise ValueError("final consonant comparison audioText must be one syllable")
+            if (
+                len(choices) != 3
+                or len(set(choices)) != 3
+                or not all(_is_one_hangul_syllable(choice) for choice in choices)
+            ):
+                raise ValueError(
+                    "final consonant comparison choices must be three unique syllables"
+                )
+            answer_index = int(item["answerIndex"])
+            if choices[answer_index] != audio_text:
+                raise ValueError(
+                    "final consonant comparison answer must match the heard syllable"
+                )
+            bases = {(ord(choice) - 0xAC00) // 28 for choice in choices}
+            if len(bases) != 1:
+                raise ValueError(
+                    "final consonant comparison choices must share onset and vowel"
+                )
+            heard_sounds = [representative_final_sound(choice) for choice in choices]
+            if None in heard_sounds or len(set(heard_sounds)) != len(heard_sounds):
+                raise ValueError(
+                    "final consonant comparison choices must have different heard finals"
+                )
+            if audio_text in audio_targets:
+                raise ValueError(
+                    "final consonant comparison candidates must use different audio targets"
+                )
+            audio_targets.add(audio_text)
+        return
     if request.trainingType not in {
         "FINAL_CONSONANT_CHOICE",
         "WORD_FINAL_SOUND_CHOICE",
@@ -977,6 +1014,10 @@ def _validate_final_sound_choices(
         if audio_text in audio_targets:
             raise ValueError("final sound candidates must use different audio targets")
         audio_targets.add(audio_text)
+
+
+def _is_one_hangul_syllable(value: str) -> bool:
+    return len(value) == 1 and "가" <= value <= "힣"
 
 
 def _normalize_mechanical_fields(

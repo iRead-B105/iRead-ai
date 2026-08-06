@@ -76,6 +76,39 @@ def test_word_final_sound_choice_rejects_duplicate_words() -> None:
         _validate_final_sound_choices(request, response)
 
 
+def test_final_consonant_comparison_rejects_same_heard_final_sound() -> None:
+    request = _request("FINAL_CONSONANT_COMPARISON").model_copy(update={"count": 1})
+    response = TrainingCandidateResponse(
+        type="FINAL_CONSONANT_COMPARISON",
+        data=[
+            {
+                "audioText": "국",
+                "choices": ["국", "굮", "군"],
+                "answerIndex": 0,
+            }
+        ],
+    )
+
+    with pytest.raises(ValueError, match="different heard finals"):
+        _validate_final_sound_choices(request, response)
+
+
+def test_final_consonant_comparison_accepts_distinct_heard_final_sounds() -> None:
+    request = _request("FINAL_CONSONANT_COMPARISON").model_copy(update={"count": 1})
+    response = TrainingCandidateResponse(
+        type="FINAL_CONSONANT_COMPARISON",
+        data=[
+            {
+                "audioText": "국",
+                "choices": ["군", "국", "굳"],
+                "answerIndex": 1,
+            }
+        ],
+    )
+
+    _validate_final_sound_choices(request, response)
+
+
 class _LexiconService:
     def build_palette(self, request):
         feature = request.targetFeatures[0].featureCode if request.targetFeatures else "default"

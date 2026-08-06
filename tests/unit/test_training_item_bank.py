@@ -17,6 +17,7 @@ from iread_ai.training_bank import (
     SQLiteLearningUnitRepository,
 )
 from iread_ai.training_bank.seed import unit_seeds
+from iread_ai.training_final_sounds import representative_final_sound
 
 
 def _request(training_type: str, feature_code: str) -> TrainingCandidateRequest:
@@ -139,6 +140,22 @@ def test_final_consonant_choice_uses_distinct_syllables_and_spoken_final_sound(
         assert decompose_text(candidate["audioText"])[-1].coda == "ㅊ"
         assert set(candidate["choices"]) <= {"ㄱ", "ㄴ", "ㄷ", "ㄹ", "ㅁ", "ㅂ", "ㅇ"}
         assert candidate["choices"][candidate["answerIndex"]] == "ㄷ"
+
+
+def test_final_consonant_comparison_uses_audibly_distinct_choices(
+    tmp_path: Path,
+) -> None:
+    response = _generator(tmp_path / "final-comparison.sqlite3").generate(
+        _request("FINAL_CONSONANT_COMPARISON", "GRAPHEME.CODA.SIMPLE.ㄱ")
+    )
+
+    assert response is not None
+    for candidate in response.data:
+        choices = candidate["choices"]
+        assert choices[candidate["answerIndex"]] == candidate["audioText"]
+        assert len({representative_final_sound(choice) for choice in choices}) == 3
+        bases = {(ord(choice) - 0xAC00) // 28 for choice in choices}
+        assert len(bases) == 1
 
 
 def test_keeps_the_requested_vowel_and_adds_distinct_review_trace_candidates(
