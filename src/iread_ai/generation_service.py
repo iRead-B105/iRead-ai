@@ -96,7 +96,7 @@ _UNSAFE_TERMS = (
 _FEATURE_GUIDES = {
     "PHONOLOGY.NASALIZATION": (
         "비음화: 받침의 대표음 ㄱ·ㄷ·ㅂ 뒤에 초성 ㄴ·ㅁ이 와서 "
-        "각각 ㅇ·ㄴ·ㅁ으로 발음되는 배열. 한 낱말 예: 국물, 앞니, 막내, 읽는."
+        "각각 ㅇ·ㄴ·ㅁ으로 발음되는 배열. 한 낱말 예: 작문, 앞니, 막내, 신발, 학년."
     ),
     "SYLLABLE.COMPLEX_CODA": (
         "겹받침: 표기에 ㄳ·ㄵ·ㄶ·ㄺ·ㄻ·ㄼ·ㄽ·ㄾ·ㄿ·ㅀ·ㅄ 중 하나가 "
@@ -109,7 +109,7 @@ _HYBRID_TYPE_GUIDES = {
         "아이 수준에 맞는 자연스러운 한 문장을 만들고, 문장에 실제로 포함된 어려운 "
         "낱말을 골라 한글 음절 단위로 정확히 분해하세요. difficultWords의 word에는 "
         "공백이나 문장부호가 없는 한 개의 한국어 낱말만 넣으세요. '밥 먹기'처럼 "
-        "띄어 쓴 구는 금지하며, 비음화 목표라면 '국물' 또는 '앞니' 같은 한 낱말을 쓰세요."
+        "띄어 쓴 구는 금지하며, 비음화 목표라면 '작문' 또는 '앞니' 같은 한 낱말을 쓰세요."
     ),
     "SENTENCE_READING": (
         "한 가지 분명한 사건을 담은 자연스러운 문장을 만들고 tokens에는 문장을 읽는 "
@@ -144,7 +144,7 @@ _HYBRID_TYPE_GUIDES = {
         "나누세요. phrases를 순서대로 합치면 sentence와 같아야 합니다."
     ),
     "REPEATED_SENTENCE_READING": (
-        "반복해 읽기 좋은 자연스러운 한 문장과 2~4 사이의 repeatCount를 만드세요."
+        "소리 내어 한 번에 유창하게 읽기 좋은 완결된 1개의 자연스러운 문장(sentence)과 2~4 사이의 repeatCount를 포함한 문항을 만드세요. 여러 문장이 연결된 하나의 이야기를 나누어 넣지 마시고, 3개의 문항(data[0], data[1], data[2])은 서로 주인공, 배경, 사건이 100% 다른 완전히 독립된 문장이어야 합니다."
     ),
     "SHORT_STORY_READING": (
         "한 사건이 시작되고 변화한 뒤 마무리되는 짧은 이야기로 만드세요. 설명과 짧은 "
@@ -440,8 +440,8 @@ def _review_training_response(
             "어색한 조사, 잘못된 활용, 주어와 서술어 호응을 바로잡으세요.",
             "짧은 글과 이야기의 문장들은 같은 사건의 원인, 행동, 결과 순서로 이어지게 하세요.",
             "추천 단어를 모두 넣기 위해 주인공이나 소재를 바꾸지 말고, 문맥을 깨는 단어는 빼세요.",
-            "'수아는 국물이 먹고 싶었어요'처럼 목적어에 이/가를 붙이지 말고 "
-            "'수아는 국물을 먹고 싶었어요'처럼 조사와 서술어의 관계를 바로잡으세요.",
+            "'아이가 음식을 먹고 싶었어요'처럼 목적어 조사를 올바르게 사용하고 "
+            "'아이가 음식을 먹고 싶었어요'처럼 조사와 서술어의 관계를 바로잡으세요.",
             "SHORT_STORY_READING의 CHARACTER 문장은 큰따옴표 안의 직접 대사여야 합니다.",
             "그림 문항은 imagePrompt와 정확히 일치하는 선택지가 answerIndex에 오게 하세요.",
             "빈칸 문항은 정답만 문맥상 자연스럽고 오답은 분명히 틀리게 하세요.",
@@ -486,13 +486,23 @@ def _training_prompt_document(request: TrainingCandidateRequest) -> dict[str, An
         }
         for index, features in enumerate(target_plan)
     ]
+    difficulty_rule = (
+        "기초형(난이도 1): 각 문장은 2~3어절, 10자 이내의 매우 쉽고 명확한 단문이어야 합니다."
+        if request.difficulty <= 1
+        else (
+            "숙달형(난이도 4~5): 각 문장은 4~5어절, 18~24자 이내의 길고 완성도 높은 문장이어야 합니다."
+            if request.difficulty >= 4
+            else "진행형(난이도 2~3): 각 문장은 3~4어절, 13~16자 이내의 자연스러운 문장이어야 합니다."
+        )
+    )
     document["generationRules"] = [
+        difficulty_rule,
         "각 data 문항에는 targetDistribution의 같은 dataIndex에 배정된 목표만 "
         "최소 한 번 포함하세요.",
         "한 문항에 모든 targetFeatures를 억지로 동시에 넣지 마세요.",
         "첫 번째 목표는 3문항, 두 번째 목표는 2문항에 분산하세요.",
         "featureCode 문자열을 문장에 그대로 쓰지 말고 실제 한국어 예시로 구현하세요.",
-        "다섯 문항은 서로 다른 자연스러운 문장으로 만드세요.",
+        "모든 문항(data[0], data[1], data[2])은 서로 주인공, 장소, 사건이 100% 다른 독자적인 개별 문장이어야 합니다.",
     ]
     if request.trainingType in REAL_WORD_ONLY_TYPES:
         document["lexicalPolicy"] = {
@@ -934,6 +944,13 @@ def _validate_candidate_uniqueness(response: TrainingCandidateResponse) -> None:
     }
     if len(canonical_candidates) != len(response.data):
         raise ValueError("training candidates must not be duplicated")
+    sentences = [
+        str(item.get("sentence", "")).strip()
+        for item in response.data
+        if "sentence" in item and str(item.get("sentence", "")).strip()
+    ]
+    if sentences and len(set(sentences)) != len(sentences):
+        raise ValueError("training candidate sentences must be unique")
 
 
 def _validate_answer_index(item: dict[str, Any]) -> None:
