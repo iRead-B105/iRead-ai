@@ -98,7 +98,7 @@ class Settings(BaseSettings):
     )
     chapter_candidate_count: int = Field(default=1, ge=1, le=8)
     chapter_quality_retry_count: int = Field(
-        default=2,
+        default=1,
         ge=0,
         le=2,
         validation_alias="CHAPTER_QUALITY_RETRY_COUNT",
