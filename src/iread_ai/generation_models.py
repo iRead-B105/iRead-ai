@@ -72,7 +72,7 @@ class TrainingGenerationMetadata(ContractModel):
 
 class TrainingCandidateResponse(ContractModel):
     type: str
-    data: list[dict[str, Any]] = Field(min_length=5, max_length=5)
+    data: list[dict[str, Any]] = Field(min_length=1, max_length=9)
     generationMetadata: TrainingGenerationMetadata | None = None
 
 
