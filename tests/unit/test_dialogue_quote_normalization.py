@@ -28,7 +28,9 @@ def test_keeps_sentences_without_dialogue_unchanged() -> None:
 
 
 def test_keeps_unbalanced_straight_quote_unchanged() -> None:
-    assert normalize_dialogue_quotes('홀수 " 인용부는 그대로 둬요.') == '홀수 " 인용부는 그대로 둬요.'
+    source = '홀수 " 인용부는 그대로 둬요.'
+
+    assert normalize_dialogue_quotes(source) == source
 
 
 def test_normalized_dialogue_passes_contract_check() -> None:
