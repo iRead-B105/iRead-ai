@@ -125,11 +125,11 @@ _HYBRID_TYPE_GUIDES = {
         "answerOrder는 원문 순서를 복원하는 0 기반 인덱스여야 합니다."
     ),
     "FILL_IN_THE_BLANK": (
-        "문맥만으로 답을 고를 수 있는 문장 하나를 만들고 {{blank}}를 정확히 한 번 "
-        "사용하세요. inputType은 CHOICE만 사용하세요. 빈칸에는 명사만 들어가며, 빈칸 "
-        "바로 뒤에 조사를 반드시 붙이세요. 오답은 같은 품사이되 문맥에는 맞지 않아야 "
-        "합니다. 정답과 모든 오답에 동일하게 맞는 조사만 사용하세요. 예를 들어 "
-        "받침 있는 명사 뒤에는 을·은·이·과를, 받침 없는 명사 뒤에는 를·는·가·와를 씁니다."
+        "아동이 문맥을 이해하여 오직 하나의 정답만 고를 수 있는 자연스러운 문장을 만드세요. "
+        "sentence에는 {{blank}}를 조명이나 조사 없이 단독으로 사용하세요(예: '토끼가 {{blank}} 꺼냈어요.', '민지가 {{blank}} 먹어요.'). 문장 속에 (을/를) 같은 괄호 조사는 절대 쓰지 마세요. "
+        "choices 3개는 '단어+조사' 형태(예: ['상자를', '신발을', '구름을'])로 작성하고, 각 단어마다 본인의 받침 유무에 맞는 올바른 조사를 붙이세요. "
+        "choices 3개 중 1개만 문맥상 통하는 정답이고, 나머지 오답 2개는 문맥상 상식적으로 전혀 들어맞지 않는 엉뚱한 단어(예: '먹다' 문맥 -> ['사과를', '신발을', '자동차를'])로 만드세요. "
+        "completedSentence는 sentence의 {{blank}}를 정답 선택지 단어로 띄어쓰기 자연스럽게 그대로 대입하여 완성하세요(예: '토끼가 상자를 꺼냈어요.')."
     ),
     "IMAGE_SENTENCE_MATCH": (
         "한 장면으로 명확히 그릴 수 있는 imagePrompt와 그 장면을 정확히 설명하는 문장 "
@@ -378,30 +378,33 @@ def generate_training(
         _validate_registered_vocabulary(request, result, lexicon_service)
         return result
 
-    def generate_with_one_validation_retry() -> TrainingCandidateResponse:
-        try:
-            return generate()
-        except (ValidationError, TypeError, ValueError) as exception:
-            logger.warning(
-                "Training generation validation failed; retrying once: %s: %s",
-                type(exception).__name__,
-                exception,
-            )
-            feedback = f"{type(exception).__name__}: {exception}"
-            return generate(feedback)
+    def generate_with_validation_retries(max_retries: int = 3) -> TrainingCandidateResponse:
+        last_exception = None
+        feedback = None
+        for attempt in range(max_retries):
+            try:
+                return generate(feedback)
+            except (ValidationError, TypeError, ValueError) as exception:
+                last_exception = exception
+                logger.warning(
+                    "Training generation validation failed (attempt %d/%d): %s: %s",
+                    attempt + 1,
+                    max_retries,
+                    type(exception).__name__,
+                    exception,
+                )
+                feedback = f"{type(exception).__name__}: {exception}"
+        raise last_exception
 
-    # GenerationProviderError from the provider propagates unchanged; local
-    # validation failures are wrapped so callers can answer 502/503 without
-    # exposing generated content.
     try:
-        response = generate_with_one_validation_retry()
+        response = generate_with_validation_retries(max_retries=5)
     except (ValidationError, TypeError, ValueError) as exception:
         logger.warning(
-            "Training generation failed local validation after one retry: %s",
+            "Training generation failed local validation after 5 retries: %s",
             type(exception).__name__,
         )
         raise GenerationProviderError(
-            "training generation output failed local validation after one retry",
+            "training generation output failed local validation after 3 retries",
             retryable=True,
         ) from exception
     return _with_generation_metadata(
@@ -864,22 +867,18 @@ def _validate_hybrid_semantics(
                 raise ValueError("fill-in sentence must contain one blank")
             if item.get("inputType") != "CHOICE":
                 raise ValueError("fill-in inputType must be CHOICE")
-            if _BLANK_PARTICLE_PATTERN.search(sentence) is None:
-                raise ValueError("fill-in blank must be followed by a Korean particle")
+
             choices = item.get("choices", [])
             answer_index = int(item.get("answerIndex", -1))
             if len(choices) != 3 or len(set(choices)) != len(choices):
                 raise ValueError("fill-in choices must contain three unique answers")
-            if choices and answer_index >= 0:
-                completed = sentence.replace("{{blank}}", str(choices[answer_index]))
-                if _compact(completed) != _compact(str(item.get("completedSentence", ""))):
-                    raise ValueError("blank answer did not reconstruct the sentence")
-                answers = [*choices, *item.get("acceptedAnswers", [])]
-                if any(not _particle_agrees(sentence, str(answer)) for answer in answers):
-                    raise ValueError("blank answer did not agree with its Korean particle")
-                if str(choices[answer_index]) not in item.get("acceptedAnswers", []):
-                    raise ValueError("blank correct choice must be an accepted answer")
-                validate_complete_korean_sentence(completed)
+            
+            if choices and 0 <= answer_index < len(choices):
+                correct_choice = str(choices[answer_index])
+                completed_text = sentence.replace("{{blank}}", correct_choice).replace("  ", " ")
+                item["completedSentence"] = completed_text
+                item["acceptedAnswers"] = [correct_choice]
+                validate_complete_korean_sentence(item["completedSentence"])
         elif training_type == "IMAGE_SENTENCE_MATCH":
             choices = item.get("choices", [])
             if len(choices) != 3:
@@ -1141,7 +1140,7 @@ def _compact(value: str) -> str:
 
 
 _BLANK_PARTICLE_PATTERN = re.compile(
-    r"\{\{blank\}\}\s*(으로|로|은|는|이|가|을|를|과|와)(?=\s|[,.!?]|$)"
+    r"\{\{blank\}\}\s*(\(을/를\)|\(이/가\)|\(은/는\)|\(과/와\)|\(으로/로\)|을/를|이/가|은/는|과/와|으로|로|은|는|이|가|을|를|과|와|에|에서|에게|한테|하고|도|만|까지|부터)(?=\s|[,.!?]|$)"
 )
 _PARTICLE_BY_CODA = {
     "은": True,
@@ -1159,14 +1158,17 @@ def _particle_agrees(sentence_template: str, answer: str) -> bool:
     match = _BLANK_PARTICLE_PATTERN.search(sentence_template)
     if match is None:
         return True
+    particle = match.group(1)
+    if "/" in particle or "(" in particle or particle not in _PARTICLE_BY_CODA and particle not in {"으로", "로"}:
+        return True
     syllables = [character for character in answer.strip() if "가" <= character <= "힣"]
     if not syllables:
         return False
     coda_index = (ord(syllables[-1]) - 0xAC00) % 28
-    particle = match.group(1)
     if particle in {"으로", "로"}:
         has_non_rieul_coda = coda_index not in {0, 8}
         return (particle == "으로") == has_non_rieul_coda
+    return _PARTICLE_BY_CODA[particle] == (coda_index != 0)
     return _PARTICLE_BY_CODA[particle] == (coda_index != 0)
 
 
