@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import mimetypes
+import re
 import unicodedata
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -17,6 +18,10 @@ ANALYSIS_VERSION = "AZURE_SPEECH_KO_KR_WORD_V1"
 DETERMINISTIC_ANALYSIS_VERSION = "IREAD_DETERMINISTIC_KO_KR_WORD_V1"
 GMS_STT_ANALYSIS_VERSION = "GMS_WHISPER1_STT_READING_MATCH_KO_KR_V1"
 TICKS_PER_MILLISECOND = 10_000
+
+# Backend 의 기준 단어 분리 규칙(StoryLineContentService.REFERENCE_WORD_PATTERN)과 같아야
+# 단어 정렬이 맞는다. 다르면 Backend 가 정렬 실패로 409 를 낸다.
+REFERENCE_WORD_PATTERN = re.compile(r"[가-힣ㄱ-ㅎㅏ-ㅣA-Za-z0-9]+")
 
 
 class PronunciationProviderError(RuntimeError):
@@ -44,6 +49,11 @@ class AzurePronunciationProvider:
         try:
             path = stage_azure_audio(audio, original_filename)
             payload = self._recognize(reference_text, path)
+            if payload is None:
+                return unrecognized_pronunciation_result(
+                    request_id=request_id,
+                    reference_text=reference_text,
+                )
             return parse_azure_result(request_id=request_id, payload=payload)
         except AudioPreparationError as exception:
             raise PronunciationProviderError(str(exception)) from exception
@@ -51,7 +61,8 @@ class AzurePronunciationProvider:
             if path is not None:
                 path.unlink(missing_ok=True)
 
-    def _recognize(self, reference_text: str, audio_path: Path) -> dict[str, Any]:
+    def _recognize(self, reference_text: str, audio_path: Path) -> dict[str, Any] | None:
+        """Azure 평가 원본 JSON. 기준 문장으로 인식되지 않으면 None."""
         try:
             import azure.cognitiveservices.speech as speechsdk
         except ImportError as exception:
@@ -75,8 +86,19 @@ class AzurePronunciationProvider:
         )
         assessment.apply_to(recognizer)
         result = recognizer.recognize_once_async().get()
+        if result.reason == speechsdk.ResultReason.NoMatch:
+            # 소리는 들어왔지만 기준 문장으로 인식하지 못한 경우다. 아이가 알아듣기
+            # 어렵게 읽거나 아무 말도 하지 않은 상황이며 업스트림 장애가 아니므로,
+            # 502 로 올리지 않고 0점 결과로 만든다. STT provider 도 NoMatch 를 빈
+            # transcript 로 다룬다(speech.py).
+            return None
         if result.reason != speechsdk.ResultReason.RecognizedSpeech:
-            raise PronunciationProviderError("Azure Speech did not recognize the audio")
+            # 여기 남는 것은 Canceled(인증·요금·네트워크) 같은 실제 실패뿐이다.
+            # 원인 파악용으로 reason 만 남긴다. error_details 는 자격증명이 섞일 수
+            # 있어 넣지 않는다.
+            raise PronunciationProviderError(
+                f"Azure Speech assessment failed with reason {result.reason}"
+            )
         raw = result.properties.get(speechsdk.PropertyId.SpeechServiceResponse_JsonResult)
         try:
             return json.loads(raw)
@@ -195,6 +217,43 @@ class DeterministicPronunciationProvider:
                 for index, word in enumerate(words)
             ],
         )
+
+
+def unrecognized_pronunciation_result(
+    *,
+    request_id: str,
+    reference_text: str,
+) -> PronunciationAnalysisResponse:
+    """기준 문장으로 인식되지 않은 발화의 0점 결과.
+
+    Azure 가 NoMatch 를 주는 상황(알아듣기 어려운 발음, 무음)을 평가 실패가 아니라
+    '아직 못 읽었다'는 결과로 다룬다. Backend 는 이 0점을 임계값 미달로 처리해
+    학습 화면이 재시도 안내로 이어지고, AI 오류 문구가 아이에게 노출되지 않는다.
+
+    단어 목록은 Backend 의 기준 단어 분리 규칙과 같게 만들어 정렬 실패를 막는다.
+    """
+    words = REFERENCE_WORD_PATTERN.findall(reference_text) or [reference_text]
+    return PronunciationAnalysisResponse(
+        requestId=request_id,
+        pronunciationAccuracyScore=0.0,
+        fluencyScore=0.0,
+        completenessScore=0.0,
+        pronScore=0.0,
+        confidence=0.0,
+        analysisVersion=ANALYSIS_VERSION,
+        recognizedText=None,
+        words=[
+            PronunciationWordResult(
+                resultIndex=index,
+                word=word,
+                accuracyScore=0.0,
+                errorType="Omission",
+                offsetMs=0,
+                durationMs=0,
+            )
+            for index, word in enumerate(words)
+        ],
+    )
 
 
 def score_transcribed_reading(
