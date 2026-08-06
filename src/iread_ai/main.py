@@ -112,7 +112,10 @@ def create_app(
             quality_retry_count=settings.chapter_quality_retry_count,
             require_contract_pass=settings.chapter_require_contract_pass,
             provider_name=settings.story_provider,
-            visual_scene_planner=visual_scene_planner,
+            # Backend의 레거시 이야기 API는 visualScene을 사용하지 않고
+            # 저장할 장면 이미지 프롬프트를 본문으로 직접 만든다. 이 경로에서는
+            # 결정적 장면 데이터만 채워 별도의 장면 설명 LLM 호출을 생략한다.
+            visual_scene_planner=MockVisualScenePlanner(),
         )
 
     chapter_comparison_analyzer: KoreanReadingAnalyzer | None = None
