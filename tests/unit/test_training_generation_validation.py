@@ -11,6 +11,7 @@ from iread_ai.generation_service import (
     _normalize_mechanical_fields,
     _validate_candidate_uniqueness,
     _validate_final_sound_choices,
+    _validate_initial_sound_choices,
     _validate_hybrid_semantics,
     _validate_syllable_builds,
     enrich_training_request_with_lexicon,
@@ -73,6 +74,38 @@ def test_syllable_build_accepts_only_its_required_shape(
     _validate_syllable_builds(request, response)
 
     assert response.data[0]["targetAudioText"] == result
+
+
+def test_initial_sound_choice_validation_rejects_sentences_and_duplicate_words() -> None:
+    request = _request("WORD_INITIAL_CHOICE").model_copy(update={"count": 2})
+    invalid_sentence_response = TrainingCandidateResponse(
+        type="WORD_INITIAL_CHOICE",
+        data=[
+            {"audioText": "까치가 와.", "choices": ["ㄲ", "ㄱ", "ㅋ"], "answerIndex": 0},
+            {"audioText": "가방이 커.", "choices": ["ㄱ", "ㄴ", "ㄷ"], "answerIndex": 0},
+        ],
+    )
+    with pytest.raises(ValueError):
+        _validate_initial_sound_choices(request, invalid_sentence_response)
+
+    duplicate_word_response = TrainingCandidateResponse(
+        type="WORD_INITIAL_CHOICE",
+        data=[
+            {"audioText": "자두", "choices": ["ㅈ", "ㄱ", "ㄴ"], "answerIndex": 0},
+            {"audioText": "자두", "choices": ["ㅈ", "ㄷ", "ㅁ"], "answerIndex": 0},
+        ],
+    )
+    with pytest.raises(ValueError):
+        _validate_initial_sound_choices(request, duplicate_word_response)
+
+    valid_response = TrainingCandidateResponse(
+        type="WORD_INITIAL_CHOICE",
+        data=[
+            {"audioText": "까치", "choices": ["ㄲ", "ㄱ", "ㅋ"], "answerIndex": 0},
+            {"audioText": "가방", "choices": ["ㄱ", "ㄴ", "ㄷ"], "answerIndex": 0},
+        ],
+    )
+    _validate_initial_sound_choices(request, valid_response)
 
 
 @pytest.mark.parametrize(

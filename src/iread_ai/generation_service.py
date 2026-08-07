@@ -157,6 +157,14 @@ _HYBRID_TYPE_GUIDES = {
         "등장인물이 직접 말한 짧은 대사를 큰따옴표로 감싸고, 서술문을 CHARACTER로 "
         "표시하지 마세요."
     ),
+    "SYLLABLE_INITIAL_CHOICE": (
+        "소리 내어 들려줄 문항을 만들 때 audioText에는 부사어, 조사, 어미 없이 오직 1개의 순수한 한글 음절(예: '꽈', '가', '나')만 단독으로 포함하세요. "
+        "choices 3개는 중복 없는 한글 초성 자음(예: ['ㄲ', 'ㄱ', 'ㅋ'])만 포함하고 answerIndex를 실제 정답 위치와 일치시키세요."
+    ),
+    "WORD_INITIAL_CHOICE": (
+        "소리 내어 들려줄 문항을 만들 때 audioText에는 문장이나 조사 없이 오직 1개의 친숙한 한국어 낱말 단어(예: '까치', '가방', '사과')만 단독으로 포함하세요. "
+        "3개의 문항은 서로 100% 다른 낱말이어야 하며, choices 3개는 첫 음절의 초성 자음(예: ['ㄲ', 'ㄱ', 'ㅋ'])만 포함하고 answerIndex를 실제 정답 위치와 일치시키세요."
+    ),
 }
 
 
@@ -427,6 +435,7 @@ def _validated_training_response(
     _validate_output_template(request, result)
     _validate_syllable_builds(request, result)
     _validate_final_sound_choices(request, result)
+    _validate_initial_sound_choices(request, result)
     _validate_hybrid_semantics(request, result)
     _validate_candidate_uniqueness(result)
     _reject_unsafe(result.model_dump_json())
@@ -1034,6 +1043,66 @@ def _validate_final_sound_choices(
         if audio_text in audio_targets:
             raise ValueError("final sound candidates must use different audio targets")
         audio_targets.add(audio_text)
+
+
+def _validate_initial_sound_choices(
+    request: TrainingCandidateRequest,
+    response: TrainingCandidateResponse,
+) -> None:
+    if request.trainingType not in {
+        "SYLLABLE_INITIAL_CHOICE",
+        "WORD_INITIAL_CHOICE",
+        "SAME_INITIAL_WORD_CHOICE",
+    }:
+        return
+    audio_targets: set[str] = set()
+    for item in response.data:
+        _validate_answer_index(item)
+        if request.trainingType == "SAME_INITIAL_WORD_CHOICE":
+            audio_text = str(item.get("targetAudioText", item.get("audioText", ""))).strip()
+            raw_choices = item.get("choices", [])
+            choices = [
+                str(c.get("text") if isinstance(c, dict) else c).strip() for c in raw_choices
+            ]
+        else:
+            audio_text = str(item.get("audioText", "")).strip()
+            choices = [str(choice).strip() for choice in item.get("choices", [])]
+
+        if len(choices) != 3 or len(set(choices)) != 3:
+            raise ValueError("initial sound choices must contain three unique choices")
+        
+        if request.trainingType == "SYLLABLE_INITIAL_CHOICE":
+            if not _is_one_hangul_syllable(audio_text):
+                raise ValueError("SYLLABLE_INITIAL_CHOICE audioText must be a single Hangul syllable")
+        elif request.trainingType in {"WORD_INITIAL_CHOICE", "SAME_INITIAL_WORD_CHOICE"}:
+            if not re.fullmatch(r"[가-힣]{1,6}", audio_text):
+                raise ValueError(f"{request.trainingType} audioText must be a single Korean word without spaces or punctuation")
+        
+        if audio_text in audio_targets:
+            raise ValueError(f"{request.trainingType} candidates must use distinct audioText words/syllables")
+        audio_targets.add(audio_text)
+
+        parts = decompose_text(audio_text[:1])
+        if not parts:
+            raise ValueError("audioText first syllable decompose failed")
+        expected_onset = parts[0].onset
+        answer_index = int(item["answerIndex"])
+
+        if request.trainingType == "SAME_INITIAL_WORD_CHOICE":
+            if audio_text in choices:
+                raise ValueError("SAME_INITIAL_WORD_CHOICE choices must not contain the target word itself")
+            correct_choice = choices[answer_index]
+            correct_parts = decompose_text(correct_choice[:1])
+            if not correct_parts or correct_parts[0].onset != expected_onset:
+                raise ValueError("SAME_INITIAL_WORD_CHOICE correct choice must share the initial onset with target")
+            for idx, choice in enumerate(choices):
+                if idx != answer_index:
+                    choice_parts = decompose_text(choice[:1])
+                    if choice_parts and choice_parts[0].onset == expected_onset:
+                        raise ValueError("SAME_INITIAL_WORD_CHOICE distractor choices must not share the initial onset with target")
+        else:
+            if choices[answer_index] != expected_onset:
+                raise ValueError(f"{request.trainingType} answer choice must match the initial onset ({expected_onset})")
 
 
 def _is_one_hangul_syllable(value: str) -> bool:

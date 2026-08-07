@@ -265,6 +265,8 @@ class RuleBasedBasicTrainingGenerator:
                     "FINAL_CONSONANT_CHOICE",
                     "WORD_FINAL_SOUND_CHOICE",
                     "FINAL_CONSONANT_COMPARISON",
+                    "SYLLABLE_INITIAL_CHOICE",
+                    "WORD_INITIAL_CHOICE",
                 }:
                     signature = f"audioText:{candidate['audioText']}"
                 elif request.trainingType in {
@@ -373,7 +375,7 @@ class RuleBasedBasicTrainingGenerator:
         eligible = self._eligible(request, units, training_type)
         if not eligible:
             return None
-        correct = eligible[variant % len(eligible)]
+        correct = eligible[(variant + slot) % len(eligible)]
         if training_type in {"VOWEL_TRACE", "CONSONANT_TRACE", "SYLLABLE_TRACE"}:
             return self._trace(training_type, correct, variant)
         if training_type in {"CONSONANT_SOUND_CHOICE", "VOWEL_SOUND_CHOICE"}:
@@ -423,7 +425,7 @@ class RuleBasedBasicTrainingGenerator:
                 lambda unit: unit.surface,
                 units,
                 variant,
-                predicate=lambda unit: unit.onset != correct.onset,
+                predicate=lambda unit: unit.onset != correct.onset and unit.surface != correct.surface,
             )
             return {
                 "targetType": "WORD",
@@ -836,7 +838,7 @@ class RuleBasedBasicTrainingGenerator:
         feature_code = targets[0] if targets else "__DEFAULT__"
         if request.recommendedWordsByFeature.get(feature_code):
             lexicon_result = [unit for unit in result if unit.id < 0]
-            if lexicon_result:
+            if len(lexicon_result) >= request.count:
                 result = lexicon_result
         ordered = sorted(result, key=lambda unit: (-unit.familiarity, unit.difficulty, unit.id))
         if targets and not ordered:
