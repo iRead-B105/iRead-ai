@@ -1049,22 +1049,34 @@ def _validate_initial_sound_choices(
     request: TrainingCandidateRequest,
     response: TrainingCandidateResponse,
 ) -> None:
-    if request.trainingType not in {"SYLLABLE_INITIAL_CHOICE", "WORD_INITIAL_CHOICE"}:
+    if request.trainingType not in {
+        "SYLLABLE_INITIAL_CHOICE",
+        "WORD_INITIAL_CHOICE",
+        "SAME_INITIAL_WORD_CHOICE",
+    }:
         return
     audio_targets: set[str] = set()
     for item in response.data:
         _validate_answer_index(item)
-        audio_text = str(item.get("audioText", "")).strip()
-        choices = [str(choice).strip() for choice in item.get("choices", [])]
+        if request.trainingType == "SAME_INITIAL_WORD_CHOICE":
+            audio_text = str(item.get("targetAudioText", item.get("audioText", ""))).strip()
+            raw_choices = item.get("choices", [])
+            choices = [
+                str(c.get("text") if isinstance(c, dict) else c).strip() for c in raw_choices
+            ]
+        else:
+            audio_text = str(item.get("audioText", "")).strip()
+            choices = [str(choice).strip() for choice in item.get("choices", [])]
+
         if len(choices) != 3 or len(set(choices)) != 3:
             raise ValueError("initial sound choices must contain three unique choices")
         
         if request.trainingType == "SYLLABLE_INITIAL_CHOICE":
             if not _is_one_hangul_syllable(audio_text):
                 raise ValueError("SYLLABLE_INITIAL_CHOICE audioText must be a single Hangul syllable")
-        elif request.trainingType == "WORD_INITIAL_CHOICE":
+        elif request.trainingType in {"WORD_INITIAL_CHOICE", "SAME_INITIAL_WORD_CHOICE"}:
             if not re.fullmatch(r"[가-힣]{1,6}", audio_text):
-                raise ValueError("WORD_INITIAL_CHOICE audioText must be a single Korean word without spaces or punctuation")
+                raise ValueError(f"{request.trainingType} audioText must be a single Korean word without spaces or punctuation")
         
         if audio_text in audio_targets:
             raise ValueError(f"{request.trainingType} candidates must use distinct audioText words/syllables")
@@ -1075,8 +1087,22 @@ def _validate_initial_sound_choices(
             raise ValueError("audioText first syllable decompose failed")
         expected_onset = parts[0].onset
         answer_index = int(item["answerIndex"])
-        if choices[answer_index] != expected_onset:
-            raise ValueError(f"{request.trainingType} answer choice must match the initial onset ({expected_onset})")
+
+        if request.trainingType == "SAME_INITIAL_WORD_CHOICE":
+            if audio_text in choices:
+                raise ValueError("SAME_INITIAL_WORD_CHOICE choices must not contain the target word itself")
+            correct_choice = choices[answer_index]
+            correct_parts = decompose_text(correct_choice[:1])
+            if not correct_parts or correct_parts[0].onset != expected_onset:
+                raise ValueError("SAME_INITIAL_WORD_CHOICE correct choice must share the initial onset with target")
+            for idx, choice in enumerate(choices):
+                if idx != answer_index:
+                    choice_parts = decompose_text(choice[:1])
+                    if choice_parts and choice_parts[0].onset == expected_onset:
+                        raise ValueError("SAME_INITIAL_WORD_CHOICE distractor choices must not share the initial onset with target")
+        else:
+            if choices[answer_index] != expected_onset:
+                raise ValueError(f"{request.trainingType} answer choice must match the initial onset ({expected_onset})")
 
 
 def _is_one_hangul_syllable(value: str) -> bool:

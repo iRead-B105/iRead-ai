@@ -425,7 +425,7 @@ class RuleBasedBasicTrainingGenerator:
                 lambda unit: unit.surface,
                 units,
                 variant,
-                predicate=lambda unit: unit.onset != correct.onset,
+                predicate=lambda unit: unit.onset != correct.onset and unit.surface != correct.surface,
             )
             return {
                 "targetType": "WORD",
